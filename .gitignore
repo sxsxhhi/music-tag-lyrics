@@ -1,0 +1,20 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.zip
+*.tar.gz
+
+# Environment & local OS files
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+.vscode/
+.idea/
