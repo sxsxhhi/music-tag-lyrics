@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Main CLI Processor for music-tag-lyrics Skill (v1.1.3)
+Main CLI Processor for music-tag-lyrics Skill (v1.2.0)
 Standardizes audio metadata tags (Artist with '/', clean Title, Album, 4-digit Year, embedded Lyrics)
 and generates paired standard Enhanced LRC (.spl and .lrc) lyrics in the song's directory.
-Provides Demucs v4 GPU fallback protocol with interactive user authorization prompt.
+Provides Demucs v4 GPU fallback protocol with strict acoustic alignment:
+【核心红线】：绝不进行 ASR 语音听写！必须先从全网/本地检索权威歌词，在正确歌词基础上进行声学逐字打轴。
 Zero external software dependencies.
 """
 
 import os
 import sys
+import re
 import argparse
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 # Reconfigure stdout/stderr for utf-8 on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -30,47 +32,118 @@ from core.converter import to_lrc, to_spl
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
 
-def prompt_demucs_fallback(title: str, artist: str, filepath: str) -> bool:
+def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional[str]:
     """
-    Prompts user for explicit authorization to download and use Demucs v4 GPU fallback.
-    If authorized, runs GPU separation. If rejected, safely declines with zero downloads.
+    Searches for local plain-text/LRC lyrics in the same directory:
+    1. [Title - Artist.txt]
+    2. [Artist - Title.txt]
+    3. [base_name.txt]
+    4. [Title.txt]
+    5. [base_name.lrc]
     """
-    print(f"\n" + "="*60)
-    print(f"🔔 [Demucs v4 GPU 音频剥离终极兜底提示]")
-    print(f"未能从商业及开源曲库（AMLL / 酷狗 / LRCLIB / 网易云）检索到《{title} - {artist}》的有效逐字歌词。")
-    print(f"检测到歌曲可能为全网下架孤品或独立小众曲目。")
-    print(f"是否授权按需从网络下载 Demucs v4 模型权重并调用本地 GPU 进行纯人声剥离与 AI 音素咬合？")
-    print(f"注意：若授权同意，将从 PyTorch 官方拉取模型并就地推理，任务完成后自动销毁临时干声。")
-    print(f"若拒绝授权，将不会进行任何网络下载或重型安装，安全退出。")
-    print("="*60)
+    song_dir = os.path.dirname(song_path)
+    base_name = os.path.splitext(os.path.basename(song_path))[0]
     
-    # In non-interactive mode or automated tests, default to safe decline
-    try:
-        user_input = input("请输入授权决定 [Y: 授权同意下载并运行 / N: 拒绝授权并跳过] (默认 N): ").strip().lower()
-        if user_input in ["y", "yes"]:
-            print(f"✅ 用户已显式授权。准备调用 GPU 音频剥离流水线...")
-            # Dynamic import of acoustic aligner to avoid loading torch when not needed
-            try:
-                from core.acoustic_aligner import align_song_acoustics
-                return True
-            except ImportError as e:
-                print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs: {e}。请在需要时手动执行安装。")
-                return False
-        else:
-            print(f"🛑 用户拒绝授权。绝不进行任何下载操作，优雅降级退出。")
-            return False
-    except (EOFError, KeyboardInterrupt):
-        print(f"\n🛑 非交互模式或已取消，优雅降级退出。")
-        return False
+    candidates = [
+        f"{title} - {artist}.txt",
+        f"{artist} - {title}.txt",
+        f"{base_name}.txt",
+        f"{title}.txt",
+        f"{base_name}.lrc"
+    ]
+    for c in candidates:
+        p = os.path.join(song_dir, c)
+        if os.path.isfile(p):
+            for enc in ["utf-8", "utf-8-sig", "gbk", "gb18030"]:
+                try:
+                    with open(p, "r", encoding=enc) as f:
+                        txt = f.read().strip()
+                    if txt:
+                        return txt
+                except Exception:
+                    continue
+    return None
 
-def process_single_song(filepath: str, update_tags: bool = True, output_dir: Optional[str] = None) -> bool:
+def prompt_demucs_fallback(
+    title: str, 
+    artist: str, 
+    filepath: str, 
+    plain_text_lyrics: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Prompts user for explicit authorization to use Demucs v4 GPU fallback.
+    【核心红线】：绝不进行 ASR 语音听写！若无权威逐行文本，立即阻断并退出。
+    若存在权威文本并获得用户授权，调用 AcousticAligner 执行双端声学咬合打轴。
+    """
+    # 1. Check if plain text lyrics are available
+    if not plain_text_lyrics or not plain_text_lyrics.strip():
+        plain_text_lyrics = find_local_plain_lyrics(filepath, title, artist)
+
+    if not plain_text_lyrics or not plain_text_lyrics.strip():
+        print(f"\n" + "="*65)
+        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.0)]")
+        print(f"未能从商业曲库检索到《{title} - {artist}》的有效歌词，且本地未提供纯文本歌词。")
+        print(f"⚠️ 核心铁律：【绝不语音听写，使用 Demucs v4 兜底时必须先从全网检索歌词，在正确歌词的基础上进行逐字打轴】！")
+        print(f"👉 解决方案：请在歌曲所在目录下放置纯文本歌词文件：")
+        print(f"   《{title} - {artist}.txt》或《{os.path.splitext(os.path.basename(filepath))[0]}.txt》")
+        print(f"   放置完成后重新运行本程序，即可进行精准声学逐字咬合打轴。")
+        print("="*65 + "\n")
+        return None
+
+    # Count singing lines (filtering out metadata)
+    raw_lines = plain_text_lyrics.splitlines()
+    singing_lines = [
+        l.strip() for l in raw_lines 
+        if l.strip() and not re.match(r"^\[(ti|ar|al|by|offset):", l.strip(), re.IGNORECASE)
+    ]
+    
+    print(f"\n" + "="*65)
+    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.0)]")
+    print(f"未能从云端曲库直接匹配到现成逐字歌词，但已定位到权威歌词文本（共 {len(singing_lines)} 行）。")
+    print(f"是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？")
+    print(f"（注意：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）")
+    print("="*65)
+    
+    try:
+        user_input = input("请输入授权决定 [Y: 授权同意运行 GPU 打轴 / N: 拒绝授权并跳过] (默认 N): ").strip().lower()
+        if user_input in ["y", "yes"]:
+            print(f"✅ 用户已显式授权。准备调用 AcousticAligner 执行 GPU 声学咬合...")
+            try:
+                from core.acoustic_aligner import AcousticAligner
+                aligned_data = AcousticAligner.align_lyrics(
+                    audio_path=filepath,
+                    lyrics_text=plain_text_lyrics,
+                    device='cuda'
+                )
+                return aligned_data
+            except ImportError as e:
+                print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs/Whisper: {e}")
+                return None
+            except Exception as e:
+                print(f"❌ 声学咬合打轴失败: {e}")
+                return None
+        else:
+            print(f"🛑 用户拒绝授权。安全退出，不进行任何重型计算。")
+            return None
+    except (EOFError, KeyboardInterrupt):
+        print(f"\n🛑 非交互模式或已取消，安全退出。")
+        return None
+
+def process_single_song(
+    filepath: str, 
+    update_tags: bool = True, 
+    output_dir: Optional[str] = None,
+    lyrics_only: bool = False,
+    force_gpu: bool = False,
+    lyrics_file: Optional[str] = None
+) -> bool:
     """
     Processes a single audio file:
     1. Inspects filename and embedded tags.
     2. Cleans title, formats 4-digit year, and normalizes multi-artist tags with '/' under Band Whitelist.
-    3. Retrieves best synchronized/verbatim lyrics across multi-engines.
-    4. Enforces Natural Acoustic Gate and Outro protection.
-    5. Updates embedded metadata tags in-place (including lyrics).
+    3. Retrieves best synchronized/verbatim lyrics across multi-engines (or Demucs v4 fallback).
+    4. Enforces Natural Acoustic Gate, Pause Gap Tags, and Outro protection.
+    5. Updates embedded metadata tags in-place (supports lyrics-only protection).
     6. Saves paired .spl and .lrc in the song's directory (or specified output_dir).
     """
     if not os.path.isfile(filepath):
@@ -119,21 +192,50 @@ def process_single_song(filepath: str, update_tags: bool = True, output_dir: Opt
 
     print(f"🏷️  Metadata: [{cleaned_title}] by [{normalized_artist}] ({cleaned_year}) ({duration_ms // 1000}s)")
 
-    # 3. Multi-engine lyric retrieval
-    print("🔍 Fetching lyrics across multi-engines (AMLL/Kugou/LRCLIB/NetEase)...")
-    lyric_data = LyricAggregator.fetch_best_lyrics(
-        title=cleaned_title,
-        artist=normalized_artist,
-        album=album,
-        duration_ms=duration_ms
-    )
+    # Read external lyrics file if specified
+    explicit_lyrics_text = None
+    if lyrics_file and os.path.isfile(lyrics_file):
+        for enc in ["utf-8", "utf-8-sig", "gbk", "gb18030"]:
+            try:
+                with open(lyrics_file, "r", encoding=enc) as f:
+                    explicit_lyrics_text = f.read().strip()
+                if explicit_lyrics_text:
+                    print(f"📖 Loaded external lyrics file: {lyrics_file}")
+                    break
+            except Exception:
+                continue
+
+    # 3. Lyric retrieval or Demucs fallback
+    lyric_data = None
+    if force_gpu:
+        print("⚡ Force GPU mode requested. Invoking Demucs v4 acoustic aligner directly...")
+        lyric_data = prompt_demucs_fallback(
+            title=cleaned_title,
+            artist=normalized_artist,
+            filepath=filepath,
+            plain_text_lyrics=explicit_lyrics_text
+        )
+    else:
+        print("🔍 Fetching lyrics across multi-engines (AMLL/Kugou/LRCLIB/NetEase)...")
+        lyric_data = LyricAggregator.fetch_best_lyrics(
+            title=cleaned_title,
+            artist=normalized_artist,
+            album=album,
+            duration_ms=duration_ms
+        )
+
+        if not lyric_data or not lyric_data.get("lines"):
+            # Trigger Demucs v4 fallback prompt
+            lyric_data = prompt_demucs_fallback(
+                title=cleaned_title, 
+                artist=normalized_artist, 
+                filepath=filepath,
+                plain_text_lyrics=explicit_lyrics_text
+            )
 
     if not lyric_data or not lyric_data.get("lines"):
-        # Trigger Demucs v4 fallback prompt
-        authorized = prompt_demucs_fallback(cleaned_title, normalized_artist, filepath)
-        if not authorized:
-            print(f"❌ No lyrics found for {cleaned_title} - {normalized_artist}")
-            return False
+        print(f"❌ No lyrics found or authorized for {cleaned_title} - {normalized_artist}")
+        return False
 
     source = lyric_data.get("source", "unknown")
     lyric_type = lyric_data.get("lyric_type", "line")
@@ -170,34 +272,55 @@ def process_single_song(filepath: str, update_tags: bool = True, output_dir: Opt
 
     # 6. Update embedded tags in-place (including lyrics)
     if update_tags:
-        success = update_audio_tags(
-            filepath,
-            title=cleaned_title,
-            artist=normalized_artist,
-            album=album,
-            year=cleaned_year,
-            composer=composer,
-            lyricist=lyricist,
-            lyrics=spl_content
-        )
-        if success:
-            print("✅ Embedded tags updated (Artist with '/', 4-digit Year, In-place Lyrics)")
+        if lyrics_only:
+            # Strictly update USLT/lyrics frame, keeping all other metadata untouched
+            success = update_audio_tags(
+                filepath,
+                lyrics=spl_content
+            )
+            if success:
+                print("✅ Embedded lyrics updated (User-defined metadata tags 100% untouched)")
+            else:
+                print("⚠️ Tag update skipped or format read-only")
         else:
-            print("⚠️ Tag update skipped or format read-only")
+            success = update_audio_tags(
+                filepath,
+                title=cleaned_title,
+                artist=normalized_artist,
+                album=album,
+                year=cleaned_year,
+                composer=composer,
+                lyricist=lyricist,
+                lyrics=spl_content
+            )
+            if success:
+                print("✅ Embedded tags updated (Artist with '/', 4-digit Year, In-place Lyrics)")
+            else:
+                print("⚠️ Tag update skipped or format read-only")
 
     print(f"✨ Successfully finished processing.")
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity music-tag-lyrics Processor (v1.1.3)")
+    parser = argparse.ArgumentParser(description="Antigravity music-tag-lyrics Processor (v1.2.0)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
+    parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
+    parser.add_argument("--force-gpu", action="store_true", help="Force GPU acoustic alignment with Demucs v4")
+    parser.add_argument("--lyrics-file", default=None, help="Explicit path to plain-text lyrics file")
     parser.add_argument("--out-dir", default=None, help="Custom output directory for lyrics")
     args = parser.parse_args()
 
     target = args.path
     if os.path.isfile(target):
-        process_single_song(target, update_tags=not args.no_tags, output_dir=args.out_dir)
+        process_single_song(
+            target, 
+            update_tags=not args.no_tags, 
+            output_dir=args.out_dir,
+            lyrics_only=args.lyrics_only,
+            force_gpu=args.force_gpu,
+            lyrics_file=args.lyrics_file
+        )
     elif os.path.isdir(target):
         count = 0
         success_count = 0
@@ -207,7 +330,14 @@ def main():
                 if ext in SUPPORTED_EXTS:
                     count += 1
                     fp = os.path.join(root, f)
-                    if process_single_song(fp, update_tags=not args.no_tags, output_dir=args.out_dir):
+                    if process_single_song(
+                        fp, 
+                        update_tags=not args.no_tags, 
+                        output_dir=args.out_dir,
+                        lyrics_only=args.lyrics_only,
+                        force_gpu=args.force_gpu,
+                        lyrics_file=args.lyrics_file
+                    ):
                         success_count += 1
         print(f"\nBatch processing completed: {success_count}/{count} succeeded.")
     else:

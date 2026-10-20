@@ -123,8 +123,14 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
             et = min(5500, first_sing_start // 2)
             words = make_char_words(title_line, st, et)
             line_parts = [f"{format_time_tag(words[0]['start'], '[]')}{format_time_tag(words[0]['start'], '<>')}{words[0]['text']}"]
-            for w in words[1:]:
-                line_parts.append(f"{format_time_tag(w['start'], '<>')}{w['text']}")
+            for i in range(1, len(words)):
+                w_prev = words[i - 1]
+                w_cur = words[i]
+                prev_end = w_prev.get("end", w_prev.get("start", 0))
+                # If there is a noticeable pause (>= 300ms) between words, insert explicit pause gap tag
+                if w_cur.get("start", 0) - prev_end >= 300:
+                    line_parts.append(format_time_tag(prev_end, "<>"))
+                line_parts.append(f"{format_time_tag(w_cur['start'], '<>')}{w_cur['text']}")
             line_parts.append(format_time_tag(et, "<>"))
             output_lines.append("".join(line_parts))
         else:
@@ -145,8 +151,14 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
             first_w = words[0]
             line_parts.append(f"{format_time_tag(start_ms, '[]')}{format_time_tag(first_w['start'], '<>')}{first_w['text']}")
             
-            for w in words[1:]:
-                line_parts.append(f"{format_time_tag(w['start'], '<>')}{w['text']}")
+            for i in range(1, len(words)):
+                w_prev = words[i - 1]
+                w_cur = words[i]
+                prev_end = w_prev.get("end", w_prev.get("start", 0))
+                # If there is a noticeable pause (>= 300ms) between words, insert explicit pause gap tag
+                if w_cur.get("start", 0) - prev_end >= 300:
+                    line_parts.append(format_time_tag(prev_end, "<>"))
+                line_parts.append(f"{format_time_tag(w_cur['start'], '<>')}{w_cur['text']}")
                 
             last_end = words[-1].get("end", end_ms)
             line_parts.append(format_time_tag(last_end, "<>"))
