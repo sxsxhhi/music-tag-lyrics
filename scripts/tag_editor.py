@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Audio Embedded Tag Editor (v1.1.1)
+Audio Embedded Tag Editor (v1.1.2)
 Inspects and standardizes embedded metadata tags (Title, Artist with '/', Album, Year, Lyrics)
 for audio files (FLAC, WAV, MP3, M4A, OGG) using mutagen.
 Zero external software dependency. Never moves or deletes audio files.
