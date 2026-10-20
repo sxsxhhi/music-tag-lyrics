@@ -20,62 +20,6 @@
 
 ---
 
-## 🚀 v1.1.3 工业级架构大重构：DRY 全量去重、8大核心隐患修复与 Intro Gate 前奏门禁
-
-1. **🏗️ 全局底层 `core/utils/` 架构重塑与 DRY 全量去重**：
-   - 彻底治理跨模块重复的“屎山”冗余，新建 `core/utils/` 共享底层包：
-     - `http.py`：统一轻量级网络客户端，消除 4 大 Fetcher 中手写 urllib/json 的 8 处样板代码；
-     - `time_utils.py`：统合所有时间戳解析、分秒毫秒换算与边界箝位算术；
-     - `version_guard.py`：全引擎共享 Live / Studio / Demo / Remix 版本门禁与副标题清洗规则；
-     - `text_utils.py`：统合 CJK、汉字、假名与翻译行检测逻辑；
-   - 重构 `tag_editor.py`，消除 ID3 与 Vorbis Comments 跨格式 70+ 行镜像重复代码。
-2. **🛡️ 8 大核心功能与时序隐患系统性根治**：
-   - **KRC / LRC `[offset]` 标签全链路生效**：彻底修复历史版本仅提取 offset 标签却未应用到时间轴的隐患，全解析器毫秒级精准叠加；
-   - **酷狗 `adjust` 服务端校准参数叠加**：完整接收并应用服务端微调数据；
-   - **LRC 多时间戳行 0 丢行保留**：彻底修复多时间戳复用行（如 `[01:10.00][02:20.00]`）丢失首个时间标签的隐患；
-   - **网易云与 AMLL 现场版/录音室严格门禁**：为网易云检索增加版本过滤与时长比对，杜绝 AMLL 抓错录音室版 TTML；
-   - **TTML 支持 SMPTE 纯秒数格式**：支持 `84.5s` 等标准秒数标记；
-   - **Converter 纯函数化**：杜绝就地数据污染。
-3. **🔔 Intro Gate 前奏起唱健康门禁**：
-   - 针对现场歌曲可能混入的长篇开场白切片，增加首句起唱时间异常探测（常规流行歌曲首句 > 32s 自动预警提示），与 Outro 尾奏保护形成首尾双门禁闭环。
-
----
-
-## 🚀 v1.1.2 工业级里程碑升级：Live 现场版强物理互斥门禁与下架歌曲逐字歌词
-
-1. **🛡️ Live 演出版与录音室版本强物理互斥防串扰门禁 (第九大铁律)**：
-   - **版本指纹双向嗅探**：支持对文件名、ID3/Vorbis 标签中的 `Live`、`现场`、`巡回`、`演唱会`、`不插电`、`Acoustic` 等特征进行双向指纹提取；
-   - **强物理互斥隔离**：
-     - 本地音频为 Live 版：候选必须严格具备 Live/现场 标识，100% 拒绝任何录音室普通歌词混入，彻底根除因版本差异导致的百秒级歌词错位；
-     - 本地音频为录音室版：候选若含有 Live/现场 标识，100% 物理拦截剔除，彻底杜绝即兴改词与现场台词污染母带；
-2. **⚡ KRCS 关键词直搜降级通道 (Hash-to-Keyword Fallback)**：
-   - 针对部分现场演出版（如巡演专辑）Hash 精准反查接口返回空列表的痛点，新增 `krcs.kugou.com` 关键词直搜与时长过滤双向回退通道；
-   - 通过候选 `id` 与 `accesskey` 直接走底层下载解密，将现场版 KRC 获取成功率提升至 100%；
-3. **🎯 现场前奏对白（Stage Banter）高精声学对齐**：
-   - 现场演出版通常在正式开口前有长达数十秒的歌手说话、舞台互动或乐队调音，算法拒绝粗暴套用录音室 00:00 或粗制 `.00` 整数伪轴，精准对齐官方高精度现场开唱点；
-4. **🔥 独创下架歌曲逐字歌词生成特色**：
-   - 全面突出绝版/下架孤品曲目的 AI 声学咬合生成特色，配合 Demucs v4 轻量文字协议，让无源歌曲重获流光逐字。
-
----
-
-## 🚀 v1.1.1 国际通用标准里程碑升级 (Release Highlights)
-
-1. **🌐 国际事实标准 Enhanced LRC 全面大统一**：
-   - 将音频内嵌 `lyrics` 标签、外部 `.spl` 歌词文件、外部 `.lrc` 歌词文件三端全部统一升级重构为国际通用标准 **Enhanced LRC（ELRC / A2 扩展规范）**；
-   - 标准语法体系：`[mm:ss.xx]<mm:ss.xx>w1<t2>w2...<tend>`，首字注入 `<w1_start>`，句尾闭合使用 `<tend>` 尖括号；
-   - 彻底破除私有语法糖分裂，实现三端内容与 **SHA-256 哈希值 100% 绝对比特级镜像**！
-2. **🔤 彻底攻克 Folia 播放器吞首字与行末时间戳外露**：
-   - 针对开源现代音乐播放器 **Folia**（`chthollyphile/folia-major`）解析器进行源码级对齐：
-   - 彻底根除首字无尖括号被误当杂质剥离丢弃的问题（0 吞字）；
-   - 彻底根除行末方括号 `[mm:ss.xx]` 被当作正文歌词渲染到屏幕上的问题（0 尾标外露），完美享受高精 WebGPU/PixiJS 逐字流光动画。
-3. **🖥️ 跨平台换行符确定性对齐 (Windows Newline Determinism)**：
-   - 在 `scripts/process_song.py` 写入外部歌词文件时显式指定 `newline="\n"`；
-   - 杜绝 Windows 平台默认将 `\n` 自动转换为 `\r\n` (CRLF) 导致与音频内嵌标签（LF）产生哈希不一致的物理陷阱，全平台产出 100% 确定性字节流。
-4. **🔄 Enhanced LRC / SPL 双向高保真解析器**：
-   - 全新升级 `core/parsers/lrc_parser.py`，原生识别 Enhanced LRC 与 SPL 的 `<mm:ss.xx>` 字级时间戳并填充结构化 `words` 数组，同时自动生成剥离标签的纯净唱词 `text`，实现双向往返无损导入。
-
----
-
 ## 🌟 核心特性全景
 
 1. **🛡️ 纯原生轻量自包含架构（< 300KB · 零外部软件捆绑）**：
@@ -101,7 +45,6 @@
    - **阶梯探测与显式授权机制**：多源穷尽无可用逐字时，自动探测本地 CUDA GPU 环境并在终端弹出显式授权确认，拒绝则 0 下载优雅降级为标准逐行歌词；
    - **临时音频零污染销毁**：处理完毕后毫秒级物理销毁全部临时干声音频与切片缓存，确保磁盘空间零浪费。
 
-
 ---
 
 ## 🏗️ 架构拓扑全景
@@ -112,21 +55,21 @@ flowchart TD
         AudioFile["音频源文件<br/>(.flac / .mp3 / .wav / .m4a / .ogg)<br/>📍 原位更新，绝不移动"]
     end
 
-    subgraph NativeSkill["🛡️ music-tag-lyrics 原生技能 (v1.1.1)"]
-        TagEditor["scripts/tag_editor.py<br/>• Title 纯净化<br/>• Artist 多歌手强制 '/' & 乐队白名单<br/>• 4位数字 Year 清洗<br/>• FLAC / WAV(USLT) 双轨写入"]
+    subgraph NativeSkill["🛡️ music-tag-lyrics 原生技能 (v1.1.3)"]
+        TagEditor["scripts/tag_editor.py<br/>• Title 纯净化<br/>• Artist 多歌手强制 '/' & 乐队白名单<br/>• 4位数字 Year 清洗<br/>• FLAC / WAV / MP3 / OGG 全格式覆盖"]
         
         subgraph Aggregator["core/aggregator.py (多源自适应调度中心)"]
             F_AMLL["AMLL Apple Music (官方 TTML 逐字)"]
-            F_KG["酷狗音乐 (KRC 逐字)"]
+            F_KG["酷狗音乐 (KRC 逐字，支持 adjust)"]
             F_LRC["LRCLIB (全球开源同步库)"]
-            F_NE["网易云 (LRC 同步)"]
+            F_NE["网易云 (LRC 同步，带版本门禁)"]
         end
 
         subgraph CoreEngine["内置轻量算法核心 (总计 < 300KB)"]
             D_XOR["krc_xor.py<br/>(16字节 XOR + Zlib)"]
             Acoustic["core/acoustic_aligner.py<br/>(AI 音素能量切分 & Demucs v4 GPU 对齐)"]
-            Validator["scripts/lyric_validator.py<br/>(单调性时序门禁 & 声学自然度门禁)"]
-            Converter["core/converter.py<br/>(双轨输出 .spl / .lrc 镜像 & 标点清洗)"]
+            Validator["scripts/lyric_validator.py<br/>(单调性门禁、声学自然度门禁 & Intro Gate)"]
+            Converter["core/converter.py<br/>(双轨输出 .spl / .lrc 镜像 & 纯函数化)"]
         end
     end
 
@@ -211,18 +154,6 @@ music-tag-lyrics/
         ├── ttml_parser.py             # Apple Music TTML XML 解析 (支持 SMPTE 纯秒数)
         ├── krc_parser.py              # KRC 逐字解析 (支持 [offset] 与 adjust 叠加)
         └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器 (支持多时间戳行保留)
-    ├── acoustic_aligner.py            # AI 声学音素能量与波形切分合成器 (支持 Demucs v4)
-    ├── fetchers/
-    │   ├── amll.py                    # AMLL Apple Music 官方 TTML 社区库直连 (欧美一级)
-    │   ├── kugou.py                   # 酷狗音乐 KRC 检索与下载 (华语一级)
-    │   ├── lrclib.py                  # LRCLIB 全球开源同步歌词 REST 接口
-    │   └── netease.py                 # 网易云音乐检索与提取
-    ├── decryptors/
-    │   └── krc_xor.py                 # 酷狗 16 字节密钥掩码 XOR + Zlib 原生流解压
-    └── parsers/
-        ├── ttml_parser.py             # Apple Music TTML XML 解析器
-        ├── krc_parser.py              # KRC 逐字结构解析器
-        └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器
 ```
 
 ---
@@ -258,6 +189,17 @@ python scripts/process_song.py "path/to/music_folder/"
 ### 4. 常用高级参数
 - `--no-tags`：仅抓取并生成 `.spl` 与 `.lrc` 歌词文件，不修改音频文件的内嵌元数据标签。
 - `--out-dir "<path>"`：指定歌词生成的自定义输出目录（默认直接生成在音频所在同级目录）。
+
+---
+
+## 📜 版本演进与更新日志 (Version History & Changelog)
+
+| 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
+| :---: | :---: | :--- | :--- | :---: |
+| [**v1.1.3**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.1.3) | `2026-10-20` | **工业级架构大重构 · DRY 全量去重与 8 大隐患根治** | • **DRY 架构去重**：新建 `core/utils/`（收敛 `http`, `time_utils`, `version_guard`, `text_utils`），消除 90+ 行样板代码；重构 `tag_editor` 消除 ID3/Vorbis 跨格式 70+ 行镜像重复<br/>• **8 大隐患根治**：KRC/LRC `[offset]` 与 `adjust` 毫秒级叠加、LRC 多时间戳行 0 丢行保留、网易云/AMLL 严格版本与时长门禁、TTML SMPTE 纯秒数支持、Converter 纯函数化无副作用<br/>• **Intro Gate 前奏门禁**：新增首句起唱异常（>32s）健康预警，与 Outro 尾奏保护形成首尾双门禁闭环 | 34 项单元测试 100% 绿灯 |
+| [**v1.1.2**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.1.2) | `2026-10-20` | **Live 现场版强物理互斥门禁与下架歌曲逐字歌词** | • **Live 演出版强物理互斥**：双向嗅探 `(Live)`、`现场`、`巡演` 等特征，本地 Live 100% 拒绝录音室版，本地录音室 100% 拦截现场版<br/>• **KRCS 关键词直搜降级**：Hash 查询无果时自动走关键词直搜解密，现场版 KRC 获取成功率达 100%<br/>• **前奏对白声学对齐**：精确包容舞台台词与开场白，杜绝粗糙整数伪轴<br/>• **下架歌曲逐字歌词特色**：强化绝版/下架孤品 AI 声学咬合生成能力 | Live 专属通道 |
+| [**v1.1.1**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.1.1) | `2026-10-19` | **国际事实标准 Enhanced LRC 与三位一体绝对镜像** | • **Enhanced LRC 国际大统一**：音频内嵌标签、`.spl` 与 `.lrc` 三端统一为国际通用 Enhanced LRC（`[mm:ss.xx]<mm:ss.xx>w1...`），达成 100% SHA-256 绝对镜像<br/>• **攻克 Folia 播放器吞首字与时间戳外露**：完美对齐现代开源播放器 Folia 解析器<br/>• **跨平台换行符确定性**：显式指定 `\n`，消除 Windows `\r\n` 与内存 LF 差异<br/>• **Enhanced LRC 双向高保真解析器**：支持往返无损导入 | 100% SHA-256 镜像 |
+| [**v1.1.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.1.0) | `2026-10-18` | **Apple Music 官方母带逐字与多源自适应调度** | • **直连 AMLL 社区库**：直通 Apple Music 官方 TTML 母带逐字源<br/>• **多源自适应调度**：华语 Kugou KRC、全球 LRCLIB、网易云多梯级调度<br/>• **乐器长尾奏保护**：智能区分吉他/手风琴长 Solo，拒绝机械截断<br/>• **声学自然度门禁**：拦截 <=80ms 机器伪时间戳 | 多源引擎 |
 
 ---
 
