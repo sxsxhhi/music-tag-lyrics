@@ -56,20 +56,36 @@ class LRCLIBFetcher:
             return None
 
         target_is_live = is_live_version(title)
+        valid_items = []
         for item in items:
             track_name = item.get("trackName", "")
             album_name = item.get("albumName", "")
             # Filter by version policy
             if not matches_version_policy(target_is_live, track_name, album_name):
                 continue
-                
-            synced = item.get("syncedLyrics", "")
-            if synced:
-                parsed = parse_lrc(synced)
-                parsed["source"] = "lrclib"
-                parsed["lyric_type"] = "line"
-                parsed.setdefault("tags", {})["ti"] = track_name or title
-                parsed.setdefault("tags", {})["ar"] = item.get("artistName", artist)
-                return parsed
+            if not item.get("syncedLyrics"):
+                continue
+
+            item_dur_sec = float(item.get("duration", 0))
+            if duration_ms > 0 and item_dur_sec > 0:
+                diff_sec = abs(item_dur_sec - (duration_ms / 1000.0))
+                # Skip candidates that deviate excessively from target track
+                if diff_sec > 35:
+                    continue
+                valid_items.append((diff_sec, item))
+            else:
+                valid_items.append((0, item))
+
+        if valid_items:
+            valid_items.sort(key=lambda x: x[0])
+            for _, item in valid_items:
+                synced = item.get("syncedLyrics", "")
+                if synced:
+                    parsed = parse_lrc(synced)
+                    parsed["source"] = "lrclib"
+                    parsed["lyric_type"] = "line"
+                    parsed.setdefault("tags", {})["ti"] = item.get("trackName") or title
+                    parsed.setdefault("tags", {})["ar"] = item.get("artistName", artist)
+                    return parsed
 
         return None
