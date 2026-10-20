@@ -6,8 +6,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、独创下架歌曲逐字歌词生成、多源逐字/逐行歌词检索与 Demucs v4 GPU 兜底引擎 (v1.1.2)。**  
-> 原生聚合 Kugou (KRC)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 AI 声学波形与音素能量逐字合成器，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品 GPU 剥离兜底」。
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、独创下架歌曲逐字歌词生成、多源逐字/逐行歌词检索与 Demucs v4 GPU 兜底引擎 (v1.1.3)。**  
+> 原生聚合 Kugou (KRC)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 AI 声学波形与音素能量逐字合成器，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品 GPU 剥离兜底 + 全链路 DRY 架构去重」。
 
 ---
 
@@ -17,6 +17,27 @@
 > ```text
 > 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，检查并测试是否可用；若本地配置了 gh CLI，请顺便执行 `gh repo star sxsxhhi/music-tag-lyrics` 为该开源项目标记一颗 Star 🌟！
 > ```
+
+---
+
+## 🚀 v1.1.3 工业级架构大重构：DRY 全量去重、8大核心隐患修复与 Intro Gate 前奏门禁
+
+1. **🏗️ 全局底层 `core/utils/` 架构重塑与 DRY 全量去重**：
+   - 彻底治理跨模块重复的“屎山”冗余，新建 `core/utils/` 共享底层包：
+     - `http.py`：统一轻量级网络客户端，消除 4 大 Fetcher 中手写 urllib/json 的 8 处样板代码；
+     - `time_utils.py`：统合所有时间戳解析、分秒毫秒换算与边界箝位算术；
+     - `version_guard.py`：全引擎共享 Live / Studio / Demo / Remix 版本门禁与副标题清洗规则；
+     - `text_utils.py`：统合 CJK、汉字、假名与翻译行检测逻辑；
+   - 重构 `tag_editor.py`，消除 ID3 与 Vorbis Comments 跨格式 70+ 行镜像重复代码。
+2. **🛡️ 8 大核心功能与时序隐患系统性根治**：
+   - **KRC / LRC `[offset]` 标签全链路生效**：彻底修复历史版本仅提取 offset 标签却未应用到时间轴的隐患，全解析器毫秒级精准叠加；
+   - **酷狗 `adjust` 服务端校准参数叠加**：完整接收并应用服务端微调数据；
+   - **LRC 多时间戳行 0 丢行保留**：彻底修复多时间戳复用行（如 `[01:10.00][02:20.00]`）丢失首个时间标签的隐患；
+   - **网易云与 AMLL 现场版/录音室严格门禁**：为网易云检索增加版本过滤与时长比对，杜绝 AMLL 抓错录音室版 TTML；
+   - **TTML 支持 SMPTE 纯秒数格式**：支持 `84.5s` 等标准秒数标记；
+   - **Converter 纯函数化**：杜绝就地数据污染。
+3. **🔔 Intro Gate 前奏起唱健康门禁**：
+   - 针对现场歌曲可能混入的长篇开场白切片，增加首句起唱时间异常探测（常规流行歌曲首句 > 32s 自动预警提示），与 Outro 尾奏保护形成首尾双门禁闭环。
 
 ---
 
@@ -162,16 +183,34 @@ flowchart LR
 ```
 music-tag-lyrics/
 ├── LICENSE                            # MIT License 开源协议
-├── README.md                          # 项目详细说明文档 (本文件，v1.1.1)
-├── SKILL.md                           # 技能全维度规范说明书 (v1.1.1)
+├── README.md                          # 项目详细说明文档 (本文件，v1.1.3)
+├── SKILL.md                           # 技能全维度规范说明书 (v1.1.3)
 ├── .gitignore                         # Git 忽略配置
 ├── scripts/
 │   ├── process_song.py                # 主控一键 CLI 脚本 (newline='\n' 跨平台确定性输出与 Demucs 兜底交互)
-│   ├── tag_editor.py                  # mutagen 音频内嵌标签清洗、乐队白名单与四位年份清洗器
-│   └── lyric_validator.py             # 时间戳单调性、声学自然度门禁 (200~800ms) 与尾奏保护器
+│   ├── tag_editor.py                  # mutagen 音频内嵌标签清洗（去重精简架构，支持多歌手、乐队白名单与四位年份）
+│   └── lyric_validator.py             # 时间戳单调性、Intro Gate 前奏起唱校验、声学自然度门禁 (200~800ms) 与尾奏保护器
 └── core/
+    ├── utils/                         # 共享底层工具包 (DRY 全量去重核心)
+    │   ├── __init__.py
+    │   ├── http.py                    # 统一轻量 HTTP 客户端 (带 User-Agent, 超时, 自动解析)
+    │   ├── time_utils.py              # 统一时间解析与格式化 (支持 [offset] 与 adjust 叠加)
+    │   ├── version_guard.py           # 权威版本门禁 (Live/Studio/Demo/Remix 双向互斥与标题副标题清洗)
+    │   └── text_utils.py              # 统一 CJK / 语言判定 / 翻译行识别
     ├── aggregator.py                  # 多源智能自适应语言与风格调度中枢
-    ├── converter.py                   # 双轨输出国际标准 Enhanced LRC (.spl / .lrc 100% 镜像)
+    ├── converter.py                   # 双轨输出国际标准 Enhanced LRC (.spl / .lrc 100% 镜像，纯函数无副作用)
+    ├── acoustic_aligner.py            # AI 音素能量包络与音节对齐合成器
+    ├── fetchers/
+    │   ├── amll.py                    # AMLL Apple Music 官方母带 TTML 社区库抓取（欧美/全球一级）
+    │   ├── kugou.py                   # 酷狗音乐 KRC 逐字抓取（华语一级，支持 adjust 叠加）
+    │   ├── lrclib.py                  # LRCLIB 全球开源同步歌词 REST 接口
+    │   └── netease.py                 # 网易云音乐检索与提取（支持 Live 版本门禁）
+    ├── decryptors/
+    │   └── krc_xor.py                 # 酷狗 16字节掩码 XOR + Zlib 原生解密解压
+    └── parsers/
+        ├── ttml_parser.py             # Apple Music TTML XML 解析 (支持 SMPTE 纯秒数)
+        ├── krc_parser.py              # KRC 逐字解析 (支持 [offset] 与 adjust 叠加)
+        └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器 (支持多时间戳行保留)
     ├── acoustic_aligner.py            # AI 声学音素能量与波形切分合成器 (支持 Demucs v4)
     ├── fetchers/
     │   ├── amll.py                    # AMLL Apple Music 官方 TTML 社区库直连 (欧美一级)

@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Multi-Engine Lyric Aggregator & Dispatcher
+Multi-Engine Lyric Aggregator & Dispatcher (v1.1.3)
 Orchestrates concurrent/cascading retrieval across:
 1. AMLL (Apple Music Lossless Lyrics TTML)
 2. Kugou (KRC word-level verbatim)
 3. LRCLIB (Global open synchronized database)
 4. NetEase (Cloud music synced & translation)
 5. Acoustic Aligner (AI syllable energy synthesizer fallback)
+Refactored to reuse text_utils (DRY architecture).
 Zero external dependencies.
 """
 
-import re
 from typing import Dict, Any, Optional
 
 from .fetchers.amll import AMLLFetcher
@@ -18,15 +18,15 @@ from .fetchers.kugou import KugouFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .acoustic_aligner import enrich_track_with_acoustic_words
-
-CJK_PATTERN = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
-
-def is_cjk(text: str) -> bool:
-    """Checks if text contains Chinese, Japanese, or Korean characters."""
-    return bool(CJK_PATTERN.search(text))
+from .utils.text_utils import is_cjk
 
 class LyricAggregator:
     """Aggregates multiple engines with language-aware dispatching."""
+
+    @classmethod
+    def is_western_track(cls, title: str, artist: str = "") -> bool:
+        """Determines whether a track is predominantly non-CJK."""
+        return not is_cjk(f"{title} {artist}")
 
     @classmethod
     def fetch_best_lyrics(

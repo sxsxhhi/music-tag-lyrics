@@ -1,26 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Lyric Converter (v1.1.2)
+Lyric Converter (v1.1.3)
 Converts unified parsed lyric structures into standard Enhanced LRC (.lrc) and Salt Player (.spl) formats.
 Adheres strictly to the international Enhanced LRC (ELRC / A2 extension) standard.
 Line format: [01:26.48]<01:26.48>我<01:27.20>就<01:27.42>在<01:30.00>
 Supports Trilateral 100% SHA-256 verbatim mirror mode between audio embedded lyrics, .spl, and .lrc.
-Collapses 0ms punctuation tags automatically.
+Refactored as pure functions (zero in-place mutation of input data) and reuses time_utils.
 Zero external dependencies.
 """
 
 import re
 from typing import Dict, Any, List
 
-def format_time_tag(ms: int, bracket: str = "[]") -> str:
-    """Formats milliseconds into [mm:ss.xx] or <mm:ss.xx>."""
-    if ms < 0:
-        ms = 0
-    total_seconds = ms / 1000.0
-    minutes = int(total_seconds // 60)
-    seconds = total_seconds % 60
-    l_b, r_b = bracket[0], bracket[1]
-    return f"{l_b}{minutes:02d}:{seconds:05.2f}{r_b}"
+from .utils.time_utils import format_time_tag
 
 CREDIT_PREFIXES = ("词", "曲", "编", "作词", "作曲", "编曲", "制作", "录音", "混音")
 
@@ -46,8 +38,9 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
     1. If original lyrics already contain '词' / '曲', 100% preserve untouched.
     2. If missing and lyricist/composer info exists, supplement standardized lines.
     3. If neither exists, keep prelude clean without empty tags.
+    Pure function: Never mutates input dictionary in-place.
     """
-    lines = data.get("lines", [])
+    lines = list(data.get("lines", []))
     if not lines:
         return data
 
@@ -86,7 +79,7 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
                 "words": make_char_words(text, st, et)
             })
         if new_credits:
-            data["lines"] = new_credits + lines
+            return {**data, "lines": new_credits + lines}
 
     return data
 
@@ -108,9 +101,9 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     Exports unified lyric data to standard Enhanced LRC (.lrc) and Salt Player (.spl) format.
     Standard Enhanced LRC line format: [01:26.48]<01:26.48>我<01:27.20>就<01:27.42>在<01:30.00>
     """
-    data = enrich_prelude_credits(data, lyricist, composer)
-    tags = data.get("tags", {})
-    lines = data.get("lines", [])
+    enriched_data = enrich_prelude_credits(data, lyricist, composer)
+    tags = enriched_data.get("tags", {})
+    lines = enriched_data.get("lines", [])
     
     t = title or tags.get("ti", "")
     a = artist or tags.get("ar", "")
@@ -149,15 +142,12 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
         # If line has word-level timestamps (Standard Enhanced LRC format)
         if words:
             line_parts = []
-            # Line timestamp [mm:ss.xx] followed immediately by first word timestamp <mm:ss.xx>
             first_w = words[0]
             line_parts.append(f"{format_time_tag(start_ms, '[]')}{format_time_tag(first_w['start'], '<>')}{first_w['text']}")
             
-            # Remaining words start with <mm:ss.xx>
             for w in words[1:]:
                 line_parts.append(f"{format_time_tag(w['start'], '<>')}{w['text']}")
                 
-            # Line closes with <mm:ss.xx> in angle brackets
             last_end = words[-1].get("end", end_ms)
             line_parts.append(format_time_tag(last_end, "<>"))
             
@@ -179,9 +169,9 @@ def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     if verbatim_lrc:
         return to_spl(data, title, artist, lyricist, composer)
         
-    data = enrich_prelude_credits(data, lyricist, composer)
-    tags = data.get("tags", {})
-    lines = data.get("lines", [])
+    enriched_data = enrich_prelude_credits(data, lyricist, composer)
+    tags = enriched_data.get("tags", {})
+    lines = enriched_data.get("lines", [])
     
     t = title or tags.get("ti", "")
     a = artist or tags.get("ar", "")

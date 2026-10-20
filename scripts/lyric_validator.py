@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 r"""
-Lyric Timestamp Monotonicity, Acoustic Gate & Outro Validator (v1.1.1)
+Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.1.3)
 Ensures that all generated lyric timestamps strictly advance forward in time ($t_k \ge t_{k-1}$).
 Protects long musical instrument outros (solos) from being erroneously flagged as 'truncated'.
 Enforces Natural Acoustic Gate (flags/prevents 40ms dummy compression artifacts).
+Enforces Intro Gate (warns on unusually delayed singing start > 32s).
 Supports foreign lyrics translation line stripping.
 Zero external dependencies.
 """
 
 import re
 from typing import Dict, Any, Tuple, List
+
+from core.utils.text_utils import is_translation_line
 
 # Preamble credit keywords for whitelist protection
 CREDIT_KEYWORD_PATTERN = re.compile(
@@ -33,7 +36,7 @@ def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float
     tiny_count = 0
     for w in words:
         dur = w.get("duration", 0)
-        if dur <= 80: # Machine dummy compression threshold
+        if dur <= 80:  # Machine dummy compression threshold
             tiny_count += 1
             
     ratio = tiny_count / len(words)
@@ -41,8 +44,7 @@ def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float
 
 def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Strips interleaved translation lines (lines with Chinese characters and no verbatim word tags)
-    from non-Chinese songs to eliminate jumpy display.
+    Strips interleaved translation lines from non-Chinese songs to eliminate jumpy display.
     """
     lines = data.get("lines", [])
     if not lines:
@@ -63,37 +65,39 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
             cleaned_lines.append(line)
             continue
             
-        # Check Chinese characters
-        has_hanzi = bool(re.search(r"[\u4e00-\u9fa5]", text))
-        has_kana = bool(re.search(r"[\u3040-\u309F\u30A0-\u30FF]", text))
-        
-        # If line has Hanzi and no Kana, and no words -> translation line -> strip
-        if has_hanzi and not has_kana:
+        # Check translation line using shared text_utils
+        if is_translation_line(text, has_words=bool(words)):
             continue
         else:
             cleaned_lines.append(line)
             
-    data["lines"] = cleaned_lines
-    return data
+    return {**data, "lines": cleaned_lines}
 
 def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is_non_zh: bool = False) -> Tuple[bool, Dict[str, Any], List[str]]:
     """
     Validates and auto-repairs minor monotonicity deviations in parsed lyrics.
-    Enforces Natural Acoustic Gate and Outro protection.
+    Enforces Natural Acoustic Gate, Intro Gate, and Outro protection.
     Returns: (is_valid, repaired_data, warnings_list)
     """
     if is_non_zh:
         data = strip_translation_lines_from_parsed(data)
         
-    lines = data.get("lines", [])
+    lines = list(data.get("lines", []))
     warnings = []
     
     if not lines:
         return False, data, ["Empty lyrics track"]
 
     last_line_start = -1
+    first_sing_start = None
+
     for i, line in enumerate(lines):
         line_start = line.get("start", 0)
+        line_text = line.get("text", "").strip()
+        
+        # Track first sung lyric start (ignoring credit preamble)
+        if first_sing_start is None and not is_credit_line(line_text):
+            first_sing_start = line_start
         
         # 1. Check line monotonic progression
         if line_start < last_line_start:
@@ -129,7 +133,12 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
         else:
             line["end"] = line_start + line.get("duration", 3000)
 
-    # 3. Outro check: Musical instrument solo differentiation
+    # 3. Intro Gate: Check unusually delayed singing start
+    if audio_duration_ms > 90000 and first_sing_start is not None:
+        if first_sing_start > 32000:
+            warnings.append(f"Intro Gate Alert: First lyric starts unusually late ({first_sing_start / 1000.0:.2f}s). Please verify if intro stage banter or cut exists.")
+
+    # 4. Outro check: Musical instrument solo differentiation
     if audio_duration_ms > 0 and lines:
         last_lyric_ms = lines[-1].get("end", lines[-1].get("start", 0))
         tail_gap = audio_duration_ms - last_lyric_ms
@@ -137,4 +146,4 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
             # Long tail gap: Legitimate instrumental outro
             warnings.append(f"Instrumental outro detected ({tail_gap / 1000.0:.1f}s solo). Preserving natural musical silence.")
 
-    return True, data, warnings
+    return True, {**data, "lines": lines}, warnings

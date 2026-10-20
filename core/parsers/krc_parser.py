@@ -1,37 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-KRC Lyric Parser
+KRC Lyric Parser (v1.1.3)
 Parses raw KRC text into structured line-by-line and word-by-word timestamps.
+Supports [offset:xxx] tags from lyrics metadata and server-side adjust offsets.
+Zero external dependencies.
 """
 
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+
+from ..utils.time_utils import apply_time_offset
 
 TAG_RE = re.compile(r"^\[(\w+):([^\]]*)\]$")
 KRC_LINE_RE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
 KRC_WORD_RE = re.compile(r"<(\d+),(\d+),\d+>([^<]*)")
 
-def parse_krc(krc_text: str) -> Dict[str, Any]:
+def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
     """
-    Parses decrypted KRC text into a dictionary:
-    {
-        "tags": {"ti": "...", "ar": "...", ...},
-        "lines": [
-            {
-                "start": 1234,  # ms
-                "duration": 2500,
-                "end": 3734,
-                "text": "头顶的太阳",
-                "words": [
-                    {"start": 1234, "duration": 680, "end": 1914, "text": "头"},
-                    ...
-                ]
-            }
-        ]
-    }
+    Parses decrypted KRC text into structured format.
+    Applies metadata [offset:xxx] and caller-specified adjust offsets to all timestamps.
     """
     tags = {}
-    lines = []
+    raw_lines = []
     
     for raw_line in krc_text.splitlines():
         line = raw_line.strip()
@@ -51,8 +41,22 @@ def parse_krc(krc_text: str) -> Dict[str, Any]:
             
         line_start = int(line_match.group(1))
         line_duration = int(line_match.group(2))
-        line_end = line_start + line_duration
         content = line_match.group(3)
+        raw_lines.append((line_start, line_duration, content))
+
+    # Calculate overall offset (internal [offset:xxx] + external adjust)
+    internal_offset = 0
+    if "offset" in tags:
+        try:
+            internal_offset = int(tags["offset"])
+        except ValueError:
+            internal_offset = 0
+    total_offset = internal_offset + adjust
+
+    lines = []
+    for raw_start, line_duration, content in raw_lines:
+        adj_line_start = apply_time_offset(raw_start, total_offset)
+        adj_line_end = adj_line_start + line_duration
         
         words = []
         for wm in KRC_WORD_RE.finditer(content):
@@ -60,29 +64,30 @@ def parse_krc(krc_text: str) -> Dict[str, Any]:
             word_duration = int(wm.group(2))
             word_text = wm.group(3)
             
-            w_start = line_start + word_offset
-            w_end = w_start + word_duration
+            raw_w_start = raw_start + word_offset
+            adj_w_start = apply_time_offset(raw_w_start, total_offset)
+            adj_w_end = adj_w_start + word_duration
+            
             words.append({
-                "start": w_start,
+                "start": adj_w_start,
                 "duration": word_duration,
-                "end": w_end,
+                "end": adj_w_end,
                 "text": word_text
             })
             
-        # If no word tags parsed, fallback to whole line
         if not words and content.strip():
             words.append({
-                "start": line_start,
+                "start": adj_line_start,
                 "duration": line_duration,
-                "end": line_end,
+                "end": adj_line_end,
                 "text": content.strip()
             })
             
         line_text = "".join(w["text"] for w in words)
         lines.append({
-            "start": line_start,
+            "start": adj_line_start,
             "duration": line_duration,
-            "end": line_end,
+            "end": adj_line_end,
             "text": line_text,
             "words": words
         })

@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 音乐音频内嵌元数据标准化清洗、下架歌曲逐字歌词生成、多源开源逐字歌词获取与 Live 演出版双轨互斥防串扰引擎 (v1.1.2)。完全脱耦外部软件（零安装包依赖），原生聚合 QQ音乐、酷狗(KRC)、网易云、AMLL(Apple Music TTML)、LRCLIB(全球库)、酷我音乐等 GitHub 开源协议与 REST API。具备全套音频元数据治理体系（Title纯净化、Artist强制「/」分隔与乐队白名单保护、4位数字Year清洗、Album录音室母带对齐、Lyricist/Composer原作者注入与白名单防护）；双轨生成国际标准「.spl (逐字毫秒)」与「.lrc (标准外挂)」歌词并与音频内嵌标签三位一体 100% 镜像同步。全面固化 9 大避坑铁律（新增Live现场版与录音室版本强物理互斥防串扰门禁、标准Enhanced LRC全生态兼容、跨平台换行符确定性、乐器长尾奏Outro防假截断、非国语纯净外文逐字流光防跳屏、声学自然度门禁 200ms~800ms 防40ms挤压跳字）；针对全网下架孤品提供下架歌曲逐字歌词生成与轻量级 Demucs v4 GPU 人声分离与 AI 声学对齐兜底方案（轻量纯净文字协议，阶梯探测用户显式授权后按需加载，拒绝则 0 下载优雅降级）。
+description: 音乐音频内嵌元数据标准化清洗、下架歌曲逐字歌词生成、多源开源逐字歌词获取、Live 演出版双轨互斥防串扰与架构级 DRY 去重高精引擎 (v1.1.3)。完全脱耦外部软件（零安装包依赖），原生聚合 QQ音乐、酷狗(KRC)、网易云、AMLL(Apple Music TTML)、LRCLIB(全球库)、酷我音乐等 GitHub 开源协议与 REST API。具备全套音频元数据治理体系（Title纯净化、Artist强制「/」分隔与乐队白名单保护、4位数字Year清洗、Album录音室母带对齐、Lyricist/Composer原作者注入与白名单防护）；双轨生成国际标准「.spl (逐字毫秒)」与「.lrc (标准外挂)」歌词并与音频内嵌标签三位一体 100% 镜像同步。全面固化 10 大避坑铁律（新增KRC/LRC [offset]与adjust全链路毫秒级平移叠加、Intro Gate前奏起唱异常检测、Live现场版与录音室版本强物理互斥防串扰门禁、标准Enhanced LRC全生态兼容、跨平台换行符确定性、乐器长尾奏Outro防假截断、非国语纯净外文逐字流光防跳屏、声学自然度门禁 200ms~800ms 防40ms挤压跳字）；针对全网下架孤品提供下架歌曲逐字歌词生成与轻量级 Demucs v4 GPU 人声分离与 AI 声学对齐兜底方案（轻量纯净文字协议，阶梯探测用户显式授权后按需加载，拒绝则 0 下载优雅降级）。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.1.2)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.1.3)
 
 ## 技能定位与核心价值
 
@@ -100,6 +100,17 @@ flowchart TD
   3. **三阶检索与 Hash-to-Keyword 双轨降级**：若 Hash 反查无结果，自动降级至 `krcs` 关键词直搜 + 时长过滤，通过 `id` 与 `accesskey` 走 `download` 接口解密；
   4. **标题括号智能分级**：版本括号（如 `(Live)`、`(Demo)`）保留参与版本匹配，副标题括号二次降级，营销垃圾括号物理清除。
 
+### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律 (Offset & Intro Gate)
+- **避坑痛点**：
+  1. **[offset] 标签忽略导致的系统性时间平移**：公网解密 KRC 或开源 LRC 顶部常带 `[offset:1500]`（或负值），若解析时仅存入字典而未应用到时间戳算术中，全曲歌词在播放时将整体滞后或抢跑数秒；
+  2. **服务端 adjust 校准量被丢弃**：酷狗等平台返回的候选带有官方微调字段 `adjust`，若下载解密后未与 offset 叠加，会丢掉官方精细校准数据；
+  3. **前奏起唱异常迟滞（Intro Stage Banter）缺乏预警**：普通流行歌曲若首句开唱在 32s、40s 甚至更晚，常由于源歌词包含了未经剪辑的舞台废话或不同演唱会切片；
+  4. **LRC 多时间戳压缩行丢行**：经典 LRC 规范允许多个 `[mm:ss.xx]` 共用一行歌词（如副歌复用），若解析器仅取最后一个时间标签，前半首的歌词将发生大段静默丢失。
+- **铁律准则**：
+  1. **全解析器毫秒级 [offset] 与 adjust 强制叠加**：`krc_parser`、`lrc_parser`、`ttml_parser` 解析行/字时间戳时，强制统一叠加 `total_offset = offset + adjust`，并使用 `>= 0` 物理箝位；
+  2. **LRC 多时间戳行 100% 独立保留**：遍历提取每个时间标签，生成独立的唱词条目，0 丢行；
+  3. **Intro Gate 前奏起唱健康门禁**：常规歌曲（>90s）若首句非报幕歌词起唱时间 > 32s，触发高显警告提示，杜绝未修剪切片混入。
+
 ---
 
 ## 三、音频内嵌元数据全维度治理与修补体系 (Metadata Specification)
@@ -167,27 +178,33 @@ python scripts/process_song.py "path/to/music_folder/"
 ```
 music-tag-lyrics/
 ├── LICENSE                            # MIT License 开源协议
-├── SKILL.md                           # 技能全维度规范体系（本文件，v1.1.2）
-├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.1.2)
+├── SKILL.md                           # 技能全维度规范体系（本文件，v1.1.3）
+├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.1.3)
 ├── scripts/
 │   ├── process_song.py                # 顶层一键 CLI 执行流水线 (newline='\n' 确定性输出)
-│   ├── tag_editor.py                  # mutagen 音频标签清洗（多歌手'/'、乐队白名单、四位年份、FLAC/WAV双轨）
-│   └── lyric_validator.py             # 声学自然度门禁(200~800ms)、时间戳单调性校验与乐器尾奏保护
+│   ├── tag_editor.py                  # mutagen 音频标签清洗（去重精简架构，多歌手'/'、乐队白名单、四位年份、全格式覆盖）
+│   └── lyric_validator.py             # 声学自然度门禁(200~800ms)、Intro Gate 前奏起唱校验、单调性校验与乐器尾奏保护
 └── core/
+    ├── utils/                         # 共享底层工具包 (DRY 架构去重核心)
+    │   ├── __init__.py
+    │   ├── http.py                    # 统一轻量 HTTP 客户端 (User-Agent, 超时, 自动解析)
+    │   ├── time_utils.py              # 统一时间解析与格式化 (支持 [offset] 与 adjust 叠加)
+    │   ├── version_guard.py           # 权威版本门禁 (Live/Studio/Demo/Remix 双向互斥与标题副标题清洗)
+    │   └── text_utils.py              # 统一 CJK / 语言判定 / 翻译行识别
     ├── aggregator.py                  # 多源智能自适应调度中枢
-    ├── converter.py                   # 双轨输出标准 Enhanced LRC (.spl / .lrc 100% 镜像)
+    ├── converter.py                   # 双轨输出标准 Enhanced LRC (.spl / .lrc 100% 镜像，纯函数无就地污染)
     ├── acoustic_aligner.py            # Demucs v4 人声分离与 AI 音素能量强制对齐合成器
     ├── fetchers/
     │   ├── amll.py                    # AMLL Apple Music 官方母带 TTML 社区库抓取（欧美/全球一级）
-    │   ├── kugou.py                   # 酷狗音乐 KRC 逐字抓取（华语一级）
+    │   ├── kugou.py                   # 酷狗音乐 KRC 逐字抓取（华语一级，支持 adjust 叠加）
     │   ├── lrclib.py                  # LRCLIB 全球开源同步歌词 REST 接口
-    │   └── netease.py                 # 网易云音乐检索与提取
+    │   └── netease.py                 # 网易云音乐检索与提取（支持 Live 版本门禁）
     ├── decryptors/
     │   └── krc_xor.py                 # 酷狗 16字节掩码 XOR + Zlib 原生解密解压
     └── parsers/
-        ├── ttml_parser.py             # Apple Music TTML XML 解析
-        ├── krc_parser.py              # KRC 逐字解析
-        └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器
+        ├── ttml_parser.py             # Apple Music TTML XML 解析 (支持 SMPTE 纯秒数)
+        ├── krc_parser.py              # KRC 逐字解析 (支持 [offset] 与 adjust 叠加)
+        └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器 (支持多时间戳行保留)
 ```
 
 ---

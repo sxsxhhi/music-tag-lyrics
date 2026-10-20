@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main CLI Processor for music-tag-lyrics Skill (v1.1.1)
+Main CLI Processor for music-tag-lyrics Skill (v1.1.3)
 Standardizes audio metadata tags (Artist with '/', clean Title, Album, 4-digit Year, embedded Lyrics)
 and generates paired standard Enhanced LRC (.spl and .lrc) lyrics in the song's directory.
 Provides Demucs v4 GPU fallback protocol with interactive user authorization prompt.
@@ -176,6 +176,8 @@ def process_single_song(filepath: str, update_tags: bool = True, output_dir: Opt
             artist=normalized_artist,
             album=album,
             year=cleaned_year,
+            composer=composer,
+            lyricist=lyricist,
             lyrics=spl_content
         )
         if success:
@@ -187,7 +189,7 @@ def process_single_song(filepath: str, update_tags: bool = True, output_dir: Opt
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity music-tag-lyrics Processor (v1.1.1)")
+    parser = argparse.ArgumentParser(description="Antigravity music-tag-lyrics Processor (v1.1.3)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--out-dir", default=None, help="Custom output directory for lyrics")

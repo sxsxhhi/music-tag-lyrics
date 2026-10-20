@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Acoustic Alignment & Phoneme Timing Synthesizer
+Acoustic Alignment & Phoneme Timing Synthesizer (v1.1.3)
 When commercial platforms only provide line-level LRC without word-level timing,
 this module synthesizes syllable/word-level timestamps for Salt Player .spl format
 using acoustic energy envelope modeling and linguistic phoneme distribution.
+Refactored to reuse text_utils (DRY architecture).
 Zero external dependencies.
 """
 
-import re
 from typing import List, Dict, Any
-
-CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+from .utils.text_utils import CJK_RE
 
 def split_units(text: str) -> List[str]:
     """
@@ -53,18 +52,15 @@ def align_line_to_words(line_text: str, start_ms: int, duration_ms: int) -> List
     if not units:
         return []
         
-    # Calculate relative acoustic weights for each unit
     weights = []
     for i, u in enumerate(units):
         w = 1.0
-        # If ends with punctuation or is space
         if u in " \t":
             w = 0.2
         elif u in ",.!?;:，。！？；：":
             w = 0.5
         elif CJK_RE.match(u):
-            # CJK character
-            # Trailing characters often have sustained vowels/intonation
+            # CJK character: trailing characters often have sustained vowels/intonation
             if i == len(units) - 1 or (i < len(units) - 1 and units[i+1] in ",.!?;:，。！？；："):
                 w = 1.8  # Sustained outro syllable
             else:
@@ -78,7 +74,6 @@ def align_line_to_words(line_text: str, start_ms: int, duration_ms: int) -> List
         
     total_weight = sum(weights) or 1.0
     
-    # Assign durations
     words = []
     current_ms = start_ms
     for i, u in enumerate(units):
