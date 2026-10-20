@@ -117,7 +117,15 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     title_line = f"{t} - {a}" if (t and a) else t
     first_sing_start = lines[0].get("start", 0) if lines else 0
 
-    if title_line:
+    # Intelligent deduplication: check if existing first line is already the title
+    has_existing_title = False
+    if lines:
+        first_clean = re.sub(r"\s*-\s*", " - ", lines[0].get("text", "").strip())
+        target_clean = re.sub(r"\s*-\s*", " - ", title_line)
+        if first_clean == target_clean or (t and first_clean == t):
+            has_existing_title = True
+
+    if title_line and not has_existing_title:
         if first_sing_start >= 6000:
             st = 1000
             et = min(5500, first_sing_start // 2)
@@ -193,10 +201,18 @@ def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
         output_lines.append(f"[ti:{t}]")
     if a:
         output_lines.append(f"[ar:{a}]")
-    if t and a:
-        output_lines.append(f"[00:00.00]{t} - {a}")
-    elif t:
-        output_lines.append(f"[00:00.00]{t}")
+    has_existing_title = False
+    target_clean = re.sub(r"\s*-\s*", " - ", f"{t} - {a}" if (t and a) else t)
+    if lines:
+        first_clean = re.sub(r"\s*-\s*", " - ", lines[0].get("text", "").strip())
+        if first_clean == target_clean or (t and first_clean == t):
+            has_existing_title = True
+
+    if not has_existing_title:
+        if t and a:
+            output_lines.append(f"[00:00.00]{t} - {a}")
+        elif t:
+            output_lines.append(f"[00:00.00]{t}")
         
     for line in lines:
         start_ms = line.get("start", 0)
