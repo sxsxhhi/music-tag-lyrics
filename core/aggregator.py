@@ -19,7 +19,7 @@ from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .acoustic_aligner import enrich_track_with_acoustic_words
 from .parsers.lrc_parser import parse_lrc
-from .utils.text_utils import is_cjk
+from .utils.text_utils import is_cjk, is_foreign_track
 
 def enrich_with_netease_translation(candidate: Dict[str, Any], title: str, artist: str) -> Dict[str, Any]:
     """Helper to attach NetEase official tlyric to a candidate that lacks translations."""
@@ -76,26 +76,24 @@ class LyricAggregator:
         - Non-CJK/Global: Kugou (KRC word + native trans) -> AMLL (TTML word) -> NetEase (LRC + tlyric) -> LRCLIB
         If only line-level lyrics are found, automatically applies acoustic word synthesizer.
         """
-        cjk = is_cjk(f"{title} {artist}")
+        is_foreign = is_foreign_track(title, artist)
         candidate = None
         
         # 1. First probe Kugou (Provides both verbatim words and native 1:1 translation)
         try:
             res = KugouFetcher.fetch(title, artist, duration_ms)
             if res and res.get("lines"):
-                # If non-CJK and has embedded translation, it's the absolute best
-                if not cjk and res.get("has_embedded_translation"):
+                if is_foreign and res.get("has_embedded_translation"):
                     candidate = res
-                elif cjk:
+                elif not is_foreign:
                     candidate = res
                 else:
-                    # Non-CJK without embedded translation: hold as backup
                     candidate = res
         except Exception:
             pass
 
         # 2. AMLL TTML (Apple Music word-level verbatim)
-        if not candidate or (not cjk and not candidate.get("has_embedded_translation")):
+        if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
             try:
                 amll_res = AMLLFetcher.fetch(title, artist, duration_ms)
                 if amll_res and amll_res.get("lines"):
@@ -124,8 +122,8 @@ class LyricAggregator:
         if not candidate:
             return None
 
-        # For non-CJK tracks, ensure bilingual translation is enriched
-        if not cjk:
+        # For foreign tracks (Western, Korean, Japanese), ensure bilingual translation is enriched
+        if is_foreign:
             candidate = enrich_with_netease_translation(candidate, title, artist)
 
         # Check if candidate has word-level timestamps; if not, synthesize via acoustic aligner

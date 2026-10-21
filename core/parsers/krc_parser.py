@@ -40,9 +40,18 @@ def extract_krc_language_translation(krc_text: str, tags: Optional[Dict[str, str
         decoded_json = base64.b64decode(b64_str).decode("utf-8")
         data = json.loads(decoded_json)
         content = data.get("content", [])
-        if content:
-            lyric_content = content[0].get("lyricContent", [])
-            return [item[0] if item else "" for item in lyric_content]
+        # Enforce strict Semantic Translation Gate:
+        # Kugou defines: type == 1 -> Chinese semantic translation
+        #                type == 0 -> Phonetic transliteration / Romaji / 空耳 (STRICTLY PROHIBITED)
+        # We must iterate all blocks and only accept type == 1 blocks that contain genuine Hanzi.
+        for cnt in content:
+            if cnt.get("type") == 1:
+                lyric_content = cnt.get("lyricContent", [])
+                lines = [item[0].strip() if item else "" for item in lyric_content]
+                # Validate semantic validity: must contain genuine Chinese characters
+                combined = "".join(lines)
+                if re.search(r"[\u4e00-\u9fff]", combined):
+                    return lines
     except Exception:
         pass
         

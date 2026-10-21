@@ -36,13 +36,15 @@ def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
 def select_best_krc_candidate(
     candidates: List[Dict[str, Any]],
     download_fn,
-    max_probes: int = 6
+    max_probes: int = 6,
+    target_duration_ms: int = 0
 ) -> Optional[Dict[str, Any]]:
     """
     Centralized candidate selection logic:
-    Prioritizes candidates with native embedded translation, falling back to top scored candidate.
+    Prioritizes complete candidates with native embedded translation matching target duration.
+    Rejects collapsed instrumental placeholders and preview clips.
     """
-    best_parsed = None
+    scored_candidates = []
     for c in candidates[:max_probes]:
         cid = c.get("id")
         ack = c.get("accesskey")
@@ -50,12 +52,47 @@ def select_best_krc_candidate(
             continue
         adjust = int(c.get("adjust", 0))
         parsed = download_fn(cid, ack, adjust=adjust)
-        if parsed and parsed.get("lines"):
-            if parsed.get("has_embedded_translation"):
-                return parsed
-            if not best_parsed:
-                best_parsed = parsed
-    return best_parsed
+        if not parsed or not parsed.get("lines"):
+            continue
+            
+        lines = parsed["lines"]
+        
+        # Hard Gate: Reject collapsed instrumental placeholders (e.g. "纯音乐，请欣赏")
+        if target_duration_ms > 60000 and len(lines) <= 6:
+            text_sample = "".join(l.get("text", "") for l in lines)
+            if any(k in text_sample for k in ["纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics"]):
+                continue
+                
+        cand_last_end = lines[-1].get("end", lines[-1].get("start", 0))
+        # Reject severe truncations
+        if target_duration_ms > 90000 and cand_last_end < 45000:
+            continue
+            
+        # Scoring
+        score = 0
+        has_trans = parsed.get("has_embedded_translation", False)
+        if has_trans:
+            score += 1000
+            
+        if target_duration_ms > 0:
+            dur_diff = abs(cand_last_end - target_duration_ms)
+            if dur_diff <= 3000:
+                score += 500
+            elif dur_diff <= 8000:
+                score += 250
+            elif dur_diff <= 15000:
+                score += 100
+            else:
+                score -= int(dur_diff // 100)
+                
+        score += min(len(lines), 100)
+        scored_candidates.append((score, parsed))
+        
+    if not scored_candidates:
+        return None
+        
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+    return scored_candidates[0][1]
 
 class KugouFetcher:
     """Fetcher for Kugou Music KRC lyrics with Live-guard and KRCS fallback."""
@@ -175,7 +212,7 @@ class KugouFetcher:
                 return None
             ranked_cands = title_matching
             
-        return select_best_krc_candidate(ranked_cands, cls.download_krc_by_id)
+        return select_best_krc_candidate(ranked_cands, cls.download_krc_by_id, target_duration_ms=duration_sec*1000)
 
     @classmethod
     def fetch_lyrics_by_hash(
@@ -197,7 +234,7 @@ class KugouFetcher:
             candidates = data.get("candidates", [])
             if candidates:
                 candidates.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
-                res = select_best_krc_candidate(candidates, cls.download_krc_by_id)
+                res = select_best_krc_candidate(candidates, cls.download_krc_by_id, target_duration_ms=duration_ms)
                 if res and res.get("lines"):
                     return res
                     
