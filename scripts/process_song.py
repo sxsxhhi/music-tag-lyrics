@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main CLI Processor for music-tag-lyrics Skill (v1.2.0)
+Main CLI Processor for music-tag-lyrics Skill (v1.2.1)
 Standardizes audio metadata tags (Artist with '/', clean Title, Album, 4-digit Year, embedded Lyrics)
 and generates paired standard Enhanced LRC (.spl and .lrc) lyrics in the song's directory.
 Provides Demucs v4 GPU fallback protocol with strict acoustic alignment:

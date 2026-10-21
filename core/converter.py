@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Lyric Converter (v1.1.3)
+Lyric Converter (v1.2.1)
 Converts unified parsed lyric structures into standard Enhanced LRC (.lrc) and Salt Player (.spl) formats.
 Adheres strictly to the international Enhanced LRC (ELRC / A2 extension) standard.
 Line format: [01:26.48]<01:26.48>我<01:27.20>就<01:27.42>在<01:30.00>
 Supports Trilateral 100% SHA-256 verbatim mirror mode between audio embedded lyrics, .spl, and .lrc.
+Natively enforces Western word boundary spacing normalization and global \xa0 fake space elimination.
+Supports ELRC bilingual subtitle pairing without screen jumping.
 Refactored as pure functions (zero in-place mutation of input data) and reuses time_utils.
 Zero external dependencies.
 """
@@ -148,7 +150,8 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
         start_ms = line.get("start", 0)
         end_ms = line.get("end", start_ms + line.get("duration", 3000))
         words = line.get("words", [])
-        line_text = line.get("text", "").strip()
+        line_text = line.get("text", "").replace("\xa0", " ").strip()
+        trans_text = line.get("translation", "").replace("\xa0", " ").strip() if line.get("translation") else ""
         
         if not line_text:
             continue
@@ -157,28 +160,45 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
         if words:
             line_parts = []
             first_w = words[0]
-            line_parts.append(f"{format_time_tag(start_ms, '[]')}{format_time_tag(first_w['start'], '<>')}{first_w['text']}")
+            first_txt = first_w.get("text", "").replace("\xa0", " ")
+            line_parts.append(f"{format_time_tag(start_ms, '[]')}{format_time_tag(first_w['start'], '<>')}{first_txt}")
             
             for i in range(1, len(words)):
                 w_prev = words[i - 1]
                 w_cur = words[i]
+                prev_txt = w_prev.get("text", "").replace("\xa0", " ")
+                cur_txt = w_cur.get("text", "").replace("\xa0", " ")
                 prev_end = w_prev.get("end", w_prev.get("start", 0))
+
+                # Enforce Western word boundary standard spacing (Rule 14)
+                if prev_txt and cur_txt:
+                    if re.search(r"[a-zA-Z0-9,\.!\?;:'\"]$", prev_txt) and re.search(r"^[a-zA-Z0-9]", cur_txt):
+                        if not prev_txt.endswith(" ") and not cur_txt.startswith(" "):
+                            cur_txt = " " + cur_txt
+
                 # If there is a noticeable pause (>= 300ms) between words, insert explicit pause gap tag
                 if w_cur.get("start", 0) - prev_end >= 300:
                     line_parts.append(format_time_tag(prev_end, "<>"))
-                line_parts.append(f"{format_time_tag(w_cur['start'], '<>')}{w_cur['text']}")
+                line_parts.append(f"{format_time_tag(w_cur['start'], '<>')}{cur_txt}")
                 
             last_end = words[-1].get("end", end_ms)
             line_parts.append(format_time_tag(last_end, "<>"))
             
             full_line = collapse_duplicate_punc_tags("".join(line_parts))
             output_lines.append(full_line)
+            
+            # ELRC standard: if translation exists, append subtitle line with same start timestamp (Rule 3)
+            if trans_text:
+                output_lines.append(f"{format_time_tag(start_ms, '[]')}{trans_text}")
         else:
             # Fallback for lines without words
             start_tag = format_time_tag(start_ms, "[]")
             output_lines.append(f"{start_tag}{line_text}")
+            if trans_text:
+                output_lines.append(f"{start_tag}{trans_text}")
             
-    return "\n".join(output_lines) + "\n"
+    res = "\n".join(output_lines) + "\n"
+    return res.replace("\xa0", " ")
 
 def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: str = "", composer: str = "", verbatim_lrc: bool = True) -> str:
     """
@@ -216,10 +236,14 @@ def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
         
     for line in lines:
         start_ms = line.get("start", 0)
-        text = line.get("text", "").strip()
+        text = line.get("text", "").replace("\xa0", " ").strip()
+        trans = line.get("translation", "").replace("\xa0", " ").strip() if line.get("translation") else ""
         if not text:
             continue
         time_tag = format_time_tag(start_ms, "[]")
         output_lines.append(f"{time_tag}{text}")
+        if trans:
+            output_lines.append(f"{time_tag}{trans}")
         
-    return "\n".join(output_lines) + "\n"
+    res = "\n".join(output_lines) + "\n"
+    return res.replace("\xa0", " ")
