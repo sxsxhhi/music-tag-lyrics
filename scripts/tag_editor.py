@@ -14,10 +14,14 @@ from typing import Dict, Any, Optional
 
 import mutagen
 from mutagen.flac import FLAC
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, TCOM, TEXT, USLT
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT
 from mutagen.wave import WAVE
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
+try:
+    from mutagen.dsf import DSF
+except ImportError:
+    DSF = None
 
 # Whitelist of bands, groups, and brand names that contain '&' or other separators but must NOT be split
 BAND_WHITELIST = {
@@ -120,6 +124,8 @@ def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
         info["title"] = str(id3["TIT2"])
     if "TPE1" in id3:
         info["artist"] = str(id3["TPE1"])
+    if "TPE2" in id3:
+        info["albumartist"] = str(id3["TPE2"])
     if "TALB" in id3:
         info["album"] = str(id3["TALB"])
     if "TDRC" in id3:
@@ -143,13 +149,20 @@ def _apply_id3_tags(
     tracknumber: Optional[str] = None,
     composer: Optional[str] = None,
     lyricist: Optional[str] = None,
-    lyrics: Optional[str] = None
+    lyrics: Optional[str] = None,
+    albumartist: Optional[str] = None
 ) -> None:
     """Helper: Applies standardized metadata frames onto an ID3 structure."""
     if title is not None:
         id3["TIT2"] = TIT2(encoding=3, text=[clean_title_string(title)])
     if artist is not None:
         id3["TPE1"] = TPE1(encoding=3, text=[normalize_artist_string(artist)])
+    if albumartist is not None:
+        if albumartist.strip() == "":
+            if "TPE2" in id3:
+                del id3["TPE2"]
+        else:
+            id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(albumartist)])
     if album is not None:
         id3["TALB"] = TALB(encoding=3, text=[album.strip()])
     if year is not None:
@@ -161,6 +174,10 @@ def _apply_id3_tags(
     if lyricist is not None:
         id3["TEXT"] = TEXT(encoding=3, text=[lyricist.strip()])
     if lyrics is not None:
+        # Clean any old USLT keys first
+        for k in list(id3.keys()):
+            if k.startswith("USLT"):
+                del id3[k]
         id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=lyrics)
 
 def _apply_vorbis_tags(
@@ -172,13 +189,20 @@ def _apply_vorbis_tags(
     tracknumber: Optional[str] = None,
     composer: Optional[str] = None,
     lyricist: Optional[str] = None,
-    lyrics: Optional[str] = None
+    lyrics: Optional[str] = None,
+    albumartist: Optional[str] = None
 ) -> None:
     """Helper: Applies standardized metadata keys onto Vorbis Comment structure (FLAC/OGG)."""
     if title is not None:
         audio["title"] = [clean_title_string(title)]
     if artist is not None:
         audio["artist"] = [normalize_artist_string(artist)]
+    if albumartist is not None:
+        if albumartist.strip() == "":
+            if "albumartist" in audio:
+                del audio["albumartist"]
+        else:
+            audio["albumartist"] = [normalize_artist_string(albumartist)]
     if album is not None:
         audio["album"] = [album.strip()]
     if year is not None:
@@ -233,10 +257,19 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         elif isinstance(audio, WAVE):
             if audio.tags:
                 _extract_id3_dict(audio.tags, info)
+        elif DSF is not None and isinstance(audio, DSF):
+            if audio.tags:
+                _extract_id3_dict(audio.tags, info)
         else:
-            # Fallback ID3 for MP3
-            id3 = ID3(filepath)
-            _extract_id3_dict(id3, info)
+            # Fallback ID3 for MP3 or DSF
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext == ".dsf" and DSF is not None:
+                d = DSF(filepath)
+                if d.tags:
+                    _extract_id3_dict(d.tags, info)
+            else:
+                id3 = ID3(filepath)
+                _extract_id3_dict(id3, info)
     except Exception:
         pass
         
@@ -251,14 +284,15 @@ def update_audio_tags(
     tracknumber: Optional[str] = None,
     composer: Optional[str] = None,
     lyricist: Optional[str] = None,
-    lyrics: Optional[str] = None
+    lyrics: Optional[str] = None,
+    albumartist: Optional[str] = None
 ) -> bool:
     """
     Updates audio file metadata tags in-place.
     Never moves or deletes the file.
     Ensures artists are joined with '/' under Band Whitelist protection.
     Formats year into 4-digit YYYY.
-    Supports atomic embedded lyrics update across FLAC, WAV, MP3, OGG, and MP4.
+    Supports atomic embedded lyrics update across FLAC, WAV, MP3, OGG, DSF, and MP4.
     """
     if not os.path.exists(filepath):
         return False
@@ -267,7 +301,7 @@ def update_audio_tags(
         ext = os.path.splitext(filepath)[1].lower()
         if ext in [".flac", ".ogg"]:
             audio = FLAC(filepath) if ext == ".flac" else OggVorbis(filepath)
-            _apply_vorbis_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics)
+            _apply_vorbis_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
             audio.save()
             return True
             
@@ -276,7 +310,7 @@ def update_audio_tags(
                 audio = ID3(filepath)
             except Exception:
                 audio = ID3()
-            _apply_id3_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics)
+            _apply_id3_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
             audio.save(filepath)
             return True
 
@@ -284,7 +318,17 @@ def update_audio_tags(
             audio = WAVE(filepath)
             if audio.tags is None:
                 audio.add_tags()
-            _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics)
+            _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+            audio.save()
+            return True
+
+        elif ext == ".dsf":
+            if DSF is None:
+                raise ImportError("mutagen.dsf is not available")
+            audio = DSF(filepath)
+            if audio.tags is None:
+                audio.add_tags()
+            _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
             audio.save()
             return True
             
