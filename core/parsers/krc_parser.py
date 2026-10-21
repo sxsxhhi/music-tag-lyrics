@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-KRC Lyric Parser (v1.1.3)
+KRC Lyric Parser (v1.2.2)
 Parses raw KRC text into structured line-by-line and word-by-word timestamps.
 Supports [offset:xxx] tags from lyrics metadata and server-side adjust offsets.
+Natively decodes Kugou Base64 JSON [language:...] tag into 1:1 line-level embedded translations.
 Zero external dependencies.
 """
 
 import re
+import base64
+import json
 from typing import Dict, List, Any, Optional
 
 from ..utils.time_utils import apply_time_offset
@@ -15,10 +18,30 @@ TAG_RE = re.compile(r"^\[(\w+):([^\]]*)\]$")
 KRC_LINE_RE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
 KRC_WORD_RE = re.compile(r"<(\d+),(\d+),\d+>([^<]*)")
 
+def extract_krc_language_translation(krc_text: str) -> List[str]:
+    """
+    Parses and extracts embedded translations from Kugou KRC [language:...] tag.
+    Returns a list of translation strings matching KRC lines index 1:1.
+    """
+    for line in krc_text.splitlines():
+        if line.startswith("[language:"):
+            try:
+                b64_str = line[10:-1].strip()
+                decoded_json = base64.b64decode(b64_str).decode("utf-8")
+                data = json.loads(decoded_json)
+                content = data.get("content", [])
+                if content:
+                    lyric_content = content[0].get("lyricContent", [])
+                    return [item[0] if item else "" for item in lyric_content]
+            except Exception:
+                pass
+    return []
+
 def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
     """
     Parses decrypted KRC text into structured format.
     Applies metadata [offset:xxx] and caller-specified adjust offsets to all timestamps.
+    Natively maps embedded [language:...] translations to lines 1:1.
     """
     tags = {}
     raw_lines = []
@@ -53,8 +76,20 @@ def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
             internal_offset = 0
     total_offset = internal_offset + adjust
 
+    # Extract embedded translations if present
+    trans_list = extract_krc_language_translation(krc_text)
+    if not trans_list and "language" in tags:
+        try:
+            decoded_json = base64.b64decode(tags["language"]).decode("utf-8")
+            data = json.loads(decoded_json)
+            content = data.get("content", [])
+            if content:
+                trans_list = [item[0] if item else "" for item in content[0].get("lyricContent", [])]
+        except Exception:
+            trans_list = []
+
     lines = []
-    for raw_start, line_duration, content in raw_lines:
+    for i, (raw_start, line_duration, content) in enumerate(raw_lines):
         adj_line_start = apply_time_offset(raw_start, total_offset)
         adj_line_end = adj_line_start + line_duration
         
@@ -84,15 +119,19 @@ def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
             })
             
         line_text = "".join(w["text"] for w in words)
+        trans_text = trans_list[i] if i < len(trans_list) else ""
         lines.append({
             "start": adj_line_start,
             "duration": line_duration,
             "end": adj_line_end,
             "text": line_text,
+            "translation": trans_text,
             "words": words
         })
         
     return {
         "tags": tags,
-        "lines": lines
+        "lines": lines,
+        "has_embedded_translation": bool(any(t.strip() for t in trans_list)),
+        "embedded_translations": trans_list
     }

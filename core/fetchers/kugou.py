@@ -139,21 +139,29 @@ class KugouFetcher:
                     valid.append((diff, c))
             if valid:
                 valid.sort(key=lambda x: x[0])
-                best_cand = valid[0][1]
+                ranked_cands = [x[1] for x in valid]
             else:
                 title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
                 if not title_matching:
                     return None
                 title_matching.sort(key=lambda c: abs(get_cand_dur_sec(c) - duration_sec))
-                best_cand = title_matching[0]
+                ranked_cands = title_matching
         else:
             title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
             if not title_matching:
                 return None
-            best_cand = title_matching[0]
+            ranked_cands = title_matching
             
-        adjust = int(best_cand.get("adjust", 0))
-        return cls.download_krc_by_id(best_cand.get("id"), best_cand.get("accesskey"), adjust=adjust)
+        best_parsed = None
+        for c in ranked_cands[:6]:
+            adjust = int(c.get("adjust", 0))
+            parsed = cls.download_krc_by_id(c.get("id"), c.get("accesskey"), adjust=adjust)
+            if parsed and parsed.get("lines"):
+                if parsed.get("has_embedded_translation"):
+                    return parsed
+                if not best_parsed:
+                    best_parsed = parsed
+        return best_parsed
 
     @classmethod
     def fetch_lyrics_by_hash(
@@ -176,11 +184,18 @@ class KugouFetcher:
             if candidates:
                 # Sort candidates by score descending
                 candidates.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
-                best = candidates[0]
-                adjust = int(best.get("adjust", 0))
-                parsed = cls.download_krc_by_id(best.get("id"), best.get("accesskey"), adjust=adjust)
-                if parsed and parsed.get("lines"):
-                    return parsed
+                best_parsed = None
+                for c in candidates[:6]:
+                    adjust = int(c.get("adjust", 0))
+                    parsed = cls.download_krc_by_id(c.get("id"), c.get("accesskey"), adjust=adjust)
+                    if parsed and parsed.get("lines"):
+                        # Prioritize candidates with native embedded translation
+                        if parsed.get("has_embedded_translation"):
+                            return parsed
+                        if not best_parsed:
+                            best_parsed = parsed
+                if best_parsed:
+                    return best_parsed
                     
         # Fallback to keyword direct query if title is provided
         if title:
