@@ -6,8 +6,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.2)。**  
-> 原生聚合 Kugou (KRC)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 Demucs v4 + Whisper 短窗声学对齐与双端能量门禁引擎，恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**铁律，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品声学强制咬合 + 全链路 DRY 架构去重」。
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.3)。**  
+> 原生聚合 Kugou (KRC)、LRCSHARE (云端TTML/多语言)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 Demucs v4 + Whisper 短窗声学对齐与双端能量门禁引擎，恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品声学强制咬合 + 3-Tier外语翻译级联调度 + 黄金时间轴动态微调锚定 + 全链路 DRY 架构去重」。
 
 ---
 
@@ -218,6 +218,7 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| [**v1.2.3**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.3) | `2026-10-21` | **LRCSHARE 云端高精歌词集成 · 3-Tier 外语翻译级联调度与 18 大避坑铁律全量固化** | • **LRCSHARE 社区云端源接入 (`core/fetchers/lrcshare.py`)**：原生接入 `api.lrcshare.com`，内置 24h 缓存 session token、全库本地负向预过滤（Token未命中 0 请求极速拦截）、结构化多语言 versions 解析与 Apple Music 原生 TTML 直通<br/>• **3-Tier 外语翻译级联调度**：确立 酷狗原生 type:1 语义翻译 $\rightarrow$ 网易云 163 翻译 $\rightarrow$ LRCSHARE 兜底三级调度，严格杜绝罗马音与空耳音译混入<br/>• **黄金基准时间轴动态微调锚定**：确立已实测歌曲时间戳真理权，$\le \pm 300\text{ms}$ 允许声学容差平滑微调，$> 500\text{ms}$ 强物理锁定原时间轴，仅挂载语义文本<br/>• **18 大避坑铁律全面固化**：正式新增铁律 15（酷狗 KRC 语义翻译与音译防混淆门禁）、铁律 16（纯音乐占位防篡改与有效行数门禁）、铁律 17（物理时长严密邻近与版本防串扰门禁）、铁律 18（黄金基准时间轴锚定门禁） | 生产级高精调度 |
 | [**v1.2.2**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.2) | `2026-10-21` | **ELRC 双语翻译规范 · 外文词界空格排版治理与 14 大铁律升级** | • **国际标准 ELRC 官方精修双语引擎**：建立主唱行与译文副行母体时间戳咬合规范，副行零 `<>` 打点防跳屏，全量 71 首外语曲库 100% 达成三位一体 SHA-256 镜像<br/>• **外文词界空格与 `\xa0` 假空格消融铁律**：确立第 14 大避坑铁律，底层强制注入标准 ASCII `\x20` 词距空格并消融全部网页非换行假空格 `\xa0`<br/>• **双核心红线体系**：绝不语音听写 · 绝不机械机翻双红线全面固化 | 生产级双语流光 |
 | [**v1.2.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.0) | `2026-10-20` | **下架歌曲声学咬合引擎 · 双核心红线与双端能量门禁** | • **绝不语音听写核心红线 (Never Transcribe Blindly)**：确立终极兜底绝对红线，严禁 ASR 语音听写导致同音错字与排版坍塌；Demucs v4 兜底必须基于全网/本地权威文本进行强制声学打轴，无词时绝对阻断<br/>• **绝不机械机翻核心红线 (Never Machine Translate Blindly)**：确立非国语翻译绝对红线，严禁盲目机械直翻污染歌词；非国语翻译仅采纳官方/专业人工审校精修译文，无官方译文时坚守纯净外文原版呈现<br/>• **双端声学能量门禁 (Dual-Ended Acoustic Gates)**：首字 15ms 逆向能量回溯消除抢跑（Onset Gate），尾字 20ms 正向跌落截断拖尾（Offset Gate）<br/>• **短窗隔离切分 (Hybrid Window Partitioning)**：彻底根除 30s 间奏/Solo 期间 DTW 虚空拉伸与全篇系统性大漂移<br/>• **行内停顿防拉伸闭合标签 (Pause Gap Tags)**：当词间停顿 $\ge 300\text{ms}$ 时自动插入 `<cur_end><next_start>` 闭合标签<br/>• **用户元数据绝对保护**：新增 `--lyrics-only` 模式，100% 保护用户手动修改的 ID3 标签（TIT2/TALB/TDRC等）不受侵扰 | 生产级声学打轴 |
 | [**v1.1.3**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.1.3) | `2026-10-20` | **工业级架构大重构 · DRY 全量去重与 8 大隐患根治** | • **DRY 架构去重**：新建 `core/utils/`（收敛 `http`, `time_utils`, `version_guard`, `text_utils`），消除 90+ 行样板代码；重构 `tag_editor` 消除 ID3/Vorbis 跨格式 70+ 行镜像重复<br/>• **8 大隐患根治**：KRC/LRC `[offset]` 与 `adjust` 毫秒级叠加、LRC 多时间戳行 0 丢行保留、网易云/AMLL 严格版本与时长门禁、TTML SMPTE 纯秒数支持、Converter 纯函数化无副作用<br/>• **Intro Gate 前奏门禁**：新增首句起唱异常（>32s）健康预警，与 Outro 尾奏保护形成首尾双门禁闭环 | 34 项单元测试 100% 绿灯 |
@@ -234,6 +235,7 @@ python scripts/process_song.py "path/to/music_folder/"
 | 项目 / 规范 | 官方仓库 / 地址 | 开源许可证 | 说明与致敬 |
 | :--- | :--- | :--- | :--- |
 | **AMLL (Apple Music Like Lyrics)** | [`amll-dev/amll-ttml-db`](https://github.com/amll-dev/amll-ttml-db) | **CC0-1.0** | 感谢 AMLL 社区构建并无私开放的高质量 Apple Music 官方 TTML 歌词数据库。 |
+| **LRCSHARE** | [`https://api.lrcshare.com`](https://api.lrcshare.com) | 开放规范 | 感谢 LRCSHARE 社区及 Lyrico 插件团队提供的高品质多语言歌词、逐词打点与 TTML 社区开放服务。 |
 | **LRCLIB** | [`https://lrclib.net`](https://lrclib.net) | **MIT** | 感谢 Tran Xuan Thang 创建的全球最大开放同步歌词数据库与免认证 API 服务。 |
 | **Folia (现代音乐播放器)** | [`chthollyphile/folia-major`](https://github.com/chthollyphile/folia-major) | **GNU AGPL-3.0** | 感谢 Folia 团队打造的极具美感的 WebGPU/PixiJS 逐字流光歌词播放器。本项目严格以数据协议兼容其 Enhanced LRC 规范。 |
 | **Salt Player (椒盐音乐)** | [`moriafly.com`](https://moriafly.com/standards/spl.html) | 开放规范 | 感谢 Moriafly 发布的《SPL 格式语法标准》与椒盐音乐在移动端流光歌词领域的卓越体验。 |

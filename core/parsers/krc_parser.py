@@ -47,7 +47,14 @@ def extract_krc_language_translation(krc_text: str, tags: Optional[Dict[str, str
         for cnt in content:
             if cnt.get("type") == 1:
                 lyric_content = cnt.get("lyricContent", [])
-                lines = [item[0].strip() if item else "" for item in lyric_content]
+                lines = []
+                for item in lyric_content:
+                    if isinstance(item, list) and item:
+                        lines.append(str(item[0]).strip())
+                    elif isinstance(item, str):
+                        lines.append(item.strip())
+                    else:
+                        lines.append("")
                 # Validate semantic validity: must contain genuine Chinese characters
                 combined = "".join(lines)
                 if re.search(r"[\u4e00-\u9fff]", combined):

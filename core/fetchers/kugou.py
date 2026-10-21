@@ -74,16 +74,18 @@ def select_best_krc_candidate(
         if has_trans:
             score += 1000
             
+        # Iron Rule 17: Duration Proximity Gate
         if target_duration_ms > 0:
             dur_diff = abs(cand_last_end - target_duration_ms)
+            if dur_diff > 8000:
+                # Reject version divergence > 8.0s (e.g. 1978 original 287s vs remix 225s)
+                continue
             if dur_diff <= 3000:
                 score += 500
-            elif dur_diff <= 8000:
-                score += 250
-            elif dur_diff <= 15000:
-                score += 100
+            elif dur_diff <= 5000:
+                score += 300
             else:
-                score -= int(dur_diff // 100)
+                score += 100
                 
         score += min(len(lines), 100)
         scored_candidates.append((score, parsed))
@@ -195,17 +197,14 @@ class KugouFetcher:
                     continue
                 c_dur = get_cand_dur_sec(c)
                 diff = abs(c_dur - duration_sec)
-                if diff <= 35:
+                # Iron Rule 17: Candidate duration within 8s proximity
+                if diff <= 8:
                     valid.append((diff, c))
             if valid:
                 valid.sort(key=lambda x: x[0])
                 ranked_cands = [x[1] for x in valid]
             else:
-                title_matching = [c for c in candidates if is_title_fuzzy_match(c.get("song", ""), title)]
-                if not title_matching:
-                    return None
-                title_matching.sort(key=lambda c: abs(get_cand_dur_sec(c) - duration_sec))
-                ranked_cands = title_matching
+                return None
         else:
             title_matching = [c for c in candidates if is_title_fuzzy_match(c.get("song", ""), title)]
             if not title_matching:
@@ -293,15 +292,20 @@ class KugouFetcher:
         # Try candidates in order
         for song in title_matched_songs:
             h = song.get("hash")
-            d = song.get("duration", duration_ms)
+            s_dur = song.get("duration", 0)
+            # Iron Rule 17: Pre-filter candidate song metadata duration
+            if duration_ms > 0 and s_dur > 0 and abs(s_dur - duration_ms) > 10000:
+                continue
             if h:
-                res = cls.fetch_lyrics_by_hash(h, d, title, artist)
+                res = cls.fetch_lyrics_by_hash(h, duration_ms, title, artist)
                 if res and res.get("lines"):
                     lines = res["lines"]
-                    # Protect instrumental outro: only reject genuine preview clips (e.g. <45s for a long track)
-                    if duration_ms > 90000 and lines:
+                    # Iron Rule 17: Enforce duration proximity on actual parsed lines
+                    if duration_ms > 0 and lines:
                         last_t_ms = lines[-1].get("end", lines[-1].get("start", 0))
-                        if last_t_ms < 45000:
+                        if abs(last_t_ms - duration_ms) > 8000:
+                            continue
+                        if duration_ms > 90000 and last_t_ms < 45000:
                             continue
                     return res
                     

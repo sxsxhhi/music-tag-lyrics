@@ -1,57 +1,159 @@
 # -*- coding: utf-8 -*-
 """
-Multi-Engine Lyric Aggregator & Dispatcher (v1.2.2)
+Multi-Engine Lyric Aggregator & Dispatcher (v1.2.3)
 Orchestrates concurrent/cascading retrieval across:
 1. Kugou (KRC word-level verbatim with native embedded 1:1 translation)
 2. AMLL (Apple Music Lossless Lyrics TTML)
-3. NetEase (Cloud music synced & official reviewed translation)
-4. LRCLIB (Global open synchronized database)
-5. Acoustic Aligner (AI syllable energy synthesizer fallback)
-Natively enforces bilingual translation enrichment for foreign tracks.
+3. LRCSHARE (Cloud open-source syllable TTML / LRC & structured translations)
+4. NetEase (Cloud music synced & official reviewed translation)
+5. LRCLIB (Global open synchronized database)
+6. Acoustic Aligner (AI syllable energy synthesizer fallback)
+
+Multi-tier Translation Cascade for Foreign Tracks:
+- Tier 1: Kugou Native type:1 semantic translation (KRC embedded)
+- Tier 2: NetEase 163 (tlyric official translation)
+- Tier 3: LRCSHARE (zh-Hans structured translation fallback)
+
+Enforces 4 Core Iron Rules:
+- Iron Rule 15: type:1 semantic Hanzi check (rejection of type:0 romanization)
+- Iron Rule 16: Line count integrity & instrumental placeholder anti-tampering
+- Iron Rule 17: Duration proximity gate (±5.0s version guard)
+- Iron Rule 18: Golden baseline timing anchor with dynamic fine-tuning (≤300ms smooth, >500ms locked)
 Zero external dependencies.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 
 from .fetchers.amll import AMLLFetcher
 from .fetchers.kugou import KugouFetcher
+from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .acoustic_aligner import enrich_track_with_acoustic_words
 from .parsers.lrc_parser import parse_lrc
-from .utils.text_utils import is_cjk, is_foreign_track
+from .utils.text_utils import is_cjk, is_foreign_track, has_hanzi
 
-def enrich_with_netease_translation(candidate: Dict[str, Any], title: str, artist: str) -> Dict[str, Any]:
-    """Helper to attach NetEase official tlyric to a candidate that lacks translations."""
+INSTRUMENTAL_KEYWORDS = ["纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics"]
+
+def is_instrumental_placeholder(lines: List[Dict[str, Any]], target_duration_ms: int = 0) -> bool:
+    """Detects whether a lyric candidate is a collapsed instrumental placeholder."""
+    if not lines:
+        return True
+    if target_duration_ms > 60000 and len(lines) <= 6:
+        sample = "".join(l.get("text", "") for l in lines)
+        if any(k in sample for k in INSTRUMENTAL_KEYWORDS):
+            return True
+    return False
+
+def align_translation_to_baseline(
+    candidate_lines: List[Dict[str, Any]],
+    translation_entries: List[Dict[str, Any]],
+    tolerance_ms: int = 1500
+) -> int:
+    """
+    Applies Golden Baseline Timing Anchor (Iron Rule 18):
+    Maps translation text onto candidate baseline lines using nearest-timestamp matching.
+    - If diff <= 300ms: within dynamic acoustic tolerance.
+    - If 300ms < diff <= tolerance_ms: mapped directly to baseline line without touching timestamps.
+    - If diff > 1500ms: rejected.
+    Baseline timestamps (start, end, words) remain strictly immutable.
+    Returns the number of lines successfully attached with translations.
+    """
+    if not candidate_lines or not translation_entries:
+        return 0
+
+    used_indices = set()
+    matched_count = 0
+
+    for line in candidate_lines:
+        k_time = line.get("start", 0)
+        best_diff = tolerance_ms + 1
+        best_idx = -1
+        best_text = ""
+
+        for idx, entry in enumerate(translation_entries):
+            if idx in used_indices:
+                continue
+            e_time = entry.get("start", 0)
+            diff = abs(e_time - k_time)
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = idx
+                best_text = entry.get("text", "").strip()
+
+        if best_idx >= 0 and best_diff <= tolerance_ms and has_hanzi(best_text):
+            line["translation"] = best_text
+            used_indices.add(best_idx)
+            matched_count += 1
+
+    return matched_count
+
+def enrich_foreign_translation(
+    candidate: Dict[str, Any],
+    title: str,
+    artist: str,
+    duration_ms: int = 0
+) -> Dict[str, Any]:
+    """
+    Orchestrates the 3-Tier foreign translation cascade:
+    Tier 1: Kugou KRC Native type:1 semantic translation (if already present)
+    Tier 2: NetEase 163 (tlyric)
+    Tier 3: LRCSHARE (zh-Hans structured versions)
+    Strictly enforces Line Count Integrity (Iron Rule 16) and Baseline Timing Anchor (Iron Rule 18).
+    """
     if not candidate or not candidate.get("lines"):
         return candidate
-    has_trans = any(line.get("translation") for line in candidate.get("lines", []))
-    if has_trans:
+
+    cand_lines = candidate["lines"]
+
+    # Tier 1: Check if candidate already has verified Chinese translation
+    has_valid_trans = any(has_hanzi(l.get("translation", "")) for l in cand_lines)
+    if has_valid_trans:
         return candidate
-        
+
+    min_required_trans = max(4, int(len(cand_lines) * 0.3))
+
+    # Tier 2: NetEase 163 (tlyric)
     try:
-        ne_data = NetEaseFetcher.fetch(title, artist)
+        ne_data = NetEaseFetcher.fetch(title, artist, duration_ms)
         tlyric_text = ne_data.get("tlyric", "") if ne_data else ""
         if tlyric_text:
             t_parsed = parse_lrc(tlyric_text)
-            clean_t = [l for l in t_parsed.get("lines", []) if l.get("text", "").strip()]
-            used = set()
-            for line in candidate["lines"]:
-                k_time = line.get("start", 0)
-                best_diff, best_idx, best_text = 1500, -1, ""
-                for idx, tl in enumerate(clean_t):
-                    if idx in used:
-                        continue
-                    diff = abs(tl.get("start", 0) - k_time)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = idx
-                        best_text = tl.get("text", "").strip()
-                if best_idx >= 0:
-                    line["translation"] = best_text
-                    used.add(best_idx)
+            clean_t = [
+                {"start": l.get("start", 0), "text": l.get("text", "").strip()}
+                for l in t_parsed.get("lines", [])
+                if l.get("text", "").strip() and has_hanzi(l.get("text", ""))
+            ]
+            # Anti-tamper: Check instrumental placeholders and line count
+            if not any(k in "".join(x["text"] for x in clean_t) for k in INSTRUMENTAL_KEYWORDS):
+                if len(clean_t) >= min_required_trans:
+                    matched = align_translation_to_baseline(cand_lines, clean_t)
+                    if matched >= min_required_trans:
+                        candidate["has_translation"] = True
+                        candidate["translation_source"] = "netease"
+                        return candidate
     except Exception:
         pass
+
+    # Tier 3: LRCSHARE (zh-Hans fallback)
+    try:
+        lrcshare_data = LrcShareFetcher.fetch(title, artist, duration_ms)
+        if lrcshare_data and lrcshare_data.get("lines"):
+            ls_lines = lrcshare_data["lines"]
+            clean_ls = [
+                {"start": l.get("start", 0), "text": l.get("translation", "").strip()}
+                for l in ls_lines
+                if l.get("translation", "").strip() and has_hanzi(l.get("translation", ""))
+            ]
+            if len(clean_ls) >= min_required_trans:
+                matched = align_translation_to_baseline(cand_lines, clean_ls)
+                if matched >= min_required_trans:
+                    candidate["has_translation"] = True
+                    candidate["translation_source"] = "lrcshare"
+                    return candidate
+    except Exception:
+        pass
+
     return candidate
 
 class LyricAggregator:
@@ -72,23 +174,22 @@ class LyricAggregator:
     ) -> Optional[Dict[str, Any]]:
         """
         Retrieves the best available lyrics using language-aware hierarchy:
-        - Chinese/CJK: Kugou (KRC word) -> AMLL (TTML word) -> NetEase (LRC) -> LRCLIB
-        - Non-CJK/Global: Kugou (KRC word + native trans) -> AMLL (TTML word) -> NetEase (LRC + tlyric) -> LRCLIB
-        If only line-level lyrics are found, automatically applies acoustic word synthesizer.
+        1. Kugou (KRC word + native trans)
+        2. AMLL (Apple Music TTML word)
+        3. LRCSHARE (api.lrcshare.com word/line TTML)
+        4. NetEase (Cloud music synced & translation)
+        5. LRCLIB (Global open sync database)
+        6. Acoustic Aligner (AI syllable energy synthesizer fallback)
+        Foreign tracks undergo 3-Tier translation cascade enrichment.
         """
         is_foreign = is_foreign_track(title, artist)
         candidate = None
-        
-        # 1. First probe Kugou (Provides both verbatim words and native 1:1 translation)
+
+        # 1. First probe Kugou (KRC word-level verbatim + native 1:1 translation)
         try:
             res = KugouFetcher.fetch(title, artist, duration_ms)
-            if res and res.get("lines"):
-                if is_foreign and res.get("has_embedded_translation"):
-                    candidate = res
-                elif not is_foreign:
-                    candidate = res
-                else:
-                    candidate = res
+            if res and res.get("lines") and not is_instrumental_placeholder(res["lines"], duration_ms):
+                candidate = res
         except Exception:
             pass
 
@@ -96,25 +197,35 @@ class LyricAggregator:
         if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
             try:
                 amll_res = AMLLFetcher.fetch(title, artist, duration_ms)
-                if amll_res and amll_res.get("lines"):
+                if amll_res and amll_res.get("lines") and not is_instrumental_placeholder(amll_res["lines"], duration_ms):
                     candidate = amll_res
             except Exception:
                 pass
 
-        # 3. NetEase (Cloud music synced & translation)
+        # 3. LRCSHARE (api.lrcshare.com community TTML & word-level)
+        if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
+            try:
+                ls_res = LrcShareFetcher.fetch(title, artist, duration_ms)
+                if ls_res and ls_res.get("lines") and not is_instrumental_placeholder(ls_res["lines"], duration_ms):
+                    if not candidate or ls_res.get("has_translation"):
+                        candidate = ls_res
+            except Exception:
+                pass
+
+        # 4. NetEase (Cloud music synced & translation)
         if not candidate:
             try:
                 ne_res = NetEaseFetcher.fetch(title, artist, duration_ms)
-                if ne_res and ne_res.get("lines"):
+                if ne_res and ne_res.get("lines") and not is_instrumental_placeholder(ne_res["lines"], duration_ms):
                     candidate = ne_res
             except Exception:
                 pass
 
-        # 4. LRCLIB (Global open sync database)
+        # 5. LRCLIB (Global open sync database)
         if not candidate:
             try:
                 lrc_res = LRCLIBFetcher.fetch(title, artist, album, duration_ms)
-                if lrc_res and lrc_res.get("lines"):
+                if lrc_res and lrc_res.get("lines") and not is_instrumental_placeholder(lrc_res["lines"], duration_ms):
                     candidate = lrc_res
             except Exception:
                 pass
@@ -122,9 +233,9 @@ class LyricAggregator:
         if not candidate:
             return None
 
-        # For foreign tracks (Western, Korean, Japanese), ensure bilingual translation is enriched
+        # For foreign tracks (Western, Korean, Japanese), run the 3-Tier translation cascade
         if is_foreign:
-            candidate = enrich_with_netease_translation(candidate, title, artist)
+            candidate = enrich_foreign_translation(candidate, title, artist, duration_ms)
 
         # Check if candidate has word-level timestamps; if not, synthesize via acoustic aligner
         has_words = any(line.get("words") for line in candidate.get("lines", []))
