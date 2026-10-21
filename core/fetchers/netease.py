@@ -99,4 +99,10 @@ class NetEaseFetcher:
         parsed["lyric_type"] = "line"
         parsed.setdefault("tags", {})["ti"] = title
         parsed.setdefault("tags", {})["ar"] = artist
+
+        # Official reviewed translation from NetEase (tlyric)
+        tlyric_text = data.get("tlyric", {}).get("lyric", "")
+        if tlyric_text:
+            parsed["tlyric"] = tlyric_text
+
         return parsed
