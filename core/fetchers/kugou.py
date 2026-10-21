@@ -116,9 +116,23 @@ class KugouFetcher:
             d = int(c.get("duration", 0))
             return d // 1000 if d > 10000 else d
             
+        def is_title_match(cand_title: str) -> bool:
+            c_t = cand_title.strip().lower()
+            t_c = title.strip().lower()
+            if not c_t or not t_c:
+                return False
+            return (
+                c_t == t_c or
+                strip_subtitle_brackets(c_t) == strip_subtitle_brackets(t_c) or
+                t_c in c_t or
+                c_t in t_c
+            )
+
         if duration_sec > 0:
             valid = []
             for c in candidates:
+                if not is_title_match(c.get("song", "")):
+                    continue
                 c_dur = get_cand_dur_sec(c)
                 diff = abs(c_dur - duration_sec)
                 if diff <= 35:
@@ -127,10 +141,16 @@ class KugouFetcher:
                 valid.sort(key=lambda x: x[0])
                 best_cand = valid[0][1]
             else:
-                candidates.sort(key=lambda c: abs(get_cand_dur_sec(c) - duration_sec))
-                best_cand = candidates[0]
+                title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
+                if not title_matching:
+                    return None
+                title_matching.sort(key=lambda c: abs(get_cand_dur_sec(c) - duration_sec))
+                best_cand = title_matching[0]
         else:
-            best_cand = candidates[0]
+            title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
+            if not title_matching:
+                return None
+            best_cand = title_matching[0]
             
         adjust = int(best_cand.get("adjust", 0))
         return cls.download_krc_by_id(best_cand.get("id"), best_cand.get("accesskey"), adjust=adjust)
@@ -209,11 +229,19 @@ class KugouFetcher:
             d_diff = abs(song.get("duration", 0) - duration_ms) if duration_ms > 0 else 0
             return (-t_score, -a_score, d_diff)
             
-        if filtered_songs:
-            filtered_songs.sort(key=candidate_rank)
+        # Hard gate: only retain songs whose title actually matches
+        title_matched_songs = []
+        for song in filtered_songs:
+            s_t = song.get("title", "").strip().lower()
+            t_c = title.strip().lower()
+            if s_t == t_c or strip_subtitle_brackets(s_t) == strip_subtitle_brackets(t_c) or t_c in s_t or s_t in t_c:
+                title_matched_songs.append(song)
+
+        if title_matched_songs:
+            title_matched_songs.sort(key=candidate_rank)
             
         # Try candidates in order
-        for song in filtered_songs:
+        for song in title_matched_songs:
             h = song.get("hash")
             d = song.get("duration", duration_ms)
             if h:

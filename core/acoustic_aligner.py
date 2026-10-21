@@ -127,6 +127,18 @@ class AcousticAligner:
     @classmethod
     def get_models(cls, device: str = 'cuda'):
         """Lazy-loads and caches Demucs and Stable-Whisper models."""
+        # Auto-detect and register ffmpeg into PATH if needed
+        import shutil
+        if not shutil.which("ffmpeg"):
+            for cand_dir in [
+                r"C:\Users\sxh20\AppData\Local\Programs\mediago\resources\bin",
+                r"C:\ProgramData\chocolatey\bin",
+                r"C:\ffmpeg\bin"
+            ]:
+                if os.path.isdir(cand_dir) and os.path.isfile(os.path.join(cand_dir, "ffmpeg.exe")):
+                    os.environ["PATH"] = cand_dir + os.pathsep + os.environ.get("PATH", "")
+                    break
+
         try:
             import torch
             import demucs.pretrained
@@ -158,6 +170,7 @@ class AcousticAligner:
         """
         import soundfile as sf
         import torch
+        import torchaudio
         from demucs.apply import apply_model
 
         demucs_model, _, device = cls.get_models(device)
@@ -168,6 +181,11 @@ class AcousticAligner:
             wav = np.repeat(wav, 2, axis=1)
             
         wav_t = torch.from_numpy(wav).t().unsqueeze(0)
+        target_sr = getattr(demucs_model, 'samplerate', 44100)
+        if sr != target_sr:
+            wav_t = torchaudio.functional.resample(wav_t, sr, target_sr)
+            sr = target_sr
+
         with torch.no_grad():
             out = apply_model(demucs_model, wav_t, device=device, split=True, segment=7.8, progress=False)
         vocals = out[0, cls._vocal_idx, :, :].t().cpu().numpy()

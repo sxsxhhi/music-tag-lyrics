@@ -54,6 +54,12 @@ class NetEaseFetcher:
             s_album = s.get("album", {}).get("name", "")
             s_dur = s.get("duration", 0)  # ms
             
+            # Title similarity hard gate: must match title or substring or stripped brackets
+            s_t = s_name.strip().lower()
+            t_c = title.strip().lower()
+            if not (s_t == t_c or strip_subtitle_brackets(s_t) == strip_subtitle_brackets(t_c) or t_c in s_t or s_t in t_c):
+                continue
+
             # Version policy check
             if not matches_version_policy(target_is_live, s_name, s_album):
                 continue
@@ -69,8 +75,7 @@ class NetEaseFetcher:
             valid_candidates.sort(key=lambda x: x[0])
             return valid_candidates[0][1].get("id")
 
-        # Fallback to first song if no candidate strictly passed filter
-        return songs[0].get("id")
+        return None
 
     @classmethod
     def fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
