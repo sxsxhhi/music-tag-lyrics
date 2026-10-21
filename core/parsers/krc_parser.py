@@ -18,23 +18,34 @@ TAG_RE = re.compile(r"^\[(\w+):([^\]]*)\]$")
 KRC_LINE_RE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
 KRC_WORD_RE = re.compile(r"<(\d+),(\d+),\d+>([^<]*)")
 
-def extract_krc_language_translation(krc_text: str) -> List[str]:
+def extract_krc_language_translation(krc_text: str, tags: Optional[Dict[str, str]] = None) -> List[str]:
     """
     Parses and extracts embedded translations from Kugou KRC [language:...] tag.
+    Accepts either raw krc_text or already parsed tags dictionary.
     Returns a list of translation strings matching KRC lines index 1:1.
     """
-    for line in krc_text.splitlines():
-        if line.startswith("[language:"):
-            try:
+    b64_str = ""
+    if tags and "language" in tags:
+        b64_str = tags["language"].strip()
+    else:
+        for line in krc_text.splitlines():
+            if line.startswith("[language:"):
                 b64_str = line[10:-1].strip()
-                decoded_json = base64.b64decode(b64_str).decode("utf-8")
-                data = json.loads(decoded_json)
-                content = data.get("content", [])
-                if content:
-                    lyric_content = content[0].get("lyricContent", [])
-                    return [item[0] if item else "" for item in lyric_content]
-            except Exception:
-                pass
+                break
+                
+    if not b64_str:
+        return []
+        
+    try:
+        decoded_json = base64.b64decode(b64_str).decode("utf-8")
+        data = json.loads(decoded_json)
+        content = data.get("content", [])
+        if content:
+            lyric_content = content[0].get("lyricContent", [])
+            return [item[0] if item else "" for item in lyric_content]
+    except Exception:
+        pass
+        
     return []
 
 def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
@@ -76,17 +87,8 @@ def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
             internal_offset = 0
     total_offset = internal_offset + adjust
 
-    # Extract embedded translations if present
-    trans_list = extract_krc_language_translation(krc_text)
-    if not trans_list and "language" in tags:
-        try:
-            decoded_json = base64.b64decode(tags["language"]).decode("utf-8")
-            data = json.loads(decoded_json)
-            content = data.get("content", [])
-            if content:
-                trans_list = [item[0] if item else "" for item in content[0].get("lyricContent", [])]
-        except Exception:
-            trans_list = []
+    # Single-point extraction of embedded translations
+    trans_list = extract_krc_language_translation(krc_text, tags)
 
     lines = []
     for i, (raw_start, line_duration, content) in enumerate(raw_lines):

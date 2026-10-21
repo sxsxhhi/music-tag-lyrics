@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 r"""
-Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.1.3)
+Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.2.2)
 Ensures that all generated lyric timestamps strictly advance forward in time ($t_k \ge t_{k-1}$).
 Protects long musical instrument outros (solos) from being erroneously flagged as 'truncated'.
 Enforces Natural Acoustic Gate (flags/prevents 40ms dummy compression artifacts).
 Enforces Intro Gate (warns on unusually delayed singing start > 32s).
-Supports foreign lyrics translation line stripping.
+Natively pairs interleaved legacy dual-track translation lines into standard ELRC format.
 Zero external dependencies.
 """
 
@@ -16,7 +16,7 @@ from core.utils.text_utils import is_translation_line
 
 # Preamble credit keywords for whitelist protection
 CREDIT_KEYWORD_PATTERN = re.compile(
-    r"^(作词|作曲|编曲|制作|监制|和声|混音|录音|吉他|贝斯|鼓|键盘|弦乐|母带|发行|出品|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|词曲|词|曲|此曲为纯音乐)",
+    r"^(作词|作曲|编曲|制作|监制|词|曲|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|작사|작곡|편곡|作詞|作曲|編曲)",
     re.IGNORECASE
 )
 
@@ -44,7 +44,8 @@ def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float
 
 def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Strips interleaved translation lines from non-Chinese songs to eliminate jumpy display.
+    Pairs interleaved translation lines from legacy dual-track LRCs into modern ELRC format,
+    attaching the translation to the preceding singing line without causing screen jumping.
     """
     lines = data.get("lines", [])
     if not lines:
@@ -67,6 +68,9 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
             
         # Check translation line using shared text_utils
         if is_translation_line(text, has_words=bool(words)):
+            # Attach to previous singing line if available
+            if cleaned_lines and not cleaned_lines[-1].get("translation"):
+                cleaned_lines[-1]["translation"] = text
             continue
         else:
             cleaned_lines.append(line)
@@ -143,7 +147,6 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
         last_lyric_ms = lines[-1].get("end", lines[-1].get("start", 0))
         tail_gap = audio_duration_ms - last_lyric_ms
         if tail_gap > 35000:
-            # Long tail gap: Legitimate instrumental outro
             warnings.append(f"Instrumental outro detected ({tail_gap / 1000.0:.1f}s solo). Preserving natural musical silence.")
 
     return True, {**data, "lines": lines}, warnings

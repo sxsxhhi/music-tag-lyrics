@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Kugou Music Lyric Fetcher (v1.1.3)
+Kugou Music Lyric Fetcher (v1.2.2)
 Searches and downloads word-level synchronized KRC lyrics from Kugou Music.
 Enforces bidirectional Live vs Studio mutual exclusion, multi-stage query ladder,
 KRCS keyword direct fallback, and server-side adjust offset application.
-Refactored to reuse shared http and version_guard utilities (DRY architecture).
+Refactored to eliminate duplicate candidate selection and title matching logic (DRY architecture).
 Zero external dependencies.
 """
 
@@ -21,6 +21,41 @@ from ..utils.version_guard import (
     matches_version_policy,
     is_duration_acceptable
 )
+
+def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
+    """Centralized fuzzy title matcher with bracket normalization."""
+    c_t = cand_title.strip().lower()
+    t_c = target_title.strip().lower()
+    return (
+        c_t == t_c or
+        strip_subtitle_brackets(c_t) == strip_subtitle_brackets(t_c) or
+        t_c in c_t or
+        c_t in t_c
+    )
+
+def select_best_krc_candidate(
+    candidates: List[Dict[str, Any]],
+    download_fn,
+    max_probes: int = 6
+) -> Optional[Dict[str, Any]]:
+    """
+    Centralized candidate selection logic:
+    Prioritizes candidates with native embedded translation, falling back to top scored candidate.
+    """
+    best_parsed = None
+    for c in candidates[:max_probes]:
+        cid = c.get("id")
+        ack = c.get("accesskey")
+        if not cid or not ack:
+            continue
+        adjust = int(c.get("adjust", 0))
+        parsed = download_fn(cid, ack, adjust=adjust)
+        if parsed and parsed.get("lines"):
+            if parsed.get("has_embedded_translation"):
+                return parsed
+            if not best_parsed:
+                best_parsed = parsed
+    return best_parsed
 
 class KugouFetcher:
     """Fetcher for Kugou Music KRC lyrics with Live-guard and KRCS fallback."""
@@ -115,23 +150,11 @@ class KugouFetcher:
         def get_cand_dur_sec(c):
             d = int(c.get("duration", 0))
             return d // 1000 if d > 10000 else d
-            
-        def is_title_match(cand_title: str) -> bool:
-            c_t = cand_title.strip().lower()
-            t_c = title.strip().lower()
-            if not c_t or not t_c:
-                return False
-            return (
-                c_t == t_c or
-                strip_subtitle_brackets(c_t) == strip_subtitle_brackets(t_c) or
-                t_c in c_t or
-                c_t in t_c
-            )
 
         if duration_sec > 0:
             valid = []
             for c in candidates:
-                if not is_title_match(c.get("song", "")):
+                if not is_title_fuzzy_match(c.get("song", ""), title):
                     continue
                 c_dur = get_cand_dur_sec(c)
                 diff = abs(c_dur - duration_sec)
@@ -141,27 +164,18 @@ class KugouFetcher:
                 valid.sort(key=lambda x: x[0])
                 ranked_cands = [x[1] for x in valid]
             else:
-                title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
+                title_matching = [c for c in candidates if is_title_fuzzy_match(c.get("song", ""), title)]
                 if not title_matching:
                     return None
                 title_matching.sort(key=lambda c: abs(get_cand_dur_sec(c) - duration_sec))
                 ranked_cands = title_matching
         else:
-            title_matching = [c for c in candidates if is_title_match(c.get("song", ""))]
+            title_matching = [c for c in candidates if is_title_fuzzy_match(c.get("song", ""), title)]
             if not title_matching:
                 return None
             ranked_cands = title_matching
             
-        best_parsed = None
-        for c in ranked_cands[:6]:
-            adjust = int(c.get("adjust", 0))
-            parsed = cls.download_krc_by_id(c.get("id"), c.get("accesskey"), adjust=adjust)
-            if parsed and parsed.get("lines"):
-                if parsed.get("has_embedded_translation"):
-                    return parsed
-                if not best_parsed:
-                    best_parsed = parsed
-        return best_parsed
+        return select_best_krc_candidate(ranked_cands, cls.download_krc_by_id)
 
     @classmethod
     def fetch_lyrics_by_hash(
@@ -182,20 +196,10 @@ class KugouFetcher:
         if data and isinstance(data, dict):
             candidates = data.get("candidates", [])
             if candidates:
-                # Sort candidates by score descending
                 candidates.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
-                best_parsed = None
-                for c in candidates[:6]:
-                    adjust = int(c.get("adjust", 0))
-                    parsed = cls.download_krc_by_id(c.get("id"), c.get("accesskey"), adjust=adjust)
-                    if parsed and parsed.get("lines"):
-                        # Prioritize candidates with native embedded translation
-                        if parsed.get("has_embedded_translation"):
-                            return parsed
-                        if not best_parsed:
-                            best_parsed = parsed
-                if best_parsed:
-                    return best_parsed
+                res = select_best_krc_candidate(candidates, cls.download_krc_by_id)
+                if res and res.get("lines"):
+                    return res
                     
         # Fallback to keyword direct query if title is provided
         if title:
@@ -245,13 +249,7 @@ class KugouFetcher:
             return (-t_score, -a_score, d_diff)
             
         # Hard gate: only retain songs whose title actually matches
-        title_matched_songs = []
-        for song in filtered_songs:
-            s_t = song.get("title", "").strip().lower()
-            t_c = title.strip().lower()
-            if s_t == t_c or strip_subtitle_brackets(s_t) == strip_subtitle_brackets(t_c) or t_c in s_t or s_t in t_c:
-                title_matched_songs.append(song)
-
+        title_matched_songs = [s for s in filtered_songs if is_title_fuzzy_match(s.get("title", ""), title)]
         if title_matched_songs:
             title_matched_songs.sort(key=candidate_rank)
             
