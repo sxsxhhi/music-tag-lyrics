@@ -33,21 +33,26 @@ from .fetchers.netease import NetEaseFetcher
 # C-01: 不在模块顶层导入 acoustic_aligner —— 它依赖 numpy，
 # 而"抓歌词"这条主路径并不需要 numpy。改为调用点懒加载。
 from .parsers.lrc_parser import parse_lrc
-from .utils.text_utils import is_cjk, is_foreign_track, has_hanzi
+from .utils.text_utils import (
+    is_cjk, is_foreign_track, has_hanzi, is_instrumental_placeholder
+)
 
 logger = logging.getLogger(__name__)
 
-INSTRUMENTAL_KEYWORDS = ["纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics"]
 
-def is_instrumental_placeholder(lines: List[Dict[str, Any]], target_duration_ms: int = 0) -> bool:
-    """Detects whether a lyric candidate is a collapsed instrumental placeholder."""
-    if not lines:
+def candidate_has_translation(cand: Optional[Dict[str, Any]]) -> bool:
+    """
+    候选是否已自带译文。
+
+    P1-7: 各源用的旗标不同 —— KRC 产出 `has_embedded_translation`，LRCSHARE 产出
+    `has_translation`。旧实现只认前者，于是 LRCSHARE 已经带译文的候选仍被判"无译文"，
+    外语曲会白跑一次 AMLL/LRCSHARE 网络请求、还可能把更好的结果覆盖掉。
+    """
+    if not cand:
+        return False
+    if cand.get("has_embedded_translation") or cand.get("has_translation"):
         return True
-    if target_duration_ms > 60000 and len(lines) <= 6:
-        sample = "".join(l.get("text", "") for l in lines)
-        if any(k in sample for k in INSTRUMENTAL_KEYWORDS):
-            return True
-    return False
+    return any((line.get("translation") or "").strip() for line in cand.get("lines") or [])
 
 def align_translation_to_baseline(
     candidate_lines: List[Dict[str, Any]],
@@ -198,7 +203,7 @@ class LyricAggregator:
             logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 2. AMLL TTML (Apple Music word-level verbatim)
-        if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
+        if not candidate or (is_foreign and not candidate_has_translation(candidate)):
             try:
                 amll_res = AMLLFetcher.fetch(title, artist, duration_ms)
                 if amll_res and amll_res.get("lines") and not is_instrumental_placeholder(amll_res["lines"], duration_ms):
@@ -207,7 +212,7 @@ class LyricAggregator:
                 logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 3. LRCSHARE (api.lrcshare.com community TTML & word-level)
-        if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
+        if not candidate or (is_foreign and not candidate_has_translation(candidate)):
             try:
                 ls_res = LrcShareFetcher.fetch(title, artist, duration_ms)
                 if ls_res and ls_res.get("lines") and not is_instrumental_placeholder(ls_res["lines"], duration_ms):

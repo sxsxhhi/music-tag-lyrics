@@ -15,11 +15,11 @@ from typing import List, Dict, Any, Optional
 from ..decryptors.krc_xor import decrypt_krc
 from ..parsers.krc_parser import parse_krc
 from ..utils.http import http_get_json, UA_KUGOU
+from ..utils.text_utils import is_instrumental_placeholder
 from ..utils.version_guard import (
     is_live_version,
     strip_subtitle_brackets,
-    matches_version_policy,
-    is_duration_acceptable
+    matches_version_policy
 )
 
 def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
@@ -57,11 +57,9 @@ def select_best_krc_candidate(
             
         lines = parsed["lines"]
         
-        # Hard Gate: Reject collapsed instrumental placeholders (e.g. "纯音乐，请欣赏")
-        if target_duration_ms > 60000 and len(lines) <= 6:
-            text_sample = "".join(l.get("text", "") for l in lines)
-            if any(k in text_sample for k in ["纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics"]):
-                continue
+        # Hard Gate: Reject collapsed instrumental placeholders (G7: 统一走 text_utils)
+        if is_instrumental_placeholder(lines, target_duration_ms):
+            continue
                 
         cand_last_end = lines[-1].get("end", lines[-1].get("start", 0))
         # Reject severe truncations
@@ -190,10 +188,23 @@ class KugouFetcher:
             d = int(c.get("duration", 0))
             return d // 1000 if d > 10000 else d
 
+        # P1-1: 这条兜底路径以前完全没有版本门禁 —— 只比标题和时长，
+        # Live 目标可能拿到录音室版本、反之亦然。三个调用点都经过这里，所以在入口统一拦截。
+        target_is_live = is_live_version(title)
+
+        def _version_ok(c) -> bool:
+            return matches_version_policy(
+                target_is_live,
+                c.get("song", "") or "",
+                c.get("album", "") or ""
+            )
+
         if duration_sec > 0:
             valid = []
             for c in candidates:
                 if not is_title_fuzzy_match(c.get("song", ""), title):
+                    continue
+                if not _version_ok(c):
                     continue
                 c_dur = get_cand_dur_sec(c)
                 diff = abs(c_dur - duration_sec)
@@ -206,7 +217,8 @@ class KugouFetcher:
             else:
                 return None
         else:
-            title_matching = [c for c in candidates if is_title_fuzzy_match(c.get("song", ""), title)]
+            title_matching = [c for c in candidates
+                              if is_title_fuzzy_match(c.get("song", ""), title) and _version_ok(c)]
             if not title_matching:
                 return None
             ranked_cands = title_matching

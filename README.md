@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.3)。**  
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.4)。**  
 > 原生聚合 Kugou (KRC)、LRCSHARE (云端TTML/多语言)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 Demucs v4 + Whisper 短窗声学对齐与双端能量门禁引擎，恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品声学强制咬合 + 3-Tier外语翻译级联调度 + 黄金时间轴动态微调锚定 + 全链路 DRY 架构去重」。
 
 ---
@@ -171,7 +171,7 @@ music-tag-lyrics/
 
 ### 1. 运行环境要求
 - Python 3.8+
-- 安装必需依赖（缺 `numpy` 会在导入阶段直接报错，因此它和 mutagen 一样是硬依赖）：
+- 安装必需依赖（`numpy` 只用于逐字合成，缺失时会自动跳过合成并告警，不影响抓词与写标签）：
   ```bash
   pip install -r requirements.txt
   ```
@@ -224,6 +224,11 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| [**v1.2.4**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.4) | `2026-10-22` | **全量审查修复 · 原子写与标签安全 · TTML 词边界重建 · 去重收敛** | • **4 个 P0 修复**：ID3 解析失败不再清空原有帧；双语译文行不再被当歌词逐字输出；校验失败拒绝写盘（不再产出只有标题的文件却报成功）；numpy 缺失时声学模块可正常导入
+• **TTML 词边界重建（F-19 方案 A）**：解析层按源文件真实空格重建词边界并写入 `join` 标记，输出层按标记决定是否补空格 —— 音节不再被拆成单词，同时保留 Apple Music 音节级高亮；`x-translation` 译文落 `translation`，`x-bg` 背景和声不再污染主唱行
+• **数据安全**：FLAC/OGG/WAV/DSF/MP3/MP4 六种格式统一「副本改写 → 原子替换」；lrc/spl 双文件一次性原子落盘；批量模式单曲异常不再中断整批
+• **去重收敛**：未使用导入 8 处、占位判断 4 份→1 份、来源行识别 2 份→1 份、毫秒归一去重、时间戳剥离统一
+• **文档对齐**：18 条铁律口径、分源时长门禁、依赖说明与实际实现一致 | 生产级稳定 |
 | [**v1.2.3**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.3) | `2026-10-21` | **LRCSHARE 云端高精歌词集成 · 3-Tier 外语翻译级联调度与 18 大避坑铁律全量固化** | • **LRCSHARE 社区云端源接入 (`core/fetchers/lrcshare.py`)**：原生接入 `api.lrcshare.com`，内置 24h 缓存 session token、全库本地负向预过滤（Token未命中 0 请求极速拦截）、结构化多语言 versions 解析与 Apple Music 原生 TTML 直通<br/>• **3-Tier 外语翻译级联调度**：确立 酷狗原生 type:1 语义翻译 $\rightarrow$ 网易云 163 翻译 $\rightarrow$ LRCSHARE 兜底三级调度，严格杜绝罗马音与空耳音译混入<br/>• **黄金基准时间轴动态微调锚定**：确立已实测歌曲时间戳真理权，$\le \pm 300\text{ms}$ 允许声学容差平滑微调，$> 500\text{ms}$ 强物理锁定原时间轴，仅挂载语义文本<br/>• **18 大避坑铁律全面固化**：正式新增铁律 15（酷狗 KRC 语义翻译与音译防混淆门禁）、铁律 16（纯音乐占位防篡改与有效行数门禁）、铁律 17（物理时长严密邻近与版本防串扰门禁）、铁律 18（黄金基准时间轴锚定门禁） | 生产级高精调度 |
 | [**v1.2.2**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.2) | `2026-10-21` | **ELRC 双语翻译规范 · 外文词界空格排版治理与 14 大铁律升级** | • **国际标准 ELRC 官方精修双语引擎**：建立主唱行与译文副行母体时间戳咬合规范，副行零 `<>` 打点防跳屏，全量 71 首外语曲库 100% 达成三位一体 SHA-256 镜像<br/>• **外文词界空格与 `\xa0` 假空格消融铁律**：确立第 14 大避坑铁律，底层强制注入标准 ASCII `\x20` 词距空格并消融全部网页非换行假空格 `\xa0`<br/>• **双核心红线体系**：绝不语音听写 · 绝不机械机翻双红线全面固化 | 生产级双语流光 |
 | [**v1.2.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.0) | `2026-10-20` | **下架歌曲声学咬合引擎 · 双核心红线与双端能量门禁** | • **绝不语音听写核心红线 (Never Transcribe Blindly)**：确立终极兜底绝对红线，严禁 ASR 语音听写导致同音错字与排版坍塌；Demucs v4 兜底必须基于全网/本地权威文本进行强制声学打轴，无词时绝对阻断<br/>• **绝不机械机翻核心红线 (Never Machine Translate Blindly)**：确立非国语翻译绝对红线，严禁盲目机械直翻污染歌词；非国语翻译仅采纳官方/专业人工审校精修译文，无官方译文时坚守纯净外文原版呈现<br/>• **双端声学能量门禁 (Dual-Ended Acoustic Gates)**：首字 15ms 逆向能量回溯消除抢跑（Onset Gate），尾字 20ms 正向跌落截断拖尾（Offset Gate）<br/>• **短窗隔离切分 (Hybrid Window Partitioning)**：彻底根除 30s 间奏/Solo 期间 DTW 虚空拉伸与全篇系统性大漂移<br/>• **行内停顿防拉伸闭合标签 (Pause Gap Tags)**：当词间停顿 $\ge 300\text{ms}$ 时自动插入 `<cur_end><next_start>` 闭合标签<br/>• **用户元数据绝对保护**：新增 `--lyrics-only` 模式，100% 保护用户手动修改的 ID3 标签（TIT2/TALB/TDRC等）不受侵扰 | 生产级声学打轴 |

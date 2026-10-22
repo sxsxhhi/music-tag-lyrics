@@ -62,17 +62,18 @@ def test_spl_fixture_shape():
     assert len(data["lines"][0]["words"]) == 2
 
 
-def KNOWN_BUG__spl_word_offset_double_added():
-    """F-09：首个伪词的起点被叠加两次 offset，终点只叠一次 → end < start。
+def test_spl_word_offset_applied_once():
+    """F-09/P1-4 修复：首个伪词的 offset 只叠一次，end 必须晚于 start。
 
-    M2 修复后本用例应改为：w0.start == 1500 且 w0.end > w0.start。
+    `[offset:500]` + `[00:01.00]Hello <00:01.40>World`
+    → 行起点 1500，首词 1500~1900（修复前是 start=2000 / end=1900 / duration=0 的倒流）
     """
     data = parse_lrc(_read("spl_offset_reverse_test.lrc"))
     w0 = data["lines"][0]["words"][0]
-    assert w0["start"] == 2000, w0
+    assert w0["start"] == 1500, w0
     assert w0["end"] == 1900, w0
-    assert w0["end"] < w0["start"], w0
-    assert w0["duration"] == 0, w0
+    assert w0["end"] > w0["start"], w0
+    assert w0["duration"] == 400, w0
 
 
 # --------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 r"""
-Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.2.2)
+Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.2.4)
 Ensures that all generated lyric timestamps strictly advance forward in time ($t_k \ge t_{k-1}$).
 Protects long musical instrument outros (solos) from being erroneously flagged as 'truncated'.
 Enforces Natural Acoustic Gate (flags/prevents 40ms dummy compression artifacts).

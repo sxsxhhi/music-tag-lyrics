@@ -24,7 +24,7 @@ try:
 except ImportError:  # C-01: numpy 只在声学路径需要，缺失时不应让"抓歌词"整条链路崩
     np = None
 
-from .utils.text_utils import CJK_RE
+from .utils.text_utils import CJK_RE, is_source_or_credit_line
 
 # ==========================================
 # 1. 向后兼容：轻量级音素加权打轴模块 (v1.1.3 保留)
@@ -117,9 +117,8 @@ def enrich_track_with_acoustic_words(data: Dict[str, Any]) -> Dict[str, Any]:
     for line in lines:
         if not line.get("words") and line.get("text"):
             text = line["text"]
-            if not re.search(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text):
-                continue
-            if re.search(r"(?i)(?:^|\b)(?:lrc|elrc)\s*[:：]|https?://|www\.", text):
+            # G5: 来源/署名行与纯符号行不参与合成（统一走 text_utils）
+            if is_source_or_credit_line(text):
                 continue
             start = line.get("start", 0)
             duration = line.get("duration", 3000)

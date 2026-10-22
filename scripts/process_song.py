@@ -29,7 +29,7 @@ from scripts.tag_editor import read_audio_tags, update_audio_tags, normalize_art
 from scripts.lyric_validator import validate_and_fix_lyrics
 from core.aggregator import LyricAggregator
 from core.converter import to_lrc, to_spl
-from core.utils.io_safe import atomic_write_text
+from core.utils.io_safe import atomic_write_many
 from core.utils.text_utils import is_foreign_track
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
@@ -299,9 +299,9 @@ def process_single_song(
     lrc_path = os.path.join(target_dir, f"{base_name}.lrc")
     spl_path = os.path.join(target_dir, f"{base_name}.spl")
 
-    # D-06: 原子写，避免中途崩溃留下半截歌词文件
-    atomic_write_text(lrc_path, lrc_content)
-    atomic_write_text(spl_path, spl_content)
+    # D-06 + P1-9: 两份产物一次性原子写入 —— 先都写临时文件，全部成功才替换，
+    # 避免"lrc 写成功、spl 失败"留下半对产物。
+    atomic_write_many({lrc_path: lrc_content, spl_path: spl_content})
 
     print(f"📄 Generated .lrc -> {os.path.basename(lrc_path)}")
     print(f"💎 Generated .spl -> {os.path.basename(spl_path)}")
@@ -351,7 +351,8 @@ def main():
 
     target = args.path
     if os.path.isfile(target):
-        process_single_song(
+        # P1-10: 单文件模式也返回真实退出码，脚本化调用才能判成败
+        ok = process_single_song(
             target, 
             update_tags=not args.no_tags, 
             output_dir=args.out_dir,
@@ -360,6 +361,7 @@ def main():
             lyrics_file=args.lyrics_file,
             non_interactive=args.non_interactive
         )
+        return 0 if ok else 1
     elif os.path.isdir(target):
         count = 0
         success_count = 0
@@ -369,19 +371,27 @@ def main():
                 if ext in SUPPORTED_EXTS:
                     count += 1
                     fp = os.path.join(root, f)
-                    if process_single_song(
-                        fp, 
-                        update_tags=not args.no_tags, 
-                        output_dir=args.out_dir,
-                        lyrics_only=args.lyrics_only,
-                        force_gpu=args.force_gpu,
-                        lyrics_file=args.lyrics_file,
-                        non_interactive=args.non_interactive
-                    ):
+                    # P1-10: 单曲异常不能中断整批
+                    try:
+                        ok = process_single_song(
+                            fp, 
+                            update_tags=not args.no_tags, 
+                            output_dir=args.out_dir,
+                            lyrics_only=args.lyrics_only,
+                            force_gpu=args.force_gpu,
+                            lyrics_file=args.lyrics_file,
+                            non_interactive=args.non_interactive
+                        )
+                    except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
+                        print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")
+                        ok = False
+                    if ok:
                         success_count += 1
         print(f"\nBatch processing completed: {success_count}/{count} succeeded.")
+        return 0 if success_count == count else 1
     else:
         print(f"Error: Target path does not exist: {target}")
+        return 2
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

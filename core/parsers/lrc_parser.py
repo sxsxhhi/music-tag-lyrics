@@ -118,7 +118,10 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
     lines = []
     for i in range(len(adjusted_entries)):
         start_ms, raw_text = adjusted_entries[i]
-        clean_text, words = parse_enhanced_words(raw_text, start_ms, total_offset)
+        # P1-4: 这里必须传**未叠加 offset** 的原始起点。start_ms 已经 apply 过一次，
+        # 再传进 parse_enhanced_words 会让首个伪词的起点被加两次、终点只加一次，
+        # 结果 end < start、duration 被压成 0。
+        clean_text, words = parse_enhanced_words(raw_text, start_ms - total_offset, total_offset)
 
         if words:
             end_ms = words[-1]["end"]

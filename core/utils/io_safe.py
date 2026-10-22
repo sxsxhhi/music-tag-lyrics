@@ -60,6 +60,31 @@ def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8", newl
         _silent_remove(tmp_path)
 
 
+def atomic_write_many(files: dict, encoding: str = "utf-8", newline: str = "\n") -> None:
+    """
+    一次性原子写入多个文本文件（P1-9）。
+
+    先把所有内容都写成临时文件，全部成功后才逐个 ``os.replace``。这样"第一个写成功、
+    第二个失败"不会留下半对产物；任何一步失败都会清理临时文件，已存在的目标文件保持原样。
+
+    :param files: {目标路径: 文本内容}
+    """
+    tmps = {}
+    try:
+        for path, content in files.items():
+            tmp = _tmp_path_for(path, prefix=".tmp_txt", keep_ext=False)
+            with open(tmp, "w", encoding=encoding, newline=newline) as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            tmps[path] = tmp
+        for path, tmp in tmps.items():
+            os.replace(tmp, path)
+    finally:
+        for tmp in tmps.values():
+            _silent_remove(tmp)
+
+
 def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) -> bool:
     """
     在副本上执行标签写入，成功后才替换原文件。

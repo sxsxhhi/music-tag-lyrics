@@ -12,6 +12,14 @@ from typing import Match
 TIME_COLON_RE = re.compile(r"^(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?$")
 TIME_SECONDS_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*s?$", re.IGNORECASE)
 
+def _frac_to_ms(frac: str) -> int:
+    """把小数部分归一成毫秒：1 位=百毫秒，2 位=十毫秒，3 位=毫秒（G2 去重）。"""
+    if len(frac) == 2:
+        return int(frac) * 10
+    if len(frac) == 1:
+        return int(frac) * 100
+    return int(frac.ljust(3, "0")[:3])
+
 def parse_time_string_to_ms(time_str: str) -> int:
     """
     Parses various timestamp notations into integer milliseconds:
@@ -30,13 +38,7 @@ def parse_time_string_to_ms(time_str: str) -> int:
         hrs = int(m.group(1)) if m.group(1) else 0
         mins = int(m.group(2))
         secs = int(m.group(3))
-        ms_str = m.group(4) or "0"
-        if len(ms_str) == 2:
-            ms = int(ms_str) * 10
-        elif len(ms_str) == 1:
-            ms = int(ms_str) * 100
-        else:
-            ms = int(ms_str.ljust(3, "0")[:3])
+        ms = _frac_to_ms(m.group(4) or "0")
         return (hrs * 3600 + mins * 60 + secs) * 1000 + ms
         
     # 2. Pure seconds notation ('83.45s' or '83.45')
@@ -59,14 +61,16 @@ def parse_match_to_ms(m: Match) -> int:
     else:
         mins, secs, millis_str = int(m.group(4)), int(m.group(5)), m.group(6) or "0"
         
-    if len(millis_str) == 2:
-        ms = int(millis_str) * 10
-    elif len(millis_str) == 1:
-        ms = int(millis_str) * 100
-    else:
-        ms = int(millis_str.ljust(3, "0")[:3])
-        
-    return (mins * 60 + secs) * 1000 + ms
+    return (mins * 60 + secs) * 1000 + _frac_to_ms(millis_str)
+
+_TIMING_TAG_RE = re.compile(r"<\d{1,3}:\d{2}(?:\.\d{1,3})?>|\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]")
+
+
+def strip_timing_tags(text: str) -> str:
+    """去掉 [mm:ss.xx] / <mm:ss.xx> 时间标签，只留正文（G4 统一实现）。"""
+    if not text:
+        return ""
+    return _TIMING_TAG_RE.sub("", text).strip()
 
 def format_time_tag(ms: int, bracket: str = "[]") -> str:
     """

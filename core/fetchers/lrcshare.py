@@ -27,7 +27,7 @@ from ..utils.version_guard import (
     matches_version_policy,
     strip_subtitle_brackets
 )
-from ..utils.text_utils import has_hanzi
+from ..utils.text_utils import has_hanzi, is_source_or_credit_line, is_instrumental_placeholder
 
 BASE_URL = "https://api.lrcshare.com/v1"
 # C-04: 密钥只从环境变量读取，源码里不再保留默认值。
@@ -37,28 +37,6 @@ LRCSHARE_UA = "Lyrico/1.0 (github.com/Replica0110/Lyrico)"
 
 WORD_TAG_RE = re.compile(r"<\d{1,6}(?::\d{1,6})?>")
 WORD_SPLIT_RE = re.compile(r"<(\d{1,6})(?::(\d{1,6}))?>")
-
-# X-21: 来源/署名行识别。lrcshare 的歌词里常混入
-# "LRC：X2ISPANDA[https://lrcshare.com]" 这类上传者署名，它们不是歌词，
-# 一旦进入输出还会被逐字合成器按字符均分，污染整条时间轴。
-SOURCE_LINE_RE = re.compile(
-    r"(?i)(?:^|\b)(?:lrc|elrc)\s*[:：]"
-    r"|https?://|www\."
-    r"|歌词来源|来源\s*[:：]|由.{0,12}提供|powered\s+by|歌词由.{0,12}制作"
-)
-
-
-def is_source_or_credit_line(text: str) -> bool:
-    """判断一行是否是来源标注/署名而非歌词正文。"""
-    t = (text or "").strip()
-    if not t:
-        return True
-    if SOURCE_LINE_RE.search(t):
-        return True
-    # 整行没有文字也没有数字（纯符号/纯标点）→ 不是歌词
-    if not re.search(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", t):
-        return True
-    return False
 
 def strip_word_tags(text: str) -> str:
     """Removes <offset:dur> tags from text."""
@@ -400,10 +378,8 @@ class LrcShareFetcher:
                 continue
 
             # Anti-tampering gate: Reject collapsed instrumental placeholders
-            if duration_ms > 60000 and len(lines) <= 6:
-                sample_text = "".join(l.get("text", "") for l in lines)
-                if any(w in sample_text for w in ["纯音乐", "请欣赏", "伴奏", "Instrumental"]):
-                    continue
+            if is_instrumental_placeholder(lines, duration_ms):
+                continue
 
             # Duration Proximity Gate (Iron Rule 17: ±5.0s)
             last_end = lines[-1]["end"]
