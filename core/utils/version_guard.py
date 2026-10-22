@@ -9,7 +9,6 @@ Zero external dependencies.
 """
 
 import re
-from typing import List, Dict, Any, Optional
 
 LIVE_KEYWORDS = ("live", "现场", "巡回", "巡演", "演唱会", "不插电", "acoustic")
 DEMO_KEYWORDS = ("demo", "小样")

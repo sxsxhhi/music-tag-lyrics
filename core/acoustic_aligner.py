@@ -16,7 +16,6 @@ AcousticAligner: Demucs v4 + Stable-Whisper 声学咬合高精打轴引擎 (v1.2
 from __future__ import annotations
 
 import os
-import sys
 import re
 from typing import List, Dict, Any, Optional, Tuple
 

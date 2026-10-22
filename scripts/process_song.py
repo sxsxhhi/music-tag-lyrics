@@ -12,7 +12,7 @@ import os
 import sys
 import re
 import argparse
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 # Reconfigure stdout/stderr for utf-8 on Windows
 if hasattr(sys.stdout, "reconfigure"):

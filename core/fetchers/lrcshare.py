@@ -21,7 +21,7 @@ import urllib.parse
 from typing import Dict, List, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
-from ..utils.http import http_get_json, UA_DEFAULT
+from ..utils.http import http_get_json
 from ..utils.version_guard import (
     is_live_version,
     matches_version_policy,

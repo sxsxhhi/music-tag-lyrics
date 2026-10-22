@@ -8,7 +8,7 @@ Zero external dependencies.
 """
 
 import re
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple
 
 from ..utils.time_utils import parse_match_to_ms, apply_time_offset
 

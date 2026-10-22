@@ -7,7 +7,7 @@ Zero external dependencies.
 """
 
 import re
-from typing import Union, Match
+from typing import Match
 
 TIME_COLON_RE = re.compile(r"^(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?$")
 TIME_SECONDS_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*s?$", re.IGNORECASE)
