@@ -14,12 +14,6 @@ HANZI_RE = re.compile(r"[\u4e00-\u9fff]")
 KANA_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
 HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 
-def is_cjk(text: str) -> bool:
-    """Checks if text contains Chinese, Japanese, or Korean characters."""
-    if not text:
-        return False
-    return bool(CJK_RE.search(text))
-
 def has_hanzi(text: str) -> bool:
     """Checks if text contains Chinese characters."""
     if not text:
