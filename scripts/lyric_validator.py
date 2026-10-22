@@ -1,16 +1,8 @@
 # -*- coding: utf-8 -*-
-r"""
-Lyric Timestamp Monotonicity, Acoustic Gate, Intro & Outro Validator (v1.2.4)
-Ensures that all generated lyric timestamps strictly advance forward in time ($t_k \ge t_{k-1}$).
-Protects long musical instrument outros (solos) from being erroneously flagged as 'truncated'.
-Enforces Natural Acoustic Gate (flags/prevents 40ms dummy compression artifacts).
-Enforces Intro Gate (warns on unusually delayed singing start > 32s).
-Natively pairs interleaved legacy dual-track translation lines into standard ELRC format.
-Zero external dependencies.
-"""
+"""歌词校验：单调性、Intro/Outro、双语行配对。外语 GPU 打轴前用 pair_plain_bilingual_lyrics 只留原文。"""
 
 import re
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 
 from core.utils.text_utils import is_translation_line
 from core.utils.time_utils import strip_timing_tags
@@ -81,6 +73,35 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
             cleaned_lines.append(line)
             
     return {**data, "lines": cleaned_lines}
+
+
+_META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
+
+
+def pair_plain_bilingual_lyrics(text: str) -> Tuple[str, List[Optional[str]]]:
+    """
+    把夹杂中文译文的纯文本拆成「原文行」+ 平行译文列表。
+    GPU 只应对原文 align；译文挂回 translation 字段，保持行级时间轴。
+    """
+    originals: List[str] = []
+    translations: List[Optional[str]] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or _META_LINE_RE.match(line):
+            continue
+        clean = strip_timing_tags(line).strip() or line
+        if is_credit_line(clean):
+            originals.append(clean)
+            translations.append(None)
+            continue
+        if is_translation_line(clean, has_words=False):
+            if originals and translations[-1] is None:
+                translations[-1] = clean
+            continue
+        originals.append(clean)
+        translations.append(None)
+    return "\n".join(originals), translations
+
 
 def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is_non_zh: bool = False) -> Tuple[bool, Dict[str, Any], List[str]]:
     """

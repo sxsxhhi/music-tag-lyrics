@@ -1,0 +1,23 @@
+name: Offline tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Parsers
+        run: python tests/test_parsers.py
+      - name: Pipeline
+        run: python tests/test_pipeline.py
+      - name: Safety
+        run: python tests/test_m1_safety.py

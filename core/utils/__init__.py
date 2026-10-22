@@ -1,6 +1,2 @@
 # -*- coding: utf-8 -*-
-"""
-Shared Core Utilities for music-tag-lyrics (v1.2.4)
-Centralizes HTTP networking, timestamp math, version gates, and linguistic detection.
-Zero external dependencies.
-"""
+"""共享工具：HTTP、时间戳、版本门禁、语种判定、原子 IO。"""

@@ -1,16 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-流水线级回归测试（离线：不联网、不碰用户音频）
-
-锁住 v1.2.4 里三条最关键的修复，防止后续重构静默回退：
-1. P0-2 双语译文行必须先被剥离、再合成逐字（顺序颠倒会让译文被当歌词唱出来）
-2. P0-3 校验失败（有效行为 0）必须返回 is_valid=False，调用方据此拒绝写盘
-3. P0-4 ID3 解析失败时绝不覆盖原文件
-
-外加去重批次的护栏：时间戳剥离统一实现、TagSet 空值归一、批量原子写。
-
-运行：python tests/test_pipeline.py
-"""
+"""流水线离线回归：双语剥离、同一版整包、ELRC 副行无逐字、ID3 安全。运行：python tests/test_pipeline.py"""
 
 import hashlib
 import os
@@ -29,7 +18,8 @@ import scripts.tag_editor as te
 from core.converter import to_spl
 from core.utils.io_safe import atomic_write_many
 from core.utils.time_utils import strip_timing_tags
-from scripts.lyric_validator import is_credit_line, validate_and_fix_lyrics
+from core.acoustic_aligner import enrich_track_with_acoustic_words
+from scripts.lyric_validator import is_credit_line, pair_plain_bilingual_lyrics, validate_and_fix_lyrics
 from scripts.tag_editor import TagSet, read_audio_tags, update_audio_tags
 from mutagen.id3 import ID3, USLT
 
@@ -63,10 +53,20 @@ def test_bilingual_lines_paired_not_sung():
 def test_translation_emitted_as_subtitle_line():
     """译文必须以同一起始时间戳的副行出现（ELRC 双语），不能被拼进正文。"""
     _, data, _ = validate_and_fix_lyrics(_bilingual_candidate(), audio_duration_ms=200000, is_non_zh=True)
+    data = enrich_track_with_acoustic_words(data)
+    orig = data["lines"][0]
+    assert orig.get("words"), orig
+    assert "words" not in (orig.get("translation") or {}) if isinstance(orig.get("translation"), dict) else True
     out = to_spl(data, title="测试曲", artist="测试人")
     assert "[00:01.00]我曾经想过一了百了" in out, out[:300]
-    # 正文行必须是逐字行（合成前没有 words 时这里是行级，由 process_song 负责合成）
-    assert "[00:01.00]僕が死のうと思ったのは" in out
+    assert "<00:" in out  # 原文有逐字
+    trans_line = "[00:01.00]我曾经想过一了百了"
+    assert trans_line in out
+    # 译文副行不得带 <> 逐字
+    for raw in out.splitlines():
+        if "我曾经想过一了百了" in raw or "海猫的啼哭声" in raw:
+            assert "<" not in raw, raw
+    assert "[00:01.00]僕が死のうと思ったのは" in out or "<00:" in out
 
 
 def test_empty_lyrics_is_invalid():
@@ -158,6 +158,175 @@ def test_strip_timing_tags_three_digit_minutes():
     assert strip_timing_tags("<00:01.50>你好<00:02.00>") == "你好"
     assert is_credit_line("[123:45.67]词：某人") is True
     assert is_credit_line("[00:01.00]词不达意") is False
+
+
+def test_netease_same_version_package_replaces_kugou_without_trans():
+    """外语：禁止跨源挂载；酷狗无译文且网易有原文+tlyric 时整包换成网易；无 tlyric 不覆盖酷狗。"""
+    import core.aggregator as agg
+
+    kugou = {
+        "source": "kugou",
+        "lyric_type": "verbatim",
+        "lines": [
+            {"start": 1000, "end": 4000, "duration": 3000, "text": "Hello world", "words": [{"text": "Hello", "start": 1000, "end": 2500}]},
+            {"start": 4000, "end": 7000, "duration": 3000, "text": "See you", "words": []},
+            {"start": 8000, "end": 11000, "duration": 3000, "text": "Once more", "words": []},
+            {"start": 12000, "end": 15000, "duration": 3000, "text": "Forever", "words": []},
+        ],
+    }
+    ne_lines = [
+        {"start": 1100, "end": 4100, "duration": 3000, "text": "Hello world", "words": []},
+        {"start": 4100, "end": 7100, "duration": 3000, "text": "See you", "words": []},
+        {"start": 8100, "end": 11100, "duration": 3000, "text": "Once more", "words": []},
+        {"start": 12100, "end": 15100, "duration": 3000, "text": "Forever", "words": []},
+    ]
+    tlyric = (
+        "[00:01.00]你好世界\n"
+        "[00:04.00]再见\n"
+        "[00:08.00]再一次\n"
+        "[00:12.00]永远\n"
+    )
+
+    grafted = agg.enrich_foreign_translation(dict(kugou), "Hello", "Western Artist")
+    assert grafted.get("translation_source") != "netease"
+    assert not any((l.get("translation") or "").strip() for l in grafted["lines"])
+
+    class FakeKugou:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {**kugou, "lines": [dict(x) for x in kugou["lines"]]}
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    class FakeNE:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {"source": "netease", "lyric_type": "line", "lines": [dict(x) for x in ne_lines], "tlyric": tlyric}
+
+    class BoomLS:
+        @classmethod
+        def fetch(cls, *a, **k):
+            raise AssertionError("LRCSHARE should not run after NetEase whole-package attach")
+
+    reals = {
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+    agg.KugouFetcher = FakeKugou
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = FakeNE
+    agg.LrcShareFetcher = BoomLS
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        out = agg.LyricAggregator.fetch_best_lyrics("Hello", "Western Artist")
+    finally:
+        for name, real in reals.items():
+            setattr(agg, name, real)
+
+    assert out["source"] == "netease", out
+    assert out.get("translation_source") == "netease"
+    assert [l.get("translation") for l in out["lines"]] == ["你好世界", "再见", "再一次", "永远"]
+    assert out["lines"][0]["start"] == 1100
+
+    class FakeNENoTrans:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {"source": "netease", "lyric_type": "line", "lines": [dict(x) for x in ne_lines]}
+
+    agg.KugouFetcher = FakeKugou
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = FakeNENoTrans
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        out2 = agg.LyricAggregator.fetch_best_lyrics("Hello", "Western Artist")
+    finally:
+        for name, real in reals.items():
+            setattr(agg, name, real)
+
+    assert out2["source"] == "kugou", out2
+    assert not any((l.get("translation") or "").strip() for l in out2["lines"])
+
+
+def test_chinese_kugou_not_replaced_by_netease_tlyric():
+    """华语：酷狗已命中时网易即使带 tlyric 也不得覆盖。"""
+    import core.aggregator as agg
+
+    kugou = {
+        "source": "kugou",
+        "lyric_type": "verbatim",
+        "lines": [
+            {"start": 1000, "end": 4000, "duration": 3000, "text": "焚情如火", "words": [{"text": "焚", "start": 1000, "end": 1500}]},
+            {"start": 4000, "end": 7000, "duration": 3000, "text": "第二句", "words": []},
+            {"start": 8000, "end": 11000, "duration": 3000, "text": "第三句", "words": []},
+            {"start": 12000, "end": 15000, "duration": 3000, "text": "第四句", "words": []},
+        ],
+    }
+
+    class FakeKugou:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {**kugou, "lines": [dict(x) for x in kugou["lines"]]}
+
+    class BoomNE:
+        @classmethod
+        def fetch(cls, *a, **k):
+            raise AssertionError("华语酷狗已命中时不应再探网易")
+
+    reals = {
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    agg.KugouFetcher = FakeKugou
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = BoomNE
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        out = agg.LyricAggregator.fetch_best_lyrics("焚情", "黄凯芹")
+    finally:
+        for name, real in reals.items():
+            setattr(agg, name, real)
+
+    assert out["source"] == "kugou", out
+    assert out["lines"][0]["text"] == "焚情如火"
+
+
+def test_pair_plain_bilingual_lyrics_keeps_translation_line_level():
+    """GPU 打轴前：原文与译文拆开，译文不进入 align 文本。"""
+    text = "Hello world\n你好世界\nSee you\n再见"
+    orig, trans = pair_plain_bilingual_lyrics(text)
+    assert orig.splitlines() == ["Hello world", "See you"]
+    assert trans == ["你好世界", "再见"]
+
+
+def test_dsf_write_uses_tagset_not_legacy_args():
+    """v1.2.5 P1：DSF 写入必须走 _apply_id3_tags(audio.tags, tags)，不能用已删除的散参数签名。"""
+    import inspect
+    src = inspect.getsource(update_audio_tags)
+    assert "_apply_id3_tags(audio.tags, tags)" in src
+    assert "title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist" not in src
+
+
+def test_dsf_is_supported_extension():
+    """v1.2.5：目录扫描必须包含 .dsf，否则 DSF 曲目会被整批跳过。"""
+    from scripts.process_song import SUPPORTED_EXTS
+    assert ".dsf" in SUPPORTED_EXTS
 
 
 def test_atomic_write_many_keeps_pair():

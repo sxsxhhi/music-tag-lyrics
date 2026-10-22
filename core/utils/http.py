@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Lightweight Universal HTTP Networking Utility (v1.2.4)
-Centralizes GET/POST requests, JSON decoding, custom User-Agents, and timeout handling.
-Zero external dependencies.
-"""
+"""轻量 HTTP GET/POST 与 JSON 解析。"""
 
 import urllib.request
 import urllib.parse
@@ -12,7 +8,7 @@ from typing import Optional, Dict, Any, Union
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
-UA_DEFAULT = "music-tag-lyrics/1.1.3"
+UA_DEFAULT = "music-tag-lyrics/1.2.5"
 
 def http_get_text(
     url: str,

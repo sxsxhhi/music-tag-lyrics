@@ -6,8 +6,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.4)。**  
-> 原生聚合 Kugou (KRC)、LRCSHARE (云端TTML/多语言)、AMLL (Apple Music TTML)、LRCLIB (全球开源库)、NetEase 等知名开源协议与 API，内置 Demucs v4 + Whisper 短窗声学对齐与双端能量门禁引擎，恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**，实现「原地原子改签 + 同级双轨歌词输出 + 尾奏智能保护 + Live/录音室强物理互斥 + 下架孤品声学强制咬合 + 3-Tier外语翻译级联调度 + 黄金时间轴动态微调锚定 + 全链路 DRY 架构去重」。
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.5)。**  
+> 调度顺序：酷狗 (KRC) → AMLL (Apple Music TTML) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（最后一档）。恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**（全文见 `SKILL.md`）。外语原文与译文必须同一源整包；逐字只打原文，译文为 ELRC 行级副行。
 
 ---
 
@@ -30,16 +30,16 @@
    - **用户手动修改元数据神圣不可侵犯**：支持 `--lyrics-only` 模式，仅更新 `USLT` 歌词帧，用户手动维护的标题、歌手、专辑、年份等标签 100% 保持不变；
    - **多合唱歌手强制 `/` 规范**：自动将 `,`、`&`、`、`、`，`、`feat.` 规范清洗为现代流媒体标准正斜杠 `/`，并在白名单保护下杜绝误拆乐队；
    - **4 位公历年份清洗**：自动将 `2016-08-15` 或杂乱格式清洗为标准的 `YYYY` 纯数字年份。
-3. **🌐 GitHub 多源开源协议自适应梯级调度**：
-   - **华语经典优先**：优先调度 **酷狗音乐 (KRC)**，利用 16 字节专属掩码解密，涵盖海量老歌、经典民歌、粤语金曲与长拖腔；
-   - **官方母带与欧美热歌**：直连 **AMLL (`amll-dev/amll-ttml-db`)** 社区库，提取 Apple Music 官方母带级高精逐字 XML；
-   - **全球/欧美/小语种**：直连 **LRCLIB (`lrclib.net`)** 全球最大免 Token 开放同步歌词数据库，彻底解决外文曲目歌词荒；
-   - **独立音乐/民谣/翻唱**：网易云音乐 API 兜底检索。
+3. **🌐 多源梯级调度（酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU）**：
+   - **华语经典优先**：酷狗 KRC 逐字；已命中则不因「缺译文」覆盖；
+   - **官方母带与欧美热歌**：AMLL Apple Music TTML；
+   - **网易云**：行级 LRC + 官方 tlyric；外语缺译文且网易自带原文+译文时整包替换（禁止跨源挂载）；
+   - **LRCSHARE / LRCLIB**：云端 TTML 与全球同步库；Demucs GPU 仅全源无主词且本地 txt + 授权。
 4. **🎸 长篇乐器尾奏（Outro）智能识别保护**：
    - 科学识别吉他、手风琴、口琴长篇 Solo，**歌词在唱毕处自然终结属于完美行为，严禁机械按时长差误判为“后半段截断”**；
    - 严格单调性时序门禁（$t_k \ge t_{k-1}$），彻底消除时间戳倒流与冲突。
 5. **💎 双轨制同目录交付与三位一体镜像**：
-   - 处理新歌曲时，生成的 `[歌名] - [歌手].spl`（逐字）与 `[歌名] - [歌手].lrc`（逐字兼容版）**直接落位于音频文件所在同目录下**，且音频内嵌元数据与双轨歌词文件达成 100% SHA-256 镜像一致。
+   - 处理新歌曲时，生成的 `.spl`（逐字）与 `.lrc`（逐字兼容版）**与音频同 basename、落在音频所在同目录**（例如 `Counting Stars - OneRepublic.flac` → `Counting Stars - OneRepublic.lrc`），且音频内嵌元数据与双轨歌词文件达成 100% SHA-256 镜像一致。
 6. **🛑 下架孤品 Demucs v4 GPU 声学咬合兜底（恪守绝不语音听写红线）**：
    - **【核心红线】先检后轴**：针对绝版孤品，**绝不进行任何 ASR 语音听写**（彻底根治 10%~30% 语音同音错字与多行排版坍塌）；必须先检索或由用户提供正确歌词文本，仅将 AI 作为声学打轴工具进行强制对齐；
    - **双端声学能量门禁**：首字 15ms 逆向能量回溯锁定起唱突跃点（Onset Gate），尾字 20ms 正向跌落截断衰减拖尾（Offset Gate）；
@@ -55,126 +55,27 @@
 
 ---
 
-## 🏗️ 架构拓扑全景
+## 🏗️ 架构拓扑
 
 ```mermaid
 flowchart TD
-    subgraph HostEnv["💻 音频环境"]
-        AudioFile["音频源文件<br/>(.flac / .mp3 / .wav / .m4a / .ogg)<br/>📍 原位更新，绝不移动"]
-    end
-
-    subgraph NativeSkill["🛡️ music-tag-lyrics 原生技能 (v1.2.4)"]
-        TagEditor["scripts/tag_editor.py<br/>• Title 纯净化<br/>• Artist 多歌手强制 '/' & 乐队白名单<br/>• 4位数字 Year 清洗<br/>• 严格保护用户手动元数据 (--lyrics-only)"]
-        
-        subgraph Aggregator["core/aggregator.py (多源自适应调度中心)"]
-            F_AMLL["AMLL Apple Music (官方 TTML 逐字)"]
-            F_KG["酷狗音乐 (KRC 逐字，支持 adjust)"]
-            F_LRC["LRCLIB (全球开源同步库)"]
-            F_NE["网易云 (LRC 同步，带版本门禁)"]
-        end
-
-        subgraph CoreEngine["内置轻量算法核心 (总计 < 300KB)"]
-            D_XOR["krc_xor.py<br/>(16字节 XOR + Zlib)"]
-            Acoustic["core/acoustic_aligner.py<br/>(Demucs v4 干声 + 短窗双端能量门禁打轴)"]
-            Validator["scripts/lyric_validator.py<br/>(单调性、声学自然度、Intro Gate & Outro 保护)"]
-            Converter["core/converter.py<br/>(双轨 Enhanced LRC 镜像 + >=300ms 停顿闭合标签)"]
-        end
-    end
-
-    AudioFile --> TagEditor
-    AudioFile --> Aggregator
-    Aggregator --> D_XOR
-    Aggregator -->|全网无逐字经授权启用| Acoustic
-    D_XOR --> Validator
-    Acoustic --> Validator
-    Validator --> Converter
-    Converter --> OutputFiles["🎵 同级目录双轨文件：<br/>• 歌名 - 歌手.spl (逐字流光)<br/>• 歌名 - 歌手.lrc (逐字兼容)<br/>• 音频内嵌 lyrics 标签 (100% 一致)"]
+  Audio[音频原地改签] --> Process[process_song]
+  Process --> Tags[tag_editor]
+  Process --> Agg["aggregator: 酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB"]
+  Agg -->|全源无 lines 且本地 txt + 授权| GPU[Demucs GPU 只打原文]
+  Agg --> Valid[lyric_validator]
+  GPU --> Valid
+  Process -->|有行级无逐字| Synth[numpy 合成 非 GPU]
+  Synth --> Valid
+  Valid --> Conv[converter to_spl]
+  Conv --> Out[".spl .lrc 内嵌镜像"]
 ```
 
 ---
 
-## 🧠 Demucs v4 GPU 音频剥离与声学咬合终极兜底方案 (Fallback Protocol)
+## 🧠 Demucs v4 GPU 兜底
 
-针对全网下架孤品曲目（如各主流音乐平台均已下架的绝版歌曲、小众现场录音或翻唱作品），本项目制定了严密受控的 Demucs v4 GPU 人声分离与 AI 声学对齐终极兜底机制：
-
-### 1. 绝对红线：绝不语音听写，必须先检后轴 (Never Transcribe Blindly)
-- **痛点根源**：Whisper 等 ASR 模型在处理伴奏混音时，字词听写错误率高达 10%~30%（如将“幽暗”转写为“游暗心”，将“生活的逼迫”转写为“生活的皮”），且会将原本工整的四行诗强制捏合成一行长句；
-- **红线铁律**：**严禁无词 ASR 语音听写！**使用 Demucs v4 终极兜底时，必须首先通过全网开源检索或本地 `[歌名 - 歌手.txt]` 定位权威歌词文本。若无法获取任何有效歌词文本，系统立即触发红线阻断并强制中止，绝不妥协听写。
-
-### 2. 双端声学能量门禁与短窗咬合流水线
-
-```mermaid
-flowchart LR
-    A["混音音频源<br/>(FLAC / WAV / MP3)"] -->|Demucs v4 GPU| B["提取纯人声干声<br/>(vocals.mono)"]
-    B -->|短窗切分 VAD| C["隔离 >=2.5s 乐器间奏<br/>防全局 DTW 崩溃"]
-    C -->|Whisper 强制对齐| D["基于权威纯文本歌词<br/>交叉注意力音素咬合"]
-    D -->|双端能量门禁| E["Onset 15ms 回溯消抢跑<br/>Offset 20ms 跌落截拖尾<br/>>=300ms 间隙闭合防拉伸"]
-    E -->|时序门禁校验| F["标准 Enhanced LRC 逐字歌词<br/>(.spl / .lrc / 内嵌标签)"]
-    F -->|保洁保障| G["🗑️ 自动彻底销毁临时音频<br/>(零磁盘污染与空间浪费)"]
-```
-
-### 3. 阶梯探测与终端显式授权交互 (Interactive Prompt)
-当多源检索（酷狗、AMLL、网易云、LRCLIB）穷尽且无有效逐字歌词时，主控脚本自动触发安全门禁：
-1. **自动前置校验**：检查全网或同级目录下是否存在权威歌词文本（如 `《歌名 - 歌手.txt》`）；若无任何文本，立即执行红线阻断；
-2. **终端显式确认交互**：
-   ```text
-   🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.4)]
-   已定位到权威歌词文本（共 X 行）。
-   是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？
-   （声明：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）
-   [Y: 授权同意运行 GPU 打轴 / N: 拒绝授权并跳过]
-   ```
-3. **分支决策**：
-   - **用户授权同意 (Y)**：调用 GPU 极速提取干声，执行短窗对齐与双端门禁，**处理完毕后瞬时物理删除全部临时干声文件**；
-   - **用户拒绝授权或超时 (N)**：**0 下载、0 重型依赖安装**，安全优雅降级退出。
-
----
-
-## 📂 项目结构说明
-
-```
-music-tag-lyrics/
-├── LICENSE                            # MIT License 开源协议
-├── README.md                          # 项目详细说明文档（本文件，v1.2.4）
-├── SKILL.md                           # 技能全维度规范说明书 (v1.2.4)
-├── .gitignore                         # Git 忽略配置
-├── requirements.txt                   # 必需依赖：mutagen（numpy 仅逐字合成需要）
-├── requirements-acoustic.txt          # 可选依赖：Demucs v4 声学打轴兜底
-├── scripts/
-│   ├── process_song.py                # 主控一键 CLI 脚本 (newline='\n' 确定性输出，支持 --lyrics-only 与 --force-gpu)
-│   ├── tag_editor.py                  # mutagen 音频内嵌标签清洗（去重精简架构，支持多歌手、乐队白名单与四位年份）
-│   └── lyric_validator.py             # 时间戳单调性、Intro Gate 前奏起唱校验、声学自然度门禁 (200~800ms) 与尾奏保护器
-├── tests/                             # 离线回归测试与基线跑批（24 条用例，不联网）
-│   ├── test_parsers.py                # 解析层：LRC / SPL / TTML / 时间戳
-│   ├── test_m1_safety.py              # 标签安全、空值归一、原子写
-│   ├── test_pipeline.py               # 流水线：双语剥离 / 校验门禁 / 坏 ID3
-│   ├── run_baseline.py                # 9 首基线跑批（产物强制落在仓库外）
-│   └── fixtures/                      # 最小夹具（不含版权歌词）
-└── core/
-    ├── utils/                         # 共享底层工具包 (DRY 全量去重核心)
-    │   ├── __init__.py
-    │   ├── http.py                    # 统一轻量 HTTP 客户端 (带 User-Agent, 超时, 自动解析)
-    │   ├── time_utils.py              # 统一时间解析与格式化 (支持 [offset] 与 adjust 叠加)
-    │   ├── version_guard.py           # 权威版本门禁 (Live/Studio/Demo/Remix 双向互斥与标题副标题清洗)
-    │   ├── text_utils.py              # 统一 CJK / 语言判定 / 翻译行识别
-    │   └── io_safe.py                 # 原子写与「副本改写→原子替换」的音频标签落盘
-    ├── aggregator.py                  # 多源智能自适应语言与风格调度中枢
-    ├── converter.py                   # 双轨输出国际标准 Enhanced LRC (.spl / .lrc 100% 镜像，支持 >=300ms 停顿闭合标签)
-    ├── acoustic_aligner.py            # Demucs v4 人声分离与 Whisper 双端能量门禁逐字声学咬合引擎 (v1.2.4 核心)
-    ├── fetchers/
-    │   ├── amll.py                    # AMLL Apple Music 官方母带 TTML 社区库抓取（欧美/全球一级）
-    │   ├── kugou.py                   # 酷狗音乐 KRC 逐字抓取（华语一级，支持 adjust 叠加）
-    │   ├── lrcshare.py                # LRCSHARE 云端 TTML/逐词/多语言结构化抓取（需 API Key）
-    │   ├── lrclib.py                  # LRCLIB 全球开源同步歌词 REST 接口
-    │   └── netease.py                 # 网易云音乐检索与提取（支持 Live 版本门禁）
-    ├── decryptors/
-    │   └── krc_xor.py                 # 酷狗 16字节掩码 XOR + Zlib 原生解密解压
-    └── parsers/
-        ├── _common.py                 # 解析器共享工具（[offset] 标签解析，KRC/LRC 共用）
-        ├── ttml_parser.py             # Apple Music TTML XML 解析 (支持 SMPTE 纯秒数)
-        ├── krc_parser.py              # KRC 逐字解析 (支持 [offset] 与 adjust 叠加)
-        └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器 (支持多时间戳行保留)
-```
+仅当酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB **全部没有 `lines`** 时才会询问。必须先有同目录 txt 或 `--lyrics-file`；无文本红线阻断；用户拒绝或 `--non-interactive` 则本首失败（**不是**降级逐行 LRC）。有行级词之后的 numpy 合成不是 GPU。授权文案与铁律全文见 `SKILL.md`。
 
 ---
 
@@ -217,7 +118,7 @@ python scripts/process_song.py "path/to/song.flac" --force-gpu
 ```
 
 ### 5. 递归批量处理整个曲库目录
-自动递归扫描目录下所有的音频文件（FLAC、MP3、M4A、OGG、WAV）并进行批处理：
+自动递归扫描目录下所有的音频文件（FLAC、MP3、M4A、OGG、WAV、DSF）并进行批处理：
 ```bash
 python scripts/process_song.py "path/to/music_folder/"
 ```
@@ -236,6 +137,7 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| [**v1.2.5**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.5) | `2026-10-22` | **同一版译文 · 调度顺序 · DSF 写标签 · 去重精简** | • **调度**：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU（最后一档，不是抓词 API）<br/>• **同一版**：外语原文+译文必须同一源整包；禁止酷狗原文混挂网易 tlyric；无译文则保持纯原文<br/>• **ELRC**：合成/GPU 只给原文写逐字，译文为同一时间戳纯文本副行；Demucs 拒绝或非交互为本首失败，不降级 LRC<br/>• **P0/P1**：补导入 `INSTRUMENTAL_KEYWORDS`；DSF 走 `_apply_id3_tags(audio.tags, tags)`；`SUPPORTED_EXTS` 含 `.dsf`<br/>• **工程化**：离线测试 29 条；`UA_DEFAULT` 1.2.5；GitHub Actions 离线 CI | 生产级稳定 |
 | [**v1.2.4**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.4) | `2026-10-22` | **全量审查修复 · 原子写与标签安全 · TTML 词边界重建 · 去重收敛** | • **4 个 P0 修复**：ID3 解析失败不再清空原有帧；双语译文行不再被当歌词逐字输出；校验失败拒绝写盘（不再产出只有标题的文件却报成功）；numpy 缺失时声学模块可正常导入<br/>• **TTML 词边界重建（F-19 方案 A）**：解析层按源文件真实空格重建词边界并写入 `join` 标记，输出层按标记决定是否补空格 —— 音节不再被拆成单词，同时保留 Apple Music 音节级高亮；`x-translation` 译文落 `translation`，`x-bg` 背景和声不再污染主唱行<br/>• **数据安全**：FLAC/OGG/WAV/DSF/MP3/MP4 六种格式统一「副本改写 → 原子替换」；lrc/spl 双文件一次性原子落盘；批量模式单曲异常不再中断整批<br/>• **去重与结构收敛**：未使用导入 12→1 处、占位判断 4 份→1 份、来源行识别 2 份→1 份、时间戳剥离统一、KRC/LRC `[offset]` 解析合并、ID3/Vorbis 字段写入改为单表驱动、WAV/DSF 读取分支合并、原子写单文件特例收编、ID3 逐字段隔离<br/>• **行为变更（升级需知悉）**：空 `artist` 不再覆盖原标签；时间戳改整数厘秒舍入，个别词时间戳 ±0.01s；TTML 元数据取首个非空值（标题可能是英文而非繁体）；纯译文曲现在判失败<br/>• **文档对齐**：18 条铁律口径、分源时长门禁、模块索引补齐 `io_safe`/`lrcshare`/`tests`/`requirements`、依赖说明与实际实现一致 | 生产级稳定 |
 | [**v1.2.3**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.3) | `2026-10-21` | **LRCSHARE 云端高精歌词集成 · 3-Tier 外语翻译级联调度与 18 大避坑铁律全量固化** | • **LRCSHARE 社区云端源接入 (`core/fetchers/lrcshare.py`)**：原生接入 `api.lrcshare.com`，内置 24h 缓存 session token、全库本地负向预过滤（Token未命中 0 请求极速拦截）、结构化多语言 versions 解析与 Apple Music 原生 TTML 直通<br/>• **3-Tier 外语翻译级联调度**：确立 酷狗原生 type:1 语义翻译 $\rightarrow$ 网易云 163 翻译 $\rightarrow$ LRCSHARE 兜底三级调度，严格杜绝罗马音与空耳音译混入<br/>• **黄金基准时间轴动态微调锚定**：确立已实测歌曲时间戳真理权，$\le \pm 300\text{ms}$ 允许声学容差平滑微调，$> 500\text{ms}$ 强物理锁定原时间轴，仅挂载语义文本<br/>• **18 大避坑铁律全面固化**：正式新增铁律 15（酷狗 KRC 语义翻译与音译防混淆门禁）、铁律 16（纯音乐占位防篡改与有效行数门禁）、铁律 17（物理时长严密邻近与版本防串扰门禁）、铁律 18（黄金基准时间轴锚定门禁） | 生产级高精调度 |
 | [**v1.2.2**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.2) | `2026-10-21` | **ELRC 双语翻译规范 · 外文词界空格排版治理与 14 大铁律升级** | • **国际标准 ELRC 官方精修双语引擎**：建立主唱行与译文副行母体时间戳咬合规范，副行零 `<>` 打点防跳屏，全量 71 首外语曲库 100% 达成三位一体 SHA-256 镜像<br/>• **外文词界空格与 `\xa0` 假空格消融铁律**：确立第 14 大避坑铁律，底层强制注入标准 ASCII `\x20` 词距空格并消融全部网页非换行假空格 `\xa0`<br/>• **双核心红线体系**：绝不语音听写 · 绝不机械机翻双红线全面固化 | 生产级双语流光 |

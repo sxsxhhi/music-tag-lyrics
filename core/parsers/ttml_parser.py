@@ -1,22 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Apple Music TTML Lyric Parser (v1.2.4)
-
-解析 TTML（Apple Music Lossless Lyrics）为统一的 lines/words 结构。
-
-相对旧版的四处修正：
-1. **保留源里的词边界**：`<span>A</span> <span>lu</span>` 之间的空白是真实字符，
-   旧版用 `"".join(...)` 重建行文本时把它丢掉，输出层只能靠启发式补空格，
-   结果把音节当词（`A lu na,` 而不是 `Aluna,`）。现在按 `match.span()` 取 span 之间的
-   原始文本，把空白挂到前一词尾部，并写 `join` 标记（"space"/"none"）供输出层使用。
-2. **译文**：`<span ttm:role="x-translation">` 没有 begin/end 属性，旧版正则根本不匹配它，
-   译文被整段丢弃。现在单独收集到 `line["translation"]`。
-3. **背景和声**：`ttm:role="x-bg"` 的嵌套 span 不再平铺进主唱词序列，单独存 `bg_words`。
-4. **属性顺序无关**：`<p>` / `<span>` 先取标签串再解析属性，不再是
-   `<p begin=".." end="..">` 这种固定组序（属性换序或缺 end 时旧版会整曲 0 行）。
-
-Zero external dependencies.
-"""
+"""Apple Music TTML 解析：保留词边界 join、x-translation、x-bg 不进主唱。"""
 
 import re
 from typing import Any, Dict, List

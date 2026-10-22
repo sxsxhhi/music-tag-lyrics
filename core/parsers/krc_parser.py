@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-KRC Lyric Parser (v1.2.4)
-Parses raw KRC text into structured line-by-line and word-by-word timestamps.
-Supports [offset:xxx] tags from lyrics metadata and server-side adjust offsets.
-Natively decodes Kugou Base64 JSON [language:...] tag into 1:1 line-level embedded translations.
-Zero external dependencies.
-"""
+"""KRC 解析：逐字时间轴、offset/adjust、仅 type:1 语义译文。"""
 
 import re
 import base64

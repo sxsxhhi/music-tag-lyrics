@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-M1 止血层回归测试（离线，不联网、不碰用户音频）
-
-覆盖：年份归一、空值归一、乐队白名单、来源行过滤、原子写工具。
-运行：python tests/test_m1_safety.py
-"""
+"""M1 离线回归：年份/空值归一、乐队白名单、来源行、原子写。运行：python tests/test_m1_safety.py"""
 
 import os
 import sys

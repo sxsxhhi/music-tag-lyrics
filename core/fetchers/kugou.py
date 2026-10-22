@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Kugou Music Lyric Fetcher (v1.2.4)
-Searches and downloads word-level synchronized KRC lyrics from Kugou Music.
-Enforces bidirectional Live vs Studio mutual exclusion, multi-stage query ladder,
-KRCS keyword direct fallback, and server-side adjust offset application.
-Refactored to eliminate duplicate candidate selection and title matching logic (DRY architecture).
-Zero external dependencies.
-"""
+"""酷狗 KRC 抓取：Live 互斥、KRCS 降级、adjust 叠加、时长门禁。"""
 
 import urllib.parse
 import base64
@@ -19,19 +12,18 @@ from ..utils.text_utils import is_instrumental_placeholder
 from ..utils.version_guard import (
     is_live_version,
     strip_subtitle_brackets,
-    matches_version_policy
+    matches_version_policy,
+    is_title_fuzzy_match,
 )
 
-def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
-    """Centralized fuzzy title matcher with bracket normalization."""
-    c_t = cand_title.strip().lower()
-    t_c = target_title.strip().lower()
-    return (
-        c_t == t_c or
-        strip_subtitle_brackets(c_t) == strip_subtitle_brackets(t_c) or
-        t_c in c_t or
-        c_t in t_c
-    )
+
+def _reject_parsed_duration(last_end_ms: int, target_duration_ms: int) -> bool:
+    """长曲预览截断或末行偏差过大则拒绝。阈值 90000/45000/8000 原样保留。"""
+    if target_duration_ms <= 0:
+        return False
+    if target_duration_ms > 90000 and last_end_ms < 45000:
+        return True
+    return abs(last_end_ms - target_duration_ms) > 8000
 
 def select_best_krc_candidate(
     candidates: List[Dict[str, Any]],
@@ -62,8 +54,7 @@ def select_best_krc_candidate(
             continue
                 
         cand_last_end = lines[-1].get("end", lines[-1].get("start", 0))
-        # Reject severe truncations
-        if target_duration_ms > 90000 and cand_last_end < 45000:
+        if _reject_parsed_duration(cand_last_end, target_duration_ms):
             continue
             
         # Scoring
@@ -75,9 +66,6 @@ def select_best_krc_candidate(
         # Iron Rule 17: Duration Proximity Gate
         if target_duration_ms > 0:
             dur_diff = abs(cand_last_end - target_duration_ms)
-            if dur_diff > 8000:
-                # Reject version divergence > 8.0s (e.g. 1978 original 287s vs remix 225s)
-                continue
             if dur_diff <= 3000:
                 score += 500
             elif dur_diff <= 5000:
@@ -315,9 +303,7 @@ class KugouFetcher:
                     # Iron Rule 17: Enforce duration proximity on actual parsed lines
                     if duration_ms > 0 and lines:
                         last_t_ms = lines[-1].get("end", lines[-1].get("start", 0))
-                        if abs(last_t_ms - duration_ms) > 8000:
-                            continue
-                        if duration_ms > 90000 and last_t_ms < 45000:
+                        if _reject_parsed_duration(last_t_ms, duration_ms):
                             continue
                     return res
                     

@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Linguistic Character & Text Analysis Utility (v1.2.4)
-Centralizes CJK detection, Japanese Kana, Chinese Hanzi identification,
-and non-Chinese translation line differentiation.
-Zero external dependencies.
-"""
+"""语种与文本判定：汉字/假名/谚文、外语曲、译文行、占位词。"""
 
 import re
 

@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Parser 共享工具 (v1.2.4)
-
-R3：KRC 与 LRC 两个解析器原先各写了一遍 ``[offset:xxx]`` 标签解析（逐字节相同）。
-统一到这里，避免两处漂移（例如只有一处改了异常类型，另一处没改）。
-"""
+"""解析器共享：KRC/LRC 的 [offset] 标签。"""
 
 from typing import Any, Mapping
 

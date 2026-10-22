@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-AcousticAligner: Demucs v4 + Stable-Whisper 声学咬合高精打轴引擎 (v1.2.4)
-绝对红线：严禁语音听写，仅在 100% 正确的正版/权威歌词文本基础上执行时间轴咬合。
-核心特性：
-1. Demucs v4 GPU 干声剥离 (vocals.mono)
-2. 混合双轨短窗切分 (LRC 粗轴划窗 / 纯文本声学 VAD 划窗，隔离长间奏)
-3. 双端声学能量门禁 (Onset 15ms 逆向回溯 + Offset 20ms 正向跌落截断 RMS < 0.015)
-4. 行内停顿空闭合标签 (Pause Gap Tags) 消除行内假滚动
-5. 保留原有 split_units, align_line_to_words, enrich_track_with_acoustic_words 以维持100%向后兼容
-"""
+"""Demucs GPU 强制对齐与无逐字时的 numpy 行级合成；译文行不写 words。"""
 
 # P0-1: 让所有注解延迟求值。本文件有多处 `Tuple[np.ndarray, int]` 形式的返回注解，
 # 它们在**类定义期**就会被求值；numpy 缺失时 np 为 None，会抛
@@ -24,7 +15,7 @@ try:
 except ImportError:  # C-01: numpy 只在声学路径需要，缺失时不应让"抓歌词"整条链路崩
     np = None
 
-from .utils.text_utils import CJK_RE, is_source_or_credit_line
+from .utils.text_utils import CJK_RE, is_source_or_credit_line, is_translation_line
 
 # ==========================================
 # 1. 向后兼容：轻量级音素加权打轴模块 (v1.1.3 保留)
@@ -118,7 +109,7 @@ def enrich_track_with_acoustic_words(data: Dict[str, Any]) -> Dict[str, Any]:
         if not line.get("words") and line.get("text"):
             text = line["text"]
             # G5: 来源/署名行与纯符号行不参与合成（统一走 text_utils）
-            if is_source_or_credit_line(text):
+            if is_source_or_credit_line(text) or is_translation_line(text, has_words=False):
                 continue
             start = line.get("start", 0)
             duration = line.get("duration", 3000)

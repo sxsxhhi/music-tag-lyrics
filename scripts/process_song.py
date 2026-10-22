@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Main CLI Processor for music-tag-lyrics Skill (v1.2.4)
-Standardizes audio metadata tags (Artist with '/', clean Title, Album, 4-digit Year, embedded Lyrics)
-and generates paired standard Enhanced LRC (.spl and .lrc) lyrics in the song's directory.
-Provides Demucs v4 GPU fallback protocol with strict acoustic alignment:
-【核心红线】：绝不进行 ASR 语音听写！必须先从全网/本地检索权威歌词，在正确歌词基础上进行声学逐字打轴。
-Zero external software dependencies.
-"""
+"""单曲/批量入口：洗标签、多源抓词、无主词时 Demucs GPU 兜底（须本地 txt + 授权）。"""
 
 import os
 import sys
@@ -26,13 +19,13 @@ if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
 
 from scripts.tag_editor import read_audio_tags, update_audio_tags, normalize_artist_string, clean_title_string, clean_year_string
-from scripts.lyric_validator import validate_and_fix_lyrics
+from scripts.lyric_validator import validate_and_fix_lyrics, pair_plain_bilingual_lyrics
 from core.aggregator import LyricAggregator
-from core.converter import to_lrc, to_spl
-from core.utils.io_safe import atomic_write_many
+from core.converter import to_spl
+from core.utils.io_safe import atomic_write_many, read_text_guess_encoding
 from core.utils.text_utils import is_foreign_track
 
-SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
+SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav", ".dsf"}
 
 def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional[str]:
     """
@@ -56,14 +49,9 @@ def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional
     for c in candidates:
         p = os.path.join(song_dir, c)
         if os.path.isfile(p):
-            for enc in ["utf-8", "utf-8-sig", "gbk", "gb18030"]:
-                try:
-                    with open(p, "r", encoding=enc) as f:
-                        txt = f.read().strip()
-                    if txt:
-                        return txt
-                except Exception:
-                    continue
+            txt = read_text_guess_encoding(p)
+            if txt:
+                return txt
     return None
 
 def prompt_demucs_fallback(
@@ -89,7 +77,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print(f"\n" + "="*65)
-        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.4)]")
+        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]")
         print(f"未能从商业曲库检索到《{title} - {artist}》的有效歌词，且本地未提供纯文本歌词。")
         print(f"⚠️ 核心铁律：【绝不语音听写，使用 Demucs v4 兜底时必须先从全网检索歌词，在正确歌词的基础上进行逐字打轴】！")
         print(f"👉 解决方案：请在歌曲所在目录下放置纯文本歌词文件：")
@@ -106,7 +94,7 @@ def prompt_demucs_fallback(
     ]
     
     print(f"\n" + "="*65)
-    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.4)]")
+    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.5)]")
     print(f"未能从云端曲库直接匹配到现成逐字歌词，但已定位到权威歌词文本（共 {len(singing_lines)} 行）。")
     print(f"是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？")
     print(f"（注意：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）")
@@ -118,11 +106,23 @@ def prompt_demucs_fallback(
             print(f"✅ 用户已显式授权。准备调用 AcousticAligner 执行 GPU 声学咬合...")
             try:
                 from core.acoustic_aligner import AcousticAligner
+                align_text = plain_text_lyrics
+                trans_by_idx = []
+                if is_foreign_track(title, artist):
+                    orig_only, trans_by_idx = pair_plain_bilingual_lyrics(plain_text_lyrics)
+                    if orig_only.strip():
+                        align_text = orig_only
+                    else:
+                        trans_by_idx = []
                 aligned_data = AcousticAligner.align_lyrics(
                     audio_path=filepath,
-                    lyrics_text=plain_text_lyrics,
+                    lyrics_text=align_text,
                     device='cuda'
                 )
+                if aligned_data and trans_by_idx:
+                    for i, line in enumerate(aligned_data.get("lines") or []):
+                        if i < len(trans_by_idx) and trans_by_idx[i]:
+                            line["translation"] = trans_by_idx[i]
                 return aligned_data
             except ImportError as e:
                 print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs/Whisper: {e}")
@@ -208,15 +208,9 @@ def process_single_song(
     # Read external lyrics file if specified
     explicit_lyrics_text = None
     if lyrics_file and os.path.isfile(lyrics_file):
-        for enc in ["utf-8", "utf-8-sig", "gbk", "gb18030"]:
-            try:
-                with open(lyrics_file, "r", encoding=enc) as f:
-                    explicit_lyrics_text = f.read().strip()
-                if explicit_lyrics_text:
-                    print(f"📖 Loaded external lyrics file: {lyrics_file}")
-                    break
-            except Exception:
-                continue
+        explicit_lyrics_text = read_text_guess_encoding(lyrics_file)
+        if explicit_lyrics_text:
+            print(f"📖 Loaded external lyrics file: {lyrics_file}")
 
     # 3. Lyric retrieval or Demucs fallback
     lyric_data = None
@@ -230,7 +224,7 @@ def process_single_song(
             non_interactive=non_interactive
         )
     else:
-        print("🔍 Fetching lyrics across multi-engines (Kugou/AMLL/LRCSHARE/NetEase/LRCLIB)...")
+        print("🔍 Fetching lyrics across multi-engines (Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
         lyric_data = LyricAggregator.fetch_best_lyrics(
             title=cleaned_title,
             artist=normalized_artist,
@@ -294,8 +288,7 @@ def process_single_song(
     # 5. Generate .spl and .lrc (with prelude credit enrichment & whitelist protection)
     lyricist = tags.get("lyricist", "").strip()
     composer = tags.get("composer", "").strip()
-    spl_content = to_spl(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
-    lrc_content = to_lrc(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
+    spl_content = lrc_content = to_spl(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
 
     lrc_path = os.path.join(target_dir, f"{base_name}.lrc")
     spl_path = os.path.join(target_dir, f"{base_name}.spl")
@@ -339,7 +332,7 @@ def process_single_song(
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.4)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.5)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")

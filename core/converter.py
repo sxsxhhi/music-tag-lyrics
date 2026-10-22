@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Lyric Converter (v1.2.4)
-Converts unified parsed lyric structures into standard Enhanced LRC (.lrc) and Salt Player (.spl) formats.
-Adheres strictly to the international Enhanced LRC (ELRC / A2 extension) standard.
-Line format: [01:26.48]<01:26.48>唱<01:27.20>词<01:27.42>字<01:30.00>
-Supports Trilateral 100% SHA-256 verbatim mirror mode between audio embedded lyrics, .spl, and .lrc.
-Natively enforces Western word boundary spacing normalization and global \\xa0 fake space elimination.
-Supports ELRC bilingual subtitle pairing without screen jumping.
-Refactored as pure functions (zero in-place mutation of input data) and reuses time_utils.
-Zero external dependencies.
-"""
+"""把统一歌词结构导出为 Enhanced LRC；to_lrc 直接委托 to_spl。"""
 
 import re
 from typing import Dict, Any, List

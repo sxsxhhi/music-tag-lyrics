@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Universal Version Guard & Subtitle Cleaner (v1.2.4)
-Centralizes bidirectional strict version mutual exclusion (Live vs Studio),
-demo/remix tag detection, bracketed subtitle stripping with version preservation,
-and duration proximity filtering.
-Shared across all fetchers (Kugou, NetEase, AMLL, LRCLIB).
-Zero external dependencies.
-"""
+"""Live/Studio 互斥、标题括号清洗、时长容差、标题模糊匹配。"""
 
 import re
 
@@ -34,6 +27,18 @@ def is_remix_version(text: str) -> bool:
         return False
     t_lower = text.lower()
     return any(k in t_lower for k in REMIX_KEYWORDS)
+
+def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
+    """与酷狗/网易原判断逐字节相同：全等、去括号全等、或互为子串。"""
+    c_t = (cand_title or "").strip().lower()
+    t_c = (target_title or "").strip().lower()
+    return (
+        c_t == t_c or
+        strip_subtitle_brackets(c_t) == strip_subtitle_brackets(t_c) or
+        t_c in c_t or
+        c_t in t_c
+    )
+
 
 def strip_subtitle_brackets(title: str) -> str:
     """

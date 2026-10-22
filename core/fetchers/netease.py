@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-NetEase Cloud Music Lyric Fetcher (v1.2.4)
-Searches and retrieves synchronized lyrics from NetEase Music.
-Enforces Live vs Studio version mutual exclusion and duration filtering.
-Refactored to reuse shared http and version_guard utilities (DRY architecture).
-Zero external dependencies.
-"""
+"""网易云歌词：检索、Live 互斥、时长门禁、官方 tlyric。"""
 
 from typing import Dict, Any, Optional
 
@@ -15,7 +9,7 @@ from ..utils.version_guard import (
     is_live_version,
     matches_version_policy,
     is_duration_acceptable,
-    strip_subtitle_brackets
+    is_title_fuzzy_match,
 )
 
 class NetEaseFetcher:
@@ -54,10 +48,7 @@ class NetEaseFetcher:
             s_album = s.get("album", {}).get("name", "")
             s_dur = s.get("duration", 0)  # ms
             
-            # Title similarity hard gate: must match title or substring or stripped brackets
-            s_t = s_name.strip().lower()
-            t_c = title.strip().lower()
-            if not (s_t == t_c or strip_subtitle_brackets(s_t) == strip_subtitle_brackets(t_c) or t_c in s_t or s_t in t_c):
+            if not is_title_fuzzy_match(s_name, title):
                 continue
 
             # Version policy check

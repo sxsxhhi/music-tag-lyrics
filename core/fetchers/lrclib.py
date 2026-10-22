@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-LRCLIB Synced Lyric Fetcher (v1.2.4)
-Fetches open-source synchronized lyrics from the LRCLIB global database (lrclib.net).
-Particularly excellent for Western, J-Pop, K-Pop, and global indie releases.
-Refactored to reuse shared http utility (DRY architecture).
-Zero external dependencies.
-"""
+"""LRCLIB 全球同步歌词：精确 get 失败后按标题搜索，时长容差 ±35s。"""
 
 import urllib.parse
 from typing import Dict, Any, Optional
@@ -13,6 +7,26 @@ from typing import Dict, Any, Optional
 from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_get_json, UA_DEFAULT
 from ..utils.version_guard import is_live_version, matches_version_policy
+
+
+def _stamp_lrclib(parsed: Dict[str, Any], title: str, artist: str,
+                  track_name: Optional[str] = None, artist_name: Optional[str] = None,
+                  fill_missing_only: bool = False) -> Dict[str, Any]:
+    parsed["source"] = "lrclib"
+    parsed["lyric_type"] = "line"
+    tags = parsed.setdefault("tags", {})
+    ti = track_name or title
+    ar = artist if artist_name is None else artist_name
+    if fill_missing_only:
+        if not tags.get("ti"):
+            tags["ti"] = ti
+        if not tags.get("ar"):
+            tags["ar"] = ar
+    else:
+        tags["ti"] = ti
+        tags["ar"] = ar
+    return parsed
+
 
 class LRCLIBFetcher:
     """Fetcher for LRCLIB global synchronized lyrics."""
@@ -34,13 +48,12 @@ class LRCLIBFetcher:
             synced = data.get("syncedLyrics", "")
             if synced:
                 parsed = parse_lrc(synced)
-                parsed["source"] = "lrclib"
-                parsed["lyric_type"] = "line"
-                if not parsed.get("tags", {}).get("ti"):
-                    parsed.setdefault("tags", {})["ti"] = data.get("trackName", title)
-                if not parsed.get("tags", {}).get("ar"):
-                    parsed.setdefault("tags", {})["ar"] = data.get("artistName", artist)
-                return parsed
+                return _stamp_lrclib(
+                    parsed, title, artist,
+                    track_name=data.get("trackName", title),
+                    artist_name=data.get("artistName", artist),
+                    fill_missing_only=True,
+                )
 
         # Fallback search if direct get fails
         return cls.search_and_fetch(title, artist, duration_ms)
@@ -82,10 +95,10 @@ class LRCLIBFetcher:
                 synced = item.get("syncedLyrics", "")
                 if synced:
                     parsed = parse_lrc(synced)
-                    parsed["source"] = "lrclib"
-                    parsed["lyric_type"] = "line"
-                    parsed.setdefault("tags", {})["ti"] = item.get("trackName") or title
-                    parsed.setdefault("tags", {})["ar"] = item.get("artistName", artist)
-                    return parsed
+                    return _stamp_lrclib(
+                        parsed, title, artist,
+                        track_name=item.get("trackName") or title,
+                        artist_name=item.get("artistName", artist),
+                    )
 
         return None

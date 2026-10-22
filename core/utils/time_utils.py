@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Universal Timestamp Math and Formatting Utility (v1.2.4)
-Centralizes time string parsing (LRC, KRC, TTML, SMPTE), millisecond arithmetic,
-bracket formatting, and offset/adjust application with boundary clamping.
-Zero external dependencies.
-"""
+"""时间戳解析与格式化：LRC/KRC/TTML、offset/adjust 叠加。"""
 
 import re
 from typing import Match

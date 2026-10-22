@@ -1,25 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-解析层回归测试（M0 建立）
-
-设计原则：**先固化现状**。
-M0 阶段源码零改动，因此下面凡是断言"缺陷值"的用例，都是刻意写的**特征化测试**
-（characterization test）：它锁住当前行为，任何后续改动都会让它变红，从而强制
-改动者显式修改测试并说明理由。用例名前缀 `KNOWN_BUG__` 表示"这条断言记录的是缺陷"。
-
-M2 修复后，`KNOWN_BUG__*` 必须整体反转，其中：
-  - F-19：首行渲染应从 "A lu na, ca ra can ti ca" 变成 "A luna, cara cantica"
-    （源文件真实空格只有 3 处：A 后、na, 后、ra 后）
-  - F-06/C-08：41 条 x-translation 译文应落到 line["translation"]
-  - X-01：format_time_tag(59995) 应从 [00:60.00] 变成 [01:00.00]
-  - X-02：parse_time_string_to_ms("123:45.67") 应从 0 变成 7425670
-  - X-06：标题应从繁体"挪德卡萊"变成按 xml:lang 优先选择的简体/原文
-
-运行方式（不依赖 pytest，本机未安装）：
-    python tests/test_parsers.py
-也兼容 pytest：
-    pytest tests/test_parsers.py
-"""
+"""解析层离线回归：LRC/SPL/TTML 与时间戳。运行：python tests/test_parsers.py"""
 
 import os
 import re

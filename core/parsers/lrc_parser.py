@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-LRC / Enhanced LRC Lyric Parser (v1.2.4)
-Parses standard line-by-line LRC text, international Enhanced LRC (ELRC / A2),
-and Salt Player .spl verbatim word timestamps into structured lyrics data.
-Supports [offset:xxx] tags, multi-timestamp line retention, and boundary offset clamping.
-Zero external dependencies.
-"""
+"""LRC / Enhanced LRC 解析：多时间戳行保留、offset 箝位。"""
 
 import re
 from typing import Dict, List, Any, Tuple

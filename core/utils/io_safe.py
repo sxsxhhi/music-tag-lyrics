@@ -1,20 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Safe I/O Utilities (v1.2.4)
-原子写与安全标签落盘：任何一步失败都不会让原文件处于半写状态。
-
-设计要点
---------
-1. ``atomic_write_text``：同目录临时文件 → 写入 → fsync → ``os.replace``。
-   ``os.replace`` 在同一分区上是原子的，进程被杀也只会留下临时文件，不会留下半截歌词。
-2. ``safe_save_audio_tags``：先把音频整份复制到同目录临时文件，在**副本**上执行标签写入，
-   成功且副本非空才 ``os.replace`` 回原路径。mutagen 的 ``save()`` 是"截断后重写"，
-   直接作用于原文件时一旦中断就会损坏音频；复制-改写-替换把这段风险关在副本里。
-3. ``copy2`` 会保留原文件的 mtime，因此**替换后音频的 mtime 不变**。
-   判断"标签是否真的写进去了"必须回读标签内容，不能看 mtime。
-
-Zero external dependencies (stdlib only).
-"""
+"""原子写文本与「副本改签再替换」的音频标签落盘。"""
 
 import logging
 import os
@@ -23,6 +8,21 @@ import uuid
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "gbk", "gb18030")
+
+
+def read_text_guess_encoding(path: str) -> Optional[str]:
+    """按 utf-8 / utf-8-sig / gbk / gb18030 依次读文本，返回首个非空结果。"""
+    for enc in TEXT_ENCODINGS:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                txt = f.read().strip()
+            if txt:
+                return txt
+        except Exception:
+            continue
+    return None
 
 
 def _tmp_path_for(filepath: str, prefix: str = ".tmp", keep_ext: bool = True) -> str:

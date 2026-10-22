@@ -1,22 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-基线跑批脚本（M0）
-
-目的：在**未改一行源码**的前提下，为一组音频生成可复现的基线：
-每首产出 source / lyric_type / 行数 / .lrc 与 .spl 的 sha256，
-并证明 `--no-tags` 确实没有改动音频（mtime + size + sha256 三重校验）。
-
-三个必须遵守的事实（都已实测）：
-  1. `process_song.py` 在无歌词时会调用 `input()`。本脚本给子进程喂 DEVNULL，
-     让 `input()` 立刻抛 EOFError，由 `process_song.py:128` 捕获后安全返回。
-  2. `process_song.py` **所有路径的退出码都是 0**（单文件忽略返回值、批量只打印计数），
-     因此成败只能靠 stdout 标记判定，不能看 returncode。
-  3. 产物是受版权保护的歌词全文，必须落在**仓库之外**（默认仓库同级 `_baseline_v1/`）。
-
-用法：
-    python tests/run_baseline.py --songs "D:/WindowsAppp/Desktop/测试"
-    python tests/run_baseline.py --songs <dir> --out-dir <dir> --only 焚情 --timeout 180
-"""
+"""联网基线跑批：产物强制落在仓库外；--non-interactive 跳过 Demucs。"""
 
 import argparse
 import hashlib
@@ -29,8 +12,10 @@ import time
 from datetime import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+from scripts.process_song import SUPPORTED_EXTS  # noqa: E402
 PROCESS_SONG = os.path.join(REPO_ROOT, "scripts", "process_song.py")
-SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -85,7 +70,7 @@ def run_one(song, out_dir, timeout, python_exe):
     before = snapshot(song)
     print(f"\n{'=' * 66}\n▶ {name}\n{'=' * 66}", flush=True)
 
-    cmd = [python_exe, PROCESS_SONG, song, "--no-tags", "--out-dir", out_dir]
+    cmd = [python_exe, PROCESS_SONG, song, "--no-tags", "--non-interactive", "--out-dir", out_dir]
     t0 = time.time()
     status = "ok"
     stdout = ""

@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Audio Embedded Tag Editor (v1.2.4)
-Inspects and standardizes embedded metadata tags (Title, Artist with '/', Album, Year, Lyrics)
-for audio files (FLAC, WAV, MP3, M4A, OGG) using mutagen.
-Zero external software dependency. Never moves or deletes audio files.
-Includes Band Whitelist protection, 4-digit pure year formatting, and Trilateral embedded lyrics writing.
-Refactored to eliminate ID3 and Vorbis duplicate code (DRY architecture).
-"""
+"""音频内嵌标签读写：原地改签、乐队白名单、四位年份、多格式 ID3/Vorbis。"""
 
 import os
 import re
@@ -400,21 +393,19 @@ def update_audio_tags(
         id3.save(tmp, v2_version=orig_v2)
         return True
 
-    def _write_wave(tmp: str) -> bool:
-        audio = WAVE(tmp)
+    def _write_id3_container(tmp: str, factory) -> bool:
+        audio = factory(tmp)
         if audio.tags is None:
             audio.add_tags()
         _apply_id3_tags(audio.tags, tags)
         audio.save()
         return True
 
+    def _write_wave(tmp: str) -> bool:
+        return _write_id3_container(tmp, WAVE)
+
     def _write_dsf(tmp: str) -> bool:
-        audio = DSF(tmp)
-        if audio.tags is None:
-            audio.add_tags()
-        _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
-        audio.save()
-        return True
+        return _write_id3_container(tmp, DSF)
 
     def _write_mp4(tmp: str) -> bool:
         from mutagen.mp4 import MP4FreeForm

@@ -1,20 +1,24 @@
-# Python bytecode & cache
+# Byte-compiled / cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyc
+.Python
 
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
-*.zip
-*.tar.gz
+# Virtualenvs
+.venv/
+venv/
+env/
 
-# Environment & local OS files
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# OS
 .DS_Store
 Thumbs.db
-*.bak
-*.tmp
-.vscode/
-.idea/
+desktop.ini
+
+# Baseline lyric dumps are copyrighted; keep them outside the repo
+_baseline*/
+_baseline_*/

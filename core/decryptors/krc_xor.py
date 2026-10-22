@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Kugou KRC (Karaoke Lyric) Decryptor
-Decrypts Kugou's proprietary KRC format using the standard 16-byte XOR key and zlib decompression.
-Zero external dependencies.
-"""
+"""酷狗 KRC：16 字节 XOR + zlib 解密。"""
 
 import zlib
 

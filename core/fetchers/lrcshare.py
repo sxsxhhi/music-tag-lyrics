@@ -1,18 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-LRCSHARE Synced & Multi-Language Lyric Fetcher (v1.2.4)
-Fetches word-level verbatim, line-level lyrics, and structured Chinese translations
-from the LRCSHARE cloud repository (api.lrcshare.com).
-
-Key Architectural Features:
-1. Session Token Lifecycle & Auto-Caching (24h TTL) via /catalog.
-2. Token-level Catalog Negative Pre-filtering (0 HTTP requests when song tokens don't match).
-3. Structured Multi-language Versions Parsing (kind == 'original' vs 'translation').
-4. Strict Romanization Elimination (kind == 'romanization' discarded per Iron Rule).
-5. Syllable-level timing extraction from inline <offset:dur> word tags.
-6. Proximity duration gating and instrumental placeholder anti-tampering.
-Zero external dependencies.
-"""
+"""LRCSHARE 云端 TTML/多语言：需 LRCSHARE_API_KEY；译文最近邻 2000ms。"""
 
 import os
 import time
