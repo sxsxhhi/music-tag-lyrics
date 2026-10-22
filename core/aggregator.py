@@ -241,19 +241,8 @@ class LyricAggregator:
         if is_foreign:
             candidate = enrich_foreign_translation(candidate, title, artist, duration_ms)
 
-        # 逐字判定：至少有一行真的拆出了 ≥2 个词才算逐字。
-        # 旧实现 any(line.get("words")) 对 KRC 恒为真（KRC 会给无词级标签的行补一个"整行词"），
-        # 导致"没有逐字就声学合成"的兜底从未生效。
-        has_words = any(len(line.get("words") or []) >= 2 for line in candidate.get("lines", []))
-        if not has_words:
-            try:
-                # C-01: 懒加载，缺 numpy 时只跳过合成、不影响已取到的歌词
-                from .acoustic_aligner import enrich_track_with_acoustic_words
-                candidate = enrich_track_with_acoustic_words(candidate)
-                candidate["synthesized_words"] = True
-            except ImportError as exc:
-                logger.warning("无逐字且缺少 numpy/torch，跳过声学合成: %s", exc)
-            except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
-                logger.warning("声学逐字合成失败，保留行级歌词: %s", exc)
-
+        # P0-2: 逐字合成**不在这里做**。它必须在 validate_and_fix_lyrics 之后：
+        # 合成器会给每一行都补上 words，而 validator 判断"译文行"的依据正是
+        # "这一行有没有 words"，一旦提前补词，双语剥离逻辑就永远不会触发，
+        # 译文行会被当成正文逐字唱出来。合成已下移到 process_song。
         return candidate

@@ -30,6 +30,7 @@ from scripts.lyric_validator import validate_and_fix_lyrics
 from core.aggregator import LyricAggregator
 from core.converter import to_lrc, to_spl
 from core.utils.io_safe import atomic_write_text
+from core.utils.text_utils import is_foreign_track
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
 
@@ -176,6 +177,9 @@ def process_single_song(
     tags = read_audio_tags(filepath)
     # duration 为 None 表示"未知"（不是 0 秒）；归一成 0 交给门禁按"未知"处理
     duration_ms = tags.get("duration") or 0
+    if not duration_ms:
+        # P1-2: 不能静默降级 —— 时长未知时所有时长门禁都会失效，必须让用户知道
+        print("   ℹ️ 音频时长未知（标签/容器解析失败），本轮跳过所有时长门禁，可能选中错版本")
 
     # Infer Title and Artist if missing
     title = tags.get("title", "").strip()
@@ -255,7 +259,9 @@ def process_single_song(
     print(f"🎯 Matched Source: [{source.upper()}] (Type: {lyric_type.upper()}{', AI-Synthesized Words' if synthesized else ''})")
 
     # 4. Monotonicity, Natural Acoustic Gate and Outro Validation
-    is_non_zh = bool(LyricAggregator.is_western_track(cleaned_title, normalized_artist))
+    # P1-3: 语种判定统一走 is_foreign_track。旧实现用 is_western_track（日韩被判为"非外语"），
+    # 与 aggregator 里的 is_foreign_track 口径冲突，导致日/韩曲的双语译文行不会被剥离。
+    is_non_zh = bool(is_foreign_track(cleaned_title, normalized_artist))
     is_valid, validated_data, warnings = validate_and_fix_lyrics(
         lyric_data,
         audio_duration_ms=duration_ms,
@@ -263,6 +269,26 @@ def process_single_song(
     )
     for w in warnings:
         print(f"   ℹ️ {w}")
+
+    # P0-3: 校验失败必须终止。旧实现解出 is_valid 后直接丢弃，纯译文曲被剥成空行
+    # 依然写盘、依然 return True，产物只剩标题行却报告成功。
+    if not is_valid:
+        print(f"❌ 校验未通过（有效歌词行为 0），不写盘：{cleaned_title} - {normalized_artist}")
+        return False
+
+    # P0-2: 逐字合成必须在校验之后。先让 validator 用"没有 words"的干净数据
+    # 完成双语配对/剥离，再给仍然没有逐字的行补合成时间戳；顺序颠倒会让
+    # 每一行都先带上 words，译文行就再也剥不掉了。
+    has_words = any(len(l.get("words") or []) >= 2 for l in validated_data.get("lines", []))
+    if not has_words:
+        try:
+            from core.acoustic_aligner import enrich_track_with_acoustic_words
+            validated_data = enrich_track_with_acoustic_words(validated_data)
+            validated_data["synthesized_words"] = True
+        except ImportError as exc:
+            print(f"   ℹ️ 无声学依赖，跳过逐字合成：{exc}")
+        except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
+            print(f"   ℹ️ 逐字合成失败，保留行级歌词：{exc}")
 
     # 5. Generate .spl and .lrc (with prelude credit enrichment & whitelist protection)
     lyricist = tags.get("lyricist", "").strip()

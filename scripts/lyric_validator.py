@@ -15,8 +15,11 @@ from typing import Dict, Any, Tuple, List
 from core.utils.text_utils import is_translation_line
 
 # Preamble credit keywords for whitelist protection
+# P1-8: 单字 "词/曲" 必须带冒号才算署名行，否则 "词不达意"、"曲终人散" 会被误判
 CREDIT_KEYWORD_PATTERN = re.compile(
-    r"^(作词|作曲|编曲|制作|监制|词|曲|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|작사|작곡|편곡|作詞|作曲|編曲)",
+    r"^(作词|作曲|编曲|制作|监制|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|OP|SP|"
+    r"Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|작사|작곡|편곡|作詞|作曲|編曲)"
+    r"|^(词|曲)\s*[:：]",
     re.IGNORECASE
 )
 
