@@ -282,19 +282,19 @@ python scripts/process_song.py "path/to/music_folder/"
 ```
 music-tag-lyrics/
 ├── LICENSE                            # MIT License 开源协议
+├── SKILL.md                           # 技能全维度规范体系（本文件，v1.2.4）
+├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.2.4)
 ├── requirements.txt                   # 必需依赖：mutagen（numpy 仅逐字合成需要）
 ├── requirements-acoustic.txt          # 可选依赖：Demucs v4 声学打轴兜底
+├── scripts/
+│   ├── process_song.py                # 顶层一键 CLI 执行流水线 (newline='\n' 确定性输出，支持 --lyrics-only 与 --force-gpu)
+│   ├── tag_editor.py                  # mutagen 音频标签清洗（去重精简架构，多歌手'/'、乐队白名单、四位年份、全格式覆盖）
+│   └── lyric_validator.py             # 声学自然度门禁(200~800ms)、Intro Gate 前奏起唱校验、单调性校验与乐器尾奏保护
 ├── tests/                             # 离线回归测试与基线跑批（24 条用例，不联网）
 │   ├── test_parsers.py                # 解析层：LRC / SPL / TTML / 时间戳
 │   ├── test_m1_safety.py              # 标签安全、空值归一、原子写
 │   ├── test_pipeline.py               # 流水线：双语剥离 / 校验门禁 / 坏 ID3
 │   └── run_baseline.py                # 9 首基线跑批（产物强制落在仓库外）
-├── SKILL.md                           # 技能全维度规范体系（本文件，v1.2.4）
-├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.2.4)
-├── scripts/
-│   ├── process_song.py                # 顶层一键 CLI 执行流水线 (newline='\n' 确定性输出，支持 --lyrics-only 与 --force-gpu)
-│   ├── tag_editor.py                  # mutagen 音频标签清洗（去重精简架构，多歌手'/'、乐队白名单、四位年份、全格式覆盖）
-│   └── lyric_validator.py             # 声学自然度门禁(200~800ms)、Intro Gate 前奏起唱校验、单调性校验与乐器尾奏保护
 └── core/
     ├── utils/                         # 共享底层工具包 (DRY 架构去重核心)
     │   ├── __init__.py
