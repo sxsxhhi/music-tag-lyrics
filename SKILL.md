@@ -1,11 +1,11 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗与多源歌词修补（v1.2.5）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。生成 Enhanced LRC / ELRC 双语（逐字只打原文、译文行级同轴）。遵守 18 条铁律：Live 互斥、先检后轴、宁缺毋滥。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗与多源歌词修补（v1.2.5）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。生成 Enhanced LRC / ELRC 双语（逐字只打原文、译文行级同轴）。遵守 18 条铁律：Live 互斥、先检后轴、宁缺毋滥。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
 ---
 
 # music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.5)
 
-纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。Python 侧需 `mutagen`；`numpy` 仅用于无逐字时的行级合成；Demucs GPU 为可选兜底。
+纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。
 
 > **不依赖 ffmpeg / Node / 播放器。** 绝不移动、归档或删除音频。`--lyrics-only` 只覆写内嵌歌词帧。
 
@@ -17,24 +17,25 @@ description: 本地音频标签清洗与多源歌词修补（v1.2.5）。调度�
 flowchart TD
   Start[传入音频] --> Read[读标签与时长]
   Read --> Ladder["1 酷狗 → 2 AMLL → 3 网易 → 4 LRCSHARE → 5 LRCLIB"]
-  Ladder --> HasMain{有主词 lines?}
-  HasMain -->|有| Keep[采用当前源]
-  HasMain -->|无| NeedTxt{同目录 txt 或 --lyrics-file?}
-  NeedTxt -->|无| Block[红线阻断 不听写]
-  NeedTxt -->|有且用户 Y| GPU[6 Demucs GPU 只打原文轴]
-  NeedTxt -->|拒绝或非交互| Fail[本首失败 不降级 LRC]
-  Keep --> Words{有逐字?}
-  Words -->|无| Synth[numpy 按行合成 仅原文 words 非 GPU]
+  Ladder --> HasLines{有 timed lines?}
+  HasLines -->|有| Words{已有逐字?}
   Words -->|有| Valid[校验后写盘]
-  Synth --> Valid
+  Words -->|无| AskLine[征求 GPU 带行时间窗]
+  AskLine -->|Y| GPU[Demucs 只打原文]
+  AskLine -->|拒绝或非交互| Synth[numpy 按行合成 非 GPU]
+  HasLines -->|无| Text["搜集文本: lyrics-file → 五源 plain → GitHub/必应/DDG → 同目录 txt"]
+  Text -->|有且用户 Y| GPU
+  Text -->|无文本| Block[红线阻断 不听写]
+  Text -->|拒绝或非交互| Fail[本首失败 不能 numpy]
   GPU --> Valid
+  Synth --> Valid
   Valid --> Out[".spl .lrc 内嵌三位一体"]
 ```
 
 - 华语：酷狗已命中则不因「缺译文」覆盖。
 - 外语：原文与译文必须同一源、同一版。酷狗/AMLL 只有原文时，若网易同时有原文 + 官方 tlyric，**整包换成网易**；禁止把网易 tlyric 挂到酷狗轴上。仍无译文则保持纯原文。
-- Demucs **不是第六个抓词 API**：仅全源无 `lines` 后才询问；须本地权威文本；`--non-interactive` 跳过。拒绝 = 整首失败，不是降级逐行 LRC。
-- 有行级词、无逐字：默认 numpy 合成，不是每首都上 GPU。
+- Demucs **不是第六个抓词 API**。有行无字：精度优先问 GPU（`line_timing_hints`）；拒绝/非交互才 numpy。无 `lines`：先全球搜权威文本（GitHub/raw 优先），再问 GPU；拒绝不能 numpy。
+- `--non-interactive`：有行轴则直接 numpy；无行轴则跳过 GPU，本首失败。
 
 安装与 CLI 见 `README.md`。
 
@@ -83,10 +84,10 @@ flowchart TD
   3. 常规曲（>90s）首句非报幕起唱 >32s 发出 Intro Gate 警告。
 
 ### 11. 【核心红线】绝不语音听写，必须先检后轴铁律
-- **铁律准则**：**严禁 ASR 盲目听写。**
-  1. Demucs 前必须已有权威逐行文本（同目录 txt 或 `--lyrics-file`）；
-  2. Whisper 只做 Forced Alignment，不得改词；
-  3. 无文本立即阻断退出。拒绝授权或 `--non-interactive` = 本首失败。
+- **铁律准则**：**严禁 ASR 盲目听写。精度优先。**
+  1. 有逐行、无逐字：先征求 GPU（把行轴当作 `line_timing_hints` 短窗）；拒绝 / `--non-interactive` / GPU 失败才 numpy 按行合成；
+  2. 无 timed lines：先搜集权威文本（`--lyrics-file` → 五源 plain → GitHub/raw 优先再必应/DuckDuckGo → 同目录 txt），再征求 GPU；无文本立即阻断。此分支拒绝不能 numpy；
+  3. Whisper 只做 Forced Alignment，不得改词。合成或 GPU 都只给原文写 `words`。
 
 ### 12. 双端声学能量门禁与间隙防拉伸铁律
 - **铁律准则**：短窗隔离 ≥2.5s 间奏；行首 15ms 逆向 Onset；行末 20ms 正向 Offset（RMS < 0.015）；字间停顿 ≥300ms 插入闭合标签。
@@ -129,26 +130,20 @@ flowchart TD
 
 ## 四、Demucs v4 GPU 兜底
 
-技能包不内置 4GB 模型。仅当梯子无 `lines` 时进入。
+技能包不内置 4GB 模型。两条入口：
 
-**阻断（无本地权威文本）：**
+1. **有行无字**：征求 GPU；Y 用已有行轴做短窗；N / 非交互 / 失败 → numpy 合成。
+2. **无 lines**：先全球搜文本（GitHub 优先），再征求 GPU；无文本红线阻断；N / 非交互 → 本首失败。
+
+**阻断（搜不到权威文本）：**
 
 ```text
 🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]
-未能从商业曲库检索到《歌曲 - 歌手》的有效歌词，且本地未提供纯文本歌词。
-⚠️ 核心铁律：【绝不语音听写】！请在歌曲目录放置《歌曲 - 歌手.txt》后再重试。
+未能从商业曲库、全球检索与本地文件得到权威歌词文本。
+⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```
 
-**授权（已有文本）：**
-
-```text
-🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.5)]
-已定位到权威歌词文本（共 X 行）。
-是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？
-[Y: 授权同意运行 GPU 打轴 / N: 拒绝授权并跳过]
-```
-
-Y：干声分离后 Forced Alignment；外语先配对剥离译文，只对齐原文，再把译文挂回 `translation`。N 或 `--non-interactive`：本首失败，0 下载。
+Y：干声分离后 Forced Alignment；外语只对齐原文，译文挂回 `translation`。有行无字时拒绝会降级合成；无行轴时拒绝不能合成。
 
 ---
 
@@ -157,9 +152,10 @@ Y：干声分离后 Forced Alignment；外语先配对剥离译文，只对齐�
 - CLI：`scripts/process_song.py`
 - 标签：`scripts/tag_editor.py`
 - 调度：`core/aggregator.py`（酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB）
-- GPU / 合成：`core/acoustic_aligner.py`（GPU 仅失败分支；numpy 合成 ≠ GPU）
+- GPU / 合成：`core/acoustic_aligner.py`（有行无字先问 GPU；numpy 合成 ≠ GPU）
+- 纯文本搜集：`core/plain_lyric_search.py`（五源 plain + GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`；抓取：`core/fetchers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / io_safe）
-- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`
+- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`

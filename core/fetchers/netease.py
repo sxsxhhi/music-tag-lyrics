@@ -69,8 +69,8 @@ class NetEaseFetcher:
         return None
 
     @classmethod
-    def fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
-        """Retrieves and parses LRC lyrics for the specified song."""
+    def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, str]]:
+        """同一首歌的 lrc / tlyric 原文（可无时间戳）。供同步解析与 GPU 纯文本共用。"""
         song_id = cls.search_song_id(title, artist, duration_ms)
         if not song_id:
             return None
@@ -80,19 +80,26 @@ class NetEaseFetcher:
         data = http_get_json(lyric_url, headers=headers, user_agent=UA_DESKTOP, timeout=6)
         if not data or not isinstance(data, dict):
             return None
+        lrc_text = (data.get("lrc") or {}).get("lyric") or ""
+        tlyric_text = (data.get("tlyric") or {}).get("lyric") or ""
+        if not lrc_text and not tlyric_text:
+            return None
+        return {"lrc": lrc_text, "tlyric": tlyric_text}
 
-        lrc_text = data.get("lrc", {}).get("lyric", "")
-        if not lrc_text:
+    @classmethod
+    def fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+        """Retrieves and parses LRC lyrics for the specified song."""
+        raw = cls.fetch_raw_lyrics(title, artist, duration_ms)
+        if not raw or not raw.get("lrc"):
             return None
 
-        parsed = parse_lrc(lrc_text)
+        parsed = parse_lrc(raw["lrc"])
         parsed["source"] = "netease"
         parsed["lyric_type"] = "line"
         parsed.setdefault("tags", {})["ti"] = title
         parsed.setdefault("tags", {})["ar"] = artist
 
-        # Official reviewed translation from NetEase (tlyric)
-        tlyric_text = data.get("tlyric", {}).get("lyric", "")
+        tlyric_text = raw.get("tlyric") or ""
         if tlyric_text:
             parsed["tlyric"] = tlyric_text
 

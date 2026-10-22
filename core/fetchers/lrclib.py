@@ -32,7 +32,7 @@ class LRCLIBFetcher:
     """Fetcher for LRCLIB global synchronized lyrics."""
 
     @classmethod
-    def fetch(cls, title: str, artist: str = "", album: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+    def _direct_get(cls, title: str, artist: str = "", album: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
         query_params = {
             "track_name": title,
             "artist_name": artist
@@ -41,10 +41,40 @@ class LRCLIBFetcher:
             query_params["album_name"] = album
         if duration_ms > 0:
             query_params["duration"] = int(duration_ms // 1000)
-
         url = "https://lrclib.net/api/get?" + urllib.parse.urlencode(query_params)
         data = http_get_json(url, user_agent=UA_DEFAULT, timeout=6)
-        if data and isinstance(data, dict):
+        return data if isinstance(data, dict) else None
+
+    @classmethod
+    def _search_list(cls, title: str, artist: str = "") -> list:
+        url = "https://lrclib.net/api/search?" + urllib.parse.urlencode({
+            "q": f"{title} {artist}".strip()
+        })
+        items = http_get_json(url, user_agent=UA_DEFAULT, timeout=6)
+        return items if isinstance(items, list) else []
+
+    @classmethod
+    def iter_api_items(cls, title: str, artist: str = "", album: str = "", duration_ms: int = 0):
+        """精确 get 一条，再搜索若干条；调用方决定用 synced 还是 plain。"""
+        data = cls._direct_get(title, artist, album, duration_ms)
+        if data:
+            yield data
+        target_is_live = is_live_version(title)
+        n = 0
+        for item in cls._search_list(title, artist):
+            if not isinstance(item, dict):
+                continue
+            if not matches_version_policy(target_is_live, item.get("trackName", ""), item.get("albumName", "")):
+                continue
+            yield item
+            n += 1
+            if n >= 8:
+                break
+
+    @classmethod
+    def fetch(cls, title: str, artist: str = "", album: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+        data = cls._direct_get(title, artist, album, duration_ms)
+        if data:
             synced = data.get("syncedLyrics", "")
             if synced:
                 parsed = parse_lrc(synced)
@@ -55,34 +85,23 @@ class LRCLIBFetcher:
                     fill_missing_only=True,
                 )
 
-        # Fallback search if direct get fails
         return cls.search_and_fetch(title, artist, duration_ms)
 
     @classmethod
     def search_and_fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
-        query_params = {
-            "q": f"{title} {artist}".strip()
-        }
-        url = "https://lrclib.net/api/search?" + urllib.parse.urlencode(query_params)
-        items = http_get_json(url, user_agent=UA_DEFAULT, timeout=6)
-        if not items or not isinstance(items, list):
-            return None
-
         target_is_live = is_live_version(title)
         valid_items = []
-        for item in items:
+        for item in cls._search_list(title, artist):
             track_name = item.get("trackName", "")
             album_name = item.get("albumName", "")
-            # Filter by version policy
             if not matches_version_policy(target_is_live, track_name, album_name):
                 continue
             if not item.get("syncedLyrics"):
                 continue
 
-            item_dur_sec = float(item.get("duration", 0))
+            item_dur_sec = float(item.get("duration", 0) or 0)
             if duration_ms > 0 and item_dur_sec > 0:
                 diff_sec = abs(item_dur_sec - (duration_ms / 1000.0))
-                # Skip candidates that deviate excessively from target track
                 if diff_sec > 35:
                     continue
                 valid_items.append((diff_sec, item))

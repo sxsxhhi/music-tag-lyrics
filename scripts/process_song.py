@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""单曲/批量入口：洗标签、多源抓词、无主词时 Demucs GPU 兜底（须本地 txt + 授权）。"""
+"""单曲/批量入口：洗标签、多源抓词、无主词全球搜文本后 Demucs GPU；有行无字先问 GPU。"""
 
 import os
 import sys
-import re
 import argparse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 # Reconfigure stdout/stderr for utf-8 on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -54,88 +53,219 @@ def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional
                 return txt
     return None
 
-def prompt_demucs_fallback(
-    title: str, 
-    artist: str, 
-    filepath: str, 
-    plain_text_lyrics: Optional[str] = None,
-    non_interactive: bool = False
-) -> Optional[Dict[str, Any]]:
-    """
-    Prompts user for explicit authorization to use Demucs v4 GPU fallback.
-    【核心红线】：绝不进行 ASR 语音听写！若无权威逐行文本，立即阻断并退出。
-    若存在权威文本并获得用户授权，调用 AcousticAligner 执行双端声学咬合打轴。
-    """
-    # 非交互模式：绝不阻塞等待输入（批量跑批时 input() 会永久挂死）
+def _singing_line_count(text: str) -> int:
+    from core.plain_lyric_search import lrc_or_plain_to_text
+    body = lrc_or_plain_to_text(text or "")
+    return len([l for l in body.splitlines() if l.strip()]) if body else 0
+
+
+def collect_plain_lyrics(
+    title: str,
+    artist: str,
+    filepath: str,
+    explicit_text: Optional[str] = None,
+    album: str = "",
+    duration_ms: int = 0,
+) -> Optional[str]:
+    """1 --lyrics-file → 2 五源 plain → 3 GitHub/必应/DDG → 4 同目录 txt。"""
+    if explicit_text and explicit_text.strip():
+        return explicit_text
+    print("🌐 五源无同步歌词，正在搜集权威纯文本（GitHub/raw 优先，再必应/DuckDuckGo）...")
+    try:
+        from core.plain_lyric_search import fetch_plain_lyric_text
+        text = fetch_plain_lyric_text(title, artist, album, duration_ms)
+        if text and text.strip():
+            print(f"✅ 已检索到权威逐行文本（{_singing_line_count(text)} 行）")
+            return text
+    except Exception as exc:  # noqa: BLE001 - 搜索失败必须继续尝试本地 txt
+        print(f"   ℹ️ 全球文本检索失败：{exc}")
+    local = find_local_plain_lyrics(filepath, title, artist)
+    if local:
+        print("📖 使用同目录纯文本/LRC 作为权威歌词")
+        return local
+    return None
+
+
+def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> bool:
+    """kind: 'line'（已有行轴）或 'plain'（无行轴、仅文本）。非交互对 line 返回 False（走 numpy）。"""
     if non_interactive:
         print("🛑 [--non-interactive] 跳过 Demucs 授权提示，不做任何重型计算。")
-        return None
+        return False
 
-    # 1. Check if plain text lyrics are available
-    if not plain_text_lyrics or not plain_text_lyrics.strip():
-        plain_text_lyrics = find_local_plain_lyrics(filepath, title, artist)
-
-    if not plain_text_lyrics or not plain_text_lyrics.strip():
-        print(f"\n" + "="*65)
-        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]")
-        print(f"未能从商业曲库检索到《{title} - {artist}》的有效歌词，且本地未提供纯文本歌词。")
-        print(f"⚠️ 核心铁律：【绝不语音听写，使用 Demucs v4 兜底时必须先从全网检索歌词，在正确歌词的基础上进行逐字打轴】！")
-        print(f"👉 解决方案：请在歌曲所在目录下放置纯文本歌词文件：")
-        print(f"   《{title} - {artist}.txt》或《{os.path.splitext(os.path.basename(filepath))[0]}.txt》")
-        print(f"   放置完成后重新运行本程序，即可进行精准声学逐字咬合打轴。")
-        print("="*65 + "\n")
-        return None
-
-    # Count singing lines (filtering out metadata)
-    raw_lines = plain_text_lyrics.splitlines()
-    singing_lines = [
-        l.strip() for l in raw_lines 
-        if l.strip() and not re.match(r"^\[(ti|ar|al|by|offset):", l.strip(), re.IGNORECASE)
-    ]
-    
-    print(f"\n" + "="*65)
-    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.5)]")
-    print(f"未能从云端曲库直接匹配到现成逐字歌词，但已定位到权威歌词文本（共 {len(singing_lines)} 行）。")
-    print(f"是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？")
-    print(f"（注意：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）")
-    print("="*65)
-    
+    print("\n" + "=" * 65)
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.5)]")
+    if kind == "line":
+        print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
+        print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
+    else:
+        print(f"未能从云端曲库匹配到同步歌词，但已定位到权威歌词文本（共 {n_lines} 行）。")
+        print("是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？")
+        print("（拒绝后无法 numpy 合成：没有行级时间窗。）")
+    print("（绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）")
+    print("=" * 65)
     try:
-        user_input = input("请输入授权决定 [Y: 授权同意运行 GPU 打轴 / N: 拒绝授权并跳过] (默认 N): ").strip().lower()
-        if user_input in ["y", "yes"]:
-            print(f"✅ 用户已显式授权。准备调用 AcousticAligner 执行 GPU 声学咬合...")
-            try:
-                from core.acoustic_aligner import AcousticAligner
-                align_text = plain_text_lyrics
-                trans_by_idx = []
-                if is_foreign_track(title, artist):
-                    orig_only, trans_by_idx = pair_plain_bilingual_lyrics(plain_text_lyrics)
-                    if orig_only.strip():
-                        align_text = orig_only
-                    else:
-                        trans_by_idx = []
-                aligned_data = AcousticAligner.align_lyrics(
-                    audio_path=filepath,
-                    lyrics_text=align_text,
-                    device='cuda'
-                )
-                if aligned_data and trans_by_idx:
-                    for i, line in enumerate(aligned_data.get("lines") or []):
-                        if i < len(trans_by_idx) and trans_by_idx[i]:
-                            line["translation"] = trans_by_idx[i]
-                return aligned_data
-            except ImportError as e:
-                print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs/Whisper: {e}")
-                return None
-            except Exception as e:
-                print(f"❌ 声学咬合打轴失败: {e}")
-                return None
-        else:
-            print(f"🛑 用户拒绝授权。安全退出，不进行任何重型计算。")
-            return None
+        user_input = input("请输入授权决定 [Y: 授权同意运行 GPU 打轴 / N: 拒绝] (默认 N): ").strip().lower()
     except (EOFError, KeyboardInterrupt):
-        print(f"\n🛑 非交互模式或已取消，安全退出。")
+        print("\n🛑 非交互模式或已取消，安全退出。")
+        return False
+    if user_input in ("y", "yes"):
+        print("✅ 用户已显式授权。准备调用 AcousticAligner 执行 GPU 声学咬合...")
+        return True
+    print("🛑 用户拒绝授权。不进行重型计算。")
+    return False
+
+
+def _prepare_align_payload(
+    title: str,
+    artist: str,
+    lyrics_text: str,
+    existing_lines: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[str, List[Optional[str]], Optional[List[Tuple[float, str]]]]:
+    """外语只对齐原文；已有行轴时带 line_timing_hints（秒）。"""
+    if existing_lines:
+        orig_lines = []
+        trans_by_idx: List[Optional[str]] = []
+        hints: List[Tuple[float, str]] = []
+        for line in existing_lines:
+            text = (line.get("text") or "").strip()
+            if not text:
+                continue
+            orig_lines.append(text)
+            trans_by_idx.append((line.get("translation") or "").strip() or None)
+            hints.append((float(line.get("start", 0)) / 1000.0, text))
+        return "\n".join(orig_lines), trans_by_idx, hints or None
+
+    align_text = lyrics_text
+    trans_by_idx = []
+    if is_foreign_track(title, artist):
+        orig_only, trans_by_idx = pair_plain_bilingual_lyrics(lyrics_text)
+        if orig_only.strip():
+            align_text = orig_only
+        else:
+            trans_by_idx = []
+    return align_text, trans_by_idx, None
+
+
+def run_acoustic_align(
+    filepath: str,
+    title: str,
+    artist: str,
+    lyrics_text: str,
+    existing_lines: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        from core.acoustic_aligner import AcousticAligner
+        align_text, trans_by_idx, hints = _prepare_align_payload(
+            title, artist, lyrics_text, existing_lines
+        )
+        if not align_text.strip():
+            print("❌ 权威文本剥离后为空，红线阻断，不听写。")
+            return None
+        aligned_data = AcousticAligner.align_lyrics(
+            audio_path=filepath,
+            lyrics_text=align_text,
+            line_timing_hints=hints,
+            device="cuda",
+        )
+        if aligned_data and trans_by_idx:
+            for i, line in enumerate(aligned_data.get("lines") or []):
+                if i < len(trans_by_idx) and trans_by_idx[i]:
+                    line["translation"] = trans_by_idx[i]
+        return aligned_data
+    except ImportError as e:
+        print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs/Whisper: {e}")
         return None
+    except Exception as e:
+        print(f"❌ 声学咬合打轴失败: {e}")
+        return None
+
+
+def apply_numpy_word_synth(validated_data: Dict[str, Any]) -> Dict[str, Any]:
+    from core.acoustic_aligner import enrich_track_with_acoustic_words
+    out = enrich_track_with_acoustic_words(validated_data)
+    out["synthesized_words"] = True
+    print("   🎼 已降级：按行时长合成逐字时间戳（numpy / AI-Synthesized Words，非 GPU）")
+    return out
+
+
+def enrich_missing_words(
+    validated_data: Dict[str, Any],
+    *,
+    filepath: str,
+    title: str,
+    artist: str,
+    non_interactive: bool = False,
+) -> Dict[str, Any]:
+    """有逐字则不动；无逐字先问 GPU（带行窗）；拒绝/非交互/失败才 numpy。"""
+    lines = validated_data.get("lines") or []
+    if any(len(l.get("words") or []) >= 2 for l in lines):
+        return validated_data
+    if validated_data.get("gpu_aligned"):
+        try:
+            return apply_numpy_word_synth(validated_data)
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ℹ️ 逐字合成失败，保留行级歌词：{exc}")
+            return validated_data
+    n_lines = len([l for l in lines if (l.get("text") or "").strip()])
+    if prompt_gpu_authorization("line", n_lines, non_interactive):
+        aligned = run_acoustic_align(
+            filepath, title, artist, "", existing_lines=lines
+        )
+        if aligned and aligned.get("lines"):
+            aligned["gpu_aligned"] = True
+            aligned.setdefault("source", validated_data.get("source", "acoustic"))
+            aligned["lyric_type"] = "word"
+            return aligned
+        print("   ℹ️ GPU 打轴未成功，降级按行合成。")
+    try:
+        return apply_numpy_word_synth(validated_data)
+    except ImportError as exc:
+        print(f"   ℹ️ 无声学依赖，跳过逐字合成：{exc}")
+        return validated_data
+    except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
+        print(f"   ℹ️ 逐字合成失败，保留行级歌词：{exc}")
+        return validated_data
+
+
+def prompt_demucs_fallback(
+    title: str,
+    artist: str,
+    filepath: str,
+    plain_text_lyrics: Optional[str] = None,
+    non_interactive: bool = False,
+    album: str = "",
+    duration_ms: int = 0,
+) -> Optional[Dict[str, Any]]:
+    """
+    无同步 lines 时的 GPU 兜底。先搜集权威文本，再征求授权。
+    拒绝或非交互：本首失败（没有行轴，不能 numpy）。
+    """
+    if not plain_text_lyrics or not plain_text_lyrics.strip():
+        if non_interactive:
+            print("🛑 [--non-interactive] 跳过 Demucs 授权提示，不做任何重型计算。")
+            return None
+        plain_text_lyrics = collect_plain_lyrics(
+            title, artist, filepath, None, album=album, duration_ms=duration_ms
+        )
+
+    if not plain_text_lyrics or not plain_text_lyrics.strip():
+        print("\n" + "=" * 65)
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]")
+        print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
+        print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
+        print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
+        print("=" * 65 + "\n")
+        return None
+
+    n_lines = _singing_line_count(plain_text_lyrics)
+    if not prompt_gpu_authorization("plain", n_lines, non_interactive):
+        return None
+    aligned = run_acoustic_align(filepath, title, artist, plain_text_lyrics)
+    if aligned:
+        aligned["gpu_aligned"] = True
+        aligned.setdefault("source", "acoustic")
+        aligned["lyric_type"] = aligned.get("lyric_type") or "word"
+    return aligned
 
 def process_single_song(
     filepath: str, 
@@ -221,7 +351,9 @@ def process_single_song(
             artist=normalized_artist,
             filepath=filepath,
             plain_text_lyrics=explicit_lyrics_text,
-            non_interactive=non_interactive
+            non_interactive=non_interactive,
+            album=album,
+            duration_ms=duration_ms,
         )
     else:
         print("🔍 Fetching lyrics across multi-engines (Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
@@ -233,13 +365,14 @@ def process_single_song(
         )
 
         if not lyric_data or not lyric_data.get("lines"):
-            # Trigger Demucs v4 fallback prompt
             lyric_data = prompt_demucs_fallback(
-                title=cleaned_title, 
-                artist=normalized_artist, 
+                title=cleaned_title,
+                artist=normalized_artist,
                 filepath=filepath,
                 plain_text_lyrics=explicit_lyrics_text,
-                non_interactive=non_interactive
+                non_interactive=non_interactive,
+                album=album,
+                duration_ms=duration_ms,
             )
 
     if not lyric_data or not lyric_data.get("lines"):
@@ -269,21 +402,15 @@ def process_single_song(
         print(f"❌ 校验未通过（有效歌词行为 0），不写盘：{cleaned_title} - {normalized_artist}")
         return False
 
-    # P0-2: 逐字合成必须在校验之后。先让 validator 用"没有 words"的干净数据
-    # 完成双语配对/剥离，再给仍然没有逐字的行补合成时间戳；顺序颠倒会让
-    # 每一行都先带上 words，译文行就再也剥不掉了。
-    has_words = any(len(l.get("words") or []) >= 2 for l in validated_data.get("lines", []))
-    if not has_words:
-        try:
-            from core.acoustic_aligner import enrich_track_with_acoustic_words
-            validated_data = enrich_track_with_acoustic_words(validated_data)
-            validated_data["synthesized_words"] = True
-            # P1-9: 这行提示必须放在合成之后 —— 旧实现读标记在读之前，永远显示不出来
-            print("   🎼 无逐字来源，已按行时长合成逐字时间戳（AI-Synthesized Words）")
-        except ImportError as exc:
-            print(f"   ℹ️ 无声学依赖，跳过逐字合成：{exc}")
-        except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
-            print(f"   ℹ️ 逐字合成失败，保留行级歌词：{exc}")
+    # P0-2: 逐字必须在校验之后。先让 validator 用「没有 words」完成双语配对，
+    # 再处理仍然没有逐字的行：精度优先问 GPU（带行窗），拒绝/非交互才 numpy。
+    validated_data = enrich_missing_words(
+        validated_data,
+        filepath=filepath,
+        title=cleaned_title,
+        artist=normalized_artist,
+        non_interactive=non_interactive,
+    )
 
     # 5. Generate .spl and .lrc (with prelude credit enrichment & whitelist protection)
     lyricist = tags.get("lyricist", "").strip()
@@ -340,7 +467,7 @@ def main():
     parser.add_argument("--lyrics-file", default=None, help="Explicit path to plain-text lyrics file")
     parser.add_argument("--out-dir", default=None, help="Custom output directory for lyrics")
     parser.add_argument("--non-interactive", action="store_true",
-                        help="Never block on stdin: skip the Demucs authorization prompt (batch/CI use)")
+                        help="不弹 GPU 授权：有行级歌词则 numpy 合成，无行级则本首失败")
     args = parser.parse_args()
 
     target = args.path

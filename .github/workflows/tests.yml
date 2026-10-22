@@ -21,3 +21,5 @@ jobs:
         run: python tests/test_pipeline.py
       - name: Safety
         run: python tests/test_m1_safety.py
+      - name: GPU plain-text fallback
+        run: python tests/test_gpu_plain.py
