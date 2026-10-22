@@ -9,7 +9,7 @@ Zero external dependencies.
 import re
 from typing import Union, Match
 
-TIME_COLON_RE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$")
+TIME_COLON_RE = re.compile(r"^(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?$")
 TIME_SECONDS_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*s?$", re.IGNORECASE)
 
 def parse_time_string_to_ms(time_str: str) -> int:
@@ -69,12 +69,17 @@ def parse_match_to_ms(m: Match) -> int:
     return (mins * 60 + secs) * 1000 + ms
 
 def format_time_tag(ms: int, bracket: str = "[]") -> str:
-    """Formats milliseconds into [mm:ss.xx] or <mm:ss.xx>."""
+    """
+    格式化为 [mm:ss.xx] / <mm:ss.xx>。
+
+    P1-6: 用整数厘秒做四舍五入，避免 59996ms 被格式化成 [00:60.00]（非法时间戳）；
+    分钟位不再做两位截断，超过 99 分钟输出 [100:00.00]，与解析侧的三位分钟正则配套。
+    """
     if ms < 0:
         ms = 0
-    total_seconds = ms / 1000.0
-    minutes = int(total_seconds // 60)
-    seconds = total_seconds % 60
+    total_cs = int(round(ms / 10.0))
+    minutes, rem_cs = divmod(total_cs, 6000)
+    seconds = rem_cs / 100.0
     l_b, r_b = bracket[0], bracket[1]
     return f"{l_b}{minutes:02d}:{seconds:05.2f}{r_b}"
 

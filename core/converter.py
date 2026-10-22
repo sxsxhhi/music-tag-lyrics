@@ -118,11 +118,18 @@ def format_verbatim_words_line(words: List[Dict[str, Any]], start_ms: int, end_m
         cur_txt = w_cur.get("text", "").replace("\xa0", " ")
         prev_end = w_prev.get("end", w_prev.get("start", 0))
 
-        # Enforce Western word boundary standard spacing (Rule 14)
-        if prev_txt and cur_txt:
-            if re.search(r"[a-zA-Z0-9,\.!\?;:'\"]$", prev_txt) and re.search(r"^[a-zA-Z0-9]", cur_txt):
-                if not prev_txt.endswith(" ") and not cur_txt.startswith(" "):
+        # 词边界空格（Rule 14）
+        # join 是解析层给出的"源里有没有空格"的权威信息：
+        #   None  → 该源不提供边界信息（KRC / LRC / 合成词），沿用 ASCII 启发式
+        #   space → 源里明确有空格，补上
+        #   none  → 源里就是紧邻的（音节切分），绝不能插空格
+        join = w_prev.get("join")
+        if prev_txt and cur_txt and not prev_txt.endswith(" ") and not cur_txt.startswith(" "):
+            if join is None:
+                if re.search(r"[a-zA-Z0-9,\.!\?;:'\"]$", prev_txt) and re.search(r"^[a-zA-Z0-9]", cur_txt):
                     cur_txt = " " + cur_txt
+            elif join == "space":
+                cur_txt = " " + cur_txt
 
         # Insert explicit pause gap tag if inter-word gap >= 300ms
         if w_cur.get("start", 0) - prev_end >= 300:
