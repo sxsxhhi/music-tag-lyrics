@@ -76,6 +76,56 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 _META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
+_CREDIT_EXTRACT_RE = re.compile(
+    r"^(作词作曲|作詞作曲|词曲|作词|作詞|作曲|Lyrics|Written|Composed|词|曲)\s*[:：]\s*(.+)$",
+    re.IGNORECASE,
+)
+_CREDIT_BOTH = {"作词作曲", "作詞作曲", "词曲"}
+_CREDIT_LYRICIST = {"作词", "作詞", "词", "lyrics", "written"}
+_CREDIT_COMPOSER = {"作曲", "曲", "composed"}
+
+
+def extract_lyricist_composer(text: str) -> Tuple[str, str]:
+    """从歌词前若干行提取作词/作曲。单字词/曲必须带冒号。人名分隔交给 normalize_artist_string。"""
+    from scripts.tag_editor import normalize_artist_string
+
+    lyricists: List[str] = []
+    composers: List[str] = []
+    seen = 0
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or _META_LINE_RE.match(line):
+            continue
+        clean = strip_timing_tags(line).strip()
+        if not clean:
+            continue
+        seen += 1
+        if seen > 12:
+            break
+        m = _CREDIT_EXTRACT_RE.match(clean)
+        if not m:
+            continue
+        kind = m.group(1).strip()
+        names = normalize_artist_string(m.group(2).strip())
+        if not names:
+            continue
+        key = kind.lower()
+        if kind in _CREDIT_BOTH:
+            lyricists.append(names)
+            composers.append(names)
+        elif key in _CREDIT_LYRICIST:
+            lyricists.append(names)
+        elif key in _CREDIT_COMPOSER:
+            composers.append(names)
+
+    def _uniq(items: List[str]) -> str:
+        out: List[str] = []
+        for item in items:
+            if item not in out:
+                out.append(item)
+        return "/".join(out)
+
+    return _uniq(lyricists), _uniq(composers)
 
 
 def pair_plain_bilingual_lyrics(text: str) -> Tuple[str, List[Optional[str]]]:

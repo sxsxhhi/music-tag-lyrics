@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Union
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
-UA_DEFAULT = "music-tag-lyrics/1.2.5"
+UA_DEFAULT = "music-tag-lyrics/1.2.6"
 
 def http_get_text(
     url: str,

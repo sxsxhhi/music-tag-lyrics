@@ -1,11 +1,11 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗与多源歌词修补（v1.2.5）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。生成 Enhanced LRC / ELRC 双语（逐字只打原文、译文行级同轴）。遵守 18 条铁律：Live 互斥、先检后轴、宁缺毋滥。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗与多源歌词修补（v1.2.6）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。Live/录音室互斥覆盖五源与全球搜词。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.5)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.6)
 
-纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。
+纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
 > **不依赖 ffmpeg / Node / 播放器。** 绝不移动、归档或删除音频。`--lyrics-only` 只覆写内嵌歌词帧。
 
@@ -75,7 +75,8 @@ flowchart TD
   1. 本地 Live：候选必须带 Live/现场，拒绝录音室词；
   2. 本地录音室：拦截含 Live/现场 的候选；
   3. Hash 无果则 KRCS 关键词 + 时长降级；
-  4. 版本括号参与匹配，营销垃圾括号清除。
+  4. 版本括号参与匹配，营销垃圾括号清除；
+  5. 互斥覆盖五源 API、全球纯文本、自动同目录 txt；`--lyrics-file` 用户明示则不拦。文件名补全与标题清洗保留 `(Live)` / 现场。
 
 ### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律
 - **铁律准则**：
@@ -119,11 +120,11 @@ flowchart TD
 
 | 元数据字段 | 标准化治理规范 | 严禁项与过滤规则 | 治理执行范例 |
 | :--- | :--- | :--- | :--- |
-| **Title（标题）** | 纯净歌曲原名，保留官方副标题括号 | 剔除 `[FLAC-无损]`、`【HQ高品质】`、宣发尾缀 | `Closer [简明宣发版...]` → `Closer` |
-| **Artist（艺术家）** | 多合唱强制 `/` | 严禁误拆白名单乐队 | `徐良 & 小凌` → `徐良/小凌`；`伍佰 & China Blue` 原样 |
-| **Album（专辑）** | 发行母带所属专辑 | 严禁拼盘/热歌榜名 | 归档至发行专辑 |
-| **Year（年份）** | 4 位公历 `YYYY` | 严禁月日或空白充数 | `2016-08-01` → `2016` |
-| **Lyricist / Composer** | 真名，`/` 分隔 | 已有则白名单保护 | `作词 : 竹君` |
+| **Title（标题）** | 纯净歌曲原名，保留官方副标题与 `(Live)` | 剔除 `[FLAC-无损]`、`【HQ高品质】`、宣发尾缀；已有标题不覆盖 | 缺标题时 `广场-李志.flac` → `广场`；`起风了 (Live)-歌手` 保留 Live |
+| **Artist（艺术家）** | 多合唱强制 `/`；缺歌手按文件名补全 | 严禁误拆白名单乐队；白名单命中仍保留 Live 后缀 | `徐良 & 小凌` → `徐良/小凌`；`Earth, Wind & Fire (Live)` 原样 |
+| **Album（专辑）** | 原样回写 | 空则跳过，不覆盖原值 | 不查发行专辑、不拦热歌榜 |
+| **Year（年份）** | 4 位公历 `YYYY` | 解析不出则不写，严禁乱码充数 | `2016-08-01` → `2016` |
+| **Lyricist / Composer** | 仅空时从歌词署名行提取 | 已有不覆盖；`--lyrics-only` 不写这两项 | `作词 : 方文山` → TEXT；`词不达意` 不提取 |
 | **Lyrics（内嵌歌词）** | Enhanced LRC，与 `.spl`/`.lrc` 镜像 | 译文不得独立时间戳插队 | FLAC/WAV/MP3/M4A/OGG/DSF |
 
 ---
@@ -138,7 +139,7 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]
+🛑 [Demucs v4 绝对红线阻断 (v1.2.6)]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```

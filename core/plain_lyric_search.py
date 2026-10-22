@@ -11,7 +11,7 @@ from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .utils.http import http_get_text, UA_DESKTOP
 from .utils.time_utils import strip_timing_tags
-from .utils.version_guard import is_title_fuzzy_match
+from .utils.version_guard import is_title_fuzzy_match, is_live_version, matches_version_policy
 
 logger = logging.getLogger(__name__)
 
@@ -171,13 +171,18 @@ def _search_pages(query: str) -> List[str]:
 
 
 def _web_search_plain(title: str, artist: str) -> Optional[str]:
-    queries = [
+    target_live = is_live_version(title)
+    base_queries = [
         f"site:github.com {title} {artist} 歌词",
         f"site:github.com {title} 歌词",
         f"{title} {artist} 歌词",
         f"{title} 歌词",
         f"{title} {artist} lyrics",
     ]
+    if target_live:
+        queries = [f"{q} Live 现场" for q in base_queries] + base_queries
+    else:
+        queries = base_queries
     seen = set()
     for query in queries:
         for page in _search_pages(query):
@@ -188,6 +193,8 @@ def _web_search_plain(title: str, artist: str) -> Optional[str]:
                 seen.add(raw)
                 if len(seen) > _MAX_FETCH_URLS:
                     return None
+                if not matches_version_policy(target_live, raw, href):
+                    continue
                 path = urllib.parse.urlparse(raw).path.lower()
                 is_raw = "raw.githubusercontent.com" in raw or path.endswith(_TEXT_EXT)
                 if not is_raw and "github.com" in raw and "/blob/" not in raw:
@@ -196,7 +203,7 @@ def _web_search_plain(title: str, artist: str) -> Optional[str]:
                 if not body:
                     continue
                 text = lrc_or_plain_to_text(body) if is_raw else _html_to_candidate_text(body)
-                if looks_like_lyrics(text, title):
+                if looks_like_lyrics(text, title) and matches_version_policy(target_live, text[:800], raw):
                     logger.info("plain lyrics from web: %s", raw[:120])
                     return text
     return None

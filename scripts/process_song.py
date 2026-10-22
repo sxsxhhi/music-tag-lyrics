@@ -17,12 +17,18 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
 
-from scripts.tag_editor import read_audio_tags, update_audio_tags, normalize_artist_string, clean_title_string, clean_year_string
-from scripts.lyric_validator import validate_and_fix_lyrics, pair_plain_bilingual_lyrics
+from scripts.tag_editor import (
+    read_audio_tags, update_audio_tags, normalize_artist_string,
+    clean_title_string, clean_year_string, infer_title_artist_from_basename,
+)
+from scripts.lyric_validator import (
+    validate_and_fix_lyrics, pair_plain_bilingual_lyrics, extract_lyricist_composer,
+)
 from core.aggregator import LyricAggregator
 from core.converter import to_spl
 from core.utils.io_safe import atomic_write_many, read_text_guess_encoding
 from core.utils.text_utils import is_foreign_track
+from core.utils.version_guard import is_live_version, matches_version_policy
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav", ".dsf"}
 
@@ -45,7 +51,10 @@ def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional
         f"{title}.txt",
         f"{base_name}.lrc"
     ]
+    target_live = is_live_version(title)
     for c in candidates:
+        if not matches_version_policy(target_live, c, ""):
+            continue
         p = os.path.join(song_dir, c)
         if os.path.isfile(p):
             txt = read_text_guess_encoding(p)
@@ -93,7 +102,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.5)]")
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.6)]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -250,7 +259,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.5)]")
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.6)]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -317,21 +326,23 @@ def process_single_song(
     album = tags.get("album", "").strip()
     year = tags.get("year", "").strip()
 
-    if " - " in base_name:
-        parts = base_name.split(" - ", 1)
-        inferred_title = parts[0].strip()
-        inferred_artist = parts[1].strip()
-        if not title:
-            title = inferred_title
-        if not artist:
-            artist = inferred_artist
-    elif not title:
-        title = base_name
+    inferred_title, inferred_artist = infer_title_artist_from_basename(base_name)
+    if not title:
+        title = inferred_title or base_name
+    if not artist:
+        artist = inferred_artist
 
     # 2. Clean title, 4-digit year, and normalize artist with '/'
     cleaned_title = clean_title_string(title)
     normalized_artist = normalize_artist_string(artist)
     cleaned_year = clean_year_string(year)
+    lyricist = tags.get("lyricist", "").strip()
+    composer = tags.get("composer", "").strip()
+    extracted_ly, extracted_co = extract_lyricist_composer(tags.get("lyrics") or "")
+    if not lyricist:
+        lyricist = extracted_ly
+    if not composer:
+        composer = extracted_co
 
     print(f"🏷️  Metadata: [{cleaned_title}] by [{normalized_artist}] ({cleaned_year}) ({duration_ms // 1000}s)")
 
@@ -377,6 +388,11 @@ def process_single_song(
 
     if not lyric_data or not lyric_data.get("lines"):
         print(f"❌ No lyrics found or authorized for {cleaned_title} - {normalized_artist}")
+        if update_tags and not lyrics_only:
+            _write_cleaned_metadata(
+                filepath, cleaned_title, normalized_artist, album,
+                cleaned_year, composer, lyricist,
+            )
         return False
 
     source = lyric_data.get("source", "unknown")
@@ -400,6 +416,11 @@ def process_single_song(
     # 依然写盘、依然 return True，产物只剩标题行却报告成功。
     if not is_valid:
         print(f"❌ 校验未通过（有效歌词行为 0），不写盘：{cleaned_title} - {normalized_artist}")
+        if update_tags and not lyrics_only:
+            _write_cleaned_metadata(
+                filepath, cleaned_title, normalized_artist, album,
+                cleaned_year, composer, lyricist,
+            )
         return False
 
     # P0-2: 逐字必须在校验之后。先让 validator 用「没有 words」完成双语配对，
@@ -412,9 +433,15 @@ def process_single_song(
         non_interactive=non_interactive,
     )
 
+    if not lyricist or not composer:
+        line_text = "\n".join((l.get("text") or "") for l in validated_data.get("lines") or [])
+        extracted_ly, extracted_co = extract_lyricist_composer(line_text)
+        if not lyricist:
+            lyricist = extracted_ly
+        if not composer:
+            composer = extracted_co
+
     # 5. Generate .spl and .lrc (with prelude credit enrichment & whitelist protection)
-    lyricist = tags.get("lyricist", "").strip()
-    composer = tags.get("composer", "").strip()
     spl_content = lrc_content = to_spl(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
 
     lrc_path = os.path.join(target_dir, f"{base_name}.lrc")
@@ -458,8 +485,34 @@ def process_single_song(
     print(f"✨ Successfully finished processing.")
     return True
 
+
+def _write_cleaned_metadata(
+    filepath: str,
+    title: str,
+    artist: str,
+    album: str,
+    year: str,
+    composer: str,
+    lyricist: str,
+) -> None:
+    """抓词失败时仍写回已清洗/新补的标签，不写歌词帧。"""
+    success = update_audio_tags(
+        filepath,
+        title=title,
+        artist=artist,
+        album=album,
+        year=year,
+        composer=composer,
+        lyricist=lyricist,
+    )
+    if success:
+        print("✅ Embedded tags updated (lyrics unchanged; fetch/validate failed)")
+    else:
+        print("⚠️ Tag update skipped or format read-only")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.5)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.6)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")

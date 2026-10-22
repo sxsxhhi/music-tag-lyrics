@@ -238,6 +238,54 @@ def test_prepare_payload_hints_from_lines():
     assert hints[0] == (1.0, "第一行歌词啊啊")
 
 
+def test_studio_rejects_live_github_filename():
+    lyrics = (
+        "广场\n夜色覆盖了城市的灯\n我走在无人的街\n把沉默交给风\n"
+        "把回忆交给雨\n把名字交给你"
+    )
+
+    def fake_get(url, **kwargs):
+        if "bing.com" in url or "duckduckgo" in url or "github.com/search" in url:
+            return '<a href="https://github.com/lizhi/lyrics/blob/main/广场_live.txt">x</a>'
+        if "广场_live.txt" in url:
+            return lyrics
+        return None
+
+    orig_get, orig_five = pls.http_get_text, pls._from_five_sources
+    pls.http_get_text = fake_get
+    pls._from_five_sources = lambda *a, **k: None
+    try:
+        text = fetch_plain_lyric_text("广场", "李志")
+        assert text is None
+    finally:
+        pls.http_get_text = orig_get
+        pls._from_five_sources = orig_five
+
+
+def test_live_rejects_studio_github_filename():
+    lyrics = (
+        "起风了\n某一天\n脚步开始变得轻盈\n心中如阳光般灿烂\n"
+        "我抬头看一看\n天空是彩色的"
+    )
+
+    def fake_get(url, **kwargs):
+        if "bing.com" in url or "duckduckgo" in url or "github.com/search" in url:
+            return '<a href="https://github.com/foo/lyrics/blob/main/起风了.txt">x</a>'
+        if url.endswith("起风了.txt") or "/起风了.txt" in url:
+            return lyrics
+        return None
+
+    orig_get, orig_five = pls.http_get_text, pls._from_five_sources
+    pls.http_get_text = fake_get
+    pls._from_five_sources = lambda *a, **k: None
+    try:
+        text = fetch_plain_lyric_text("起风了 (Live)", "买辣椒也用券")
+        assert text is None
+    finally:
+        pls.http_get_text = orig_get
+        pls._from_five_sources = orig_five
+
+
 def main():
     cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = []

@@ -4,7 +4,7 @@
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 import mutagen
 from mutagen.flac import FLAC
@@ -92,9 +92,17 @@ def normalize_artist_string(artist_str: str) -> str:
         b = band.lower()
         if not re.search(r"[&/,，、+]|feat|ft\.", b):
             continue
-        if low == b or low.startswith(b + " ") or low.startswith(b + "(") or low.startswith(b + "["):
+        if low == b:
             return band
-            
+        if low.startswith(b + " ") or low.startswith(b + "(") or low.startswith(b + "["):
+            orig_rest = clean_str[len(band):]
+            from core.utils.version_guard import is_live_version, is_demo_version, is_remix_version
+            if orig_rest and (is_live_version(orig_rest) or is_demo_version(orig_rest) or is_remix_version(orig_rest)):
+                if orig_rest.startswith((" ", "(", "[", "（")):
+                    return (band + orig_rest).strip()
+                return f"{band} {orig_rest.strip()}"
+            return band
+
     # Split by any known separator
     parts = [p.strip() for p in ARTIST_SPLIT_RE.split(clean_str) if p.strip()]
     return "/".join(parts) if parts else clean_str
@@ -122,6 +130,25 @@ def clean_title_string(title_str: str) -> str:
     cleaned = re.sub(r"\[(FLAC|无损|Hi-Res|320K|MP3|HQ|简明宣发版)[^\]]*\]", "", title_str, flags=re.IGNORECASE)
     cleaned = re.sub(r"【(FLAC|无损|Hi-Res|320K|MP3|HQ)[^】]*】", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
+
+
+def infer_title_artist_from_basename(base_name: str) -> Tuple[str, str]:
+    """
+    默认文件名「歌名-歌手」。优先按「 - 」切开，否则按最后一个「-」。
+    切不出歌手时整名当标题。不剥 (Live)/现场。
+    """
+    name = (base_name or "").strip()
+    if not name:
+        return "", ""
+    if " - " in name:
+        title, artist = name.split(" - ", 1)
+        return title.strip(), artist.strip()
+    if "-" in name:
+        title, artist = name.rsplit("-", 1)
+        title, artist = title.strip(), artist.strip()
+        if title and artist:
+            return title, artist
+    return name, ""
 
 def _txt(value: Optional[str]) -> Optional[str]:
     """空串/纯空白视为「未提供」，返回 None —— 避免把原有标签清空。"""
@@ -331,6 +358,15 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         _take("year", lambda: clean_year_string(audio.get("\xa9day", [""])[0]))
         _take("composer", lambda: audio.get("\xa9wrt", [""])[0])
         _take("tracknumber", lambda: _mp4_track(audio))
+        def _mp4_lyricist() -> str:
+            raw = audio.get("----:com.apple.iTunes:LYRICIST")
+            if not raw:
+                return ""
+            item = raw[0]
+            if isinstance(item, (bytes, bytearray)):
+                return bytes(item).decode("utf-8", errors="ignore")
+            return str(item)
+        _take("lyricist", _mp4_lyricist)
         _take("lyrics", lambda: audio.get("\xa9lyr", [""])[0])
     elif isinstance(audio, WAVE) or (DSF is not None and isinstance(audio, DSF)):
         # R2: WAV 与 DSF 都靠内嵌 ID3 块存标签，处理方式完全一致，合并为一支。
