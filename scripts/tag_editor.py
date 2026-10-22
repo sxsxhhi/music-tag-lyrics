@@ -10,6 +10,7 @@ Refactored to eliminate ID3 and Vorbis duplicate code (DRY architecture).
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
 import mutagen
@@ -145,115 +146,137 @@ def _yr(value: Optional[str]) -> Optional[str]:
 
 
 def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
-    """Helper: Extracts metadata fields from an ID3 tags structure into info dictionary."""
+    """
+    从 ID3 结构中逐字段读取（P2-16）。
+
+    每个字段独立 try：某一帧损坏（编码异常、类型不符）只跳过该字段，
+    不再像旧实现那样"一处抛错 → 整份信息归零 → 空值反过来覆盖原标签"。
+    """
     if not id3:
         return
-    if "TIT2" in id3:
-        info["title"] = str(id3["TIT2"])
-    if "TPE1" in id3:
-        info["artist"] = str(id3["TPE1"])
-    if "TPE2" in id3:
-        info["albumartist"] = str(id3["TPE2"])
-    if "TALB" in id3:
-        info["album"] = str(id3["TALB"])
+
+    def _take(key: str, tag: str, transform=None) -> None:
+        try:
+            if tag in id3:
+                raw = str(id3[tag])
+                info[key] = transform(raw) if transform else raw
+        except Exception:
+            pass  # 单帧损坏只跳过该字段
+
+    _take("title", "TIT2")
+    _take("artist", "TPE1")
+    _take("albumartist", "TPE2")
+    _take("album", "TALB")
     if "TDRC" in id3:
-        info["year"] = clean_year_string(str(id3["TDRC"]))
-    elif "TYER" in id3:
+        _take("year", "TDRC", clean_year_string)
+    else:
         # ID3v2.3 只有 TYER；不回退的话会读出空年份，随后空值覆盖掉原年份
-        info["year"] = clean_year_string(str(id3["TYER"]))
-    if "TCOM" in id3:
-        info["composer"] = str(id3["TCOM"])
-    if "TEXT" in id3:
-        info["lyricist"] = str(id3["TEXT"])
-    if "TRCK" in id3:
-        info["tracknumber"] = str(id3["TRCK"])
+        _take("year", "TYER", clean_year_string)
+    _take("composer", "TCOM")
+    _take("lyricist", "TEXT")
+    _take("tracknumber", "TRCK")
+
     # P1-11: 不再只认 eng/XXX/chi 三个固定键。优先 eng，否则取任意一帧
     # （jpn/kor 或多 desc 的歌词帧以前一律读不到，表现为"明明有内嵌歌词却显示空"）
-    uslt = None
-    for key in sorted(k for k in id3.keys() if k.startswith("USLT")):
-        uslt = id3[key]
-        if "eng" in key.lower():
-            break
-    if uslt:
-        info["lyrics"] = uslt.text
+    try:
+        uslt = None
+        for key in sorted(k for k in id3.keys() if k.startswith("USLT")):
+            uslt = id3[key]
+            if "eng" in key.lower():
+                break
+        if uslt:
+            info["lyrics"] = uslt.text
+    except Exception:
+        pass
 
-def _apply_id3_tags(
-    id3: Any,
-    title: Optional[str] = None,
-    artist: Optional[str] = None,
-    album: Optional[str] = None,
-    year: Optional[str] = None,
-    tracknumber: Optional[str] = None,
-    composer: Optional[str] = None,
-    lyricist: Optional[str] = None,
-    lyrics: Optional[str] = None,
+@dataclass
+class TagSet:
+    """一次标签写入请求（R5：把重复的 9 参数签名收敛成数据对象）。"""
+
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    year: Optional[str] = None
+    tracknumber: Optional[str] = None
+    composer: Optional[str] = None
+    lyricist: Optional[str] = None
+    lyrics: Optional[str] = None
     albumartist: Optional[str] = None
-) -> None:
-    """Helper: Applies standardized metadata frames onto an ID3 structure."""
-    title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
-    year = _yr(year)
-    if title is not None:
-        id3["TIT2"] = TIT2(encoding=3, text=[clean_title_string(title)])
-    if artist is not None:
-        id3["TPE1"] = TPE1(encoding=3, text=[normalize_artist_string(artist)])
-    if albumartist is not None:
-        if albumartist.strip() == "":
+
+    def normalized(self) -> "TagSet":
+        """D-04：空串/纯空白视为「未提供」。albumartist 空串表示删除，lyrics 允许显式清空。"""
+        return TagSet(
+            title=_txt(self.title), artist=_txt(self.artist), album=_txt(self.album),
+            year=_yr(self.year), tracknumber=_txt(self.tracknumber),
+            composer=_txt(self.composer), lyricist=_txt(self.lyricist),
+            lyrics=self.lyrics, albumartist=self.albumartist,
+        )
+
+
+# ---- R1: ID3 / Vorbis 两套逐字段同构代码收敛为「一张规格表 + 一个循环」----
+# (TagSet 属性, ID3 帧键, Vorbis 键, ID3 帧类, 值变换)
+_FIELD_SPEC = (
+    ("title", "TIT2", "title", TIT2, clean_title_string),
+    ("artist", "TPE1", "artist", TPE1, normalize_artist_string),
+    ("album", "TALB", "album", TALB, str.strip),
+    ("year", "TDRC", "date", TDRC, clean_year_string),
+    ("tracknumber", "TRCK", "tracknumber", TRCK, str),
+    ("composer", "TCOM", "composer", TCOM, str.strip),
+    ("lyricist", "TEXT", "lyricist", TEXT, str.strip),
+)
+
+
+def _apply_fields(tags: TagSet, target: Any, use_id3: bool) -> None:
+    """按规格表把 TagSet 写进 ID3 帧集合或 Vorbis comment。"""
+    for attr, id3_key, vorbis_key, frame, transform in _FIELD_SPEC:
+        value = getattr(tags, attr)
+        if value is None:
+            continue
+        text = transform(value)
+        if use_id3:
+            target[id3_key] = frame(encoding=3, text=[text])
+        else:
+            target[vorbis_key] = [text]
+
+
+def _apply_id3_tags(id3: Any, tags: TagSet) -> None:
+    """把标签写入 ID3 帧集合（MP3 / WAV / DSF 共用）。"""
+    _apply_fields(tags, id3, use_id3=True)
+    if tags.albumartist is not None:
+        if tags.albumartist.strip() == "":
             if "TPE2" in id3:
                 del id3["TPE2"]
         else:
-            id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(albumartist)])
-    if album is not None:
-        id3["TALB"] = TALB(encoding=3, text=[album.strip()])
-    if year is not None:
-        id3["TDRC"] = TDRC(encoding=3, text=[clean_year_string(year)])
-    if tracknumber is not None:
-        id3["TRCK"] = TRCK(encoding=3, text=[str(tracknumber)])
-    if composer is not None:
-        id3["TCOM"] = TCOM(encoding=3, text=[composer.strip()])
-    if lyricist is not None:
-        id3["TEXT"] = TEXT(encoding=3, text=[lyricist.strip()])
-    if lyrics is not None:
+            id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(tags.albumartist)])
+    if tags.lyrics is not None:
         # 只覆盖自己写的那一帧（lang=eng, desc=""），其它语言/描述的 USLT 一律保留。
         # 旧实现按 startswith("USLT") 全删，会把多语歌词与翻译帧一并抹掉。
-        id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=lyrics)
+        id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=tags.lyrics)
 
-def _apply_vorbis_tags(
-    audio: Any,
-    title: Optional[str] = None,
-    artist: Optional[str] = None,
-    album: Optional[str] = None,
-    year: Optional[str] = None,
-    tracknumber: Optional[str] = None,
-    composer: Optional[str] = None,
-    lyricist: Optional[str] = None,
-    lyrics: Optional[str] = None,
-    albumartist: Optional[str] = None
-) -> None:
-    """Helper: Applies standardized metadata keys onto Vorbis Comment structure (FLAC/OGG)."""
-    title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
-    year = _yr(year)
-    if title is not None:
-        audio["title"] = [clean_title_string(title)]
-    if artist is not None:
-        audio["artist"] = [normalize_artist_string(artist)]
-    if albumartist is not None:
-        if albumartist.strip() == "":
+
+def _apply_vorbis_tags(audio: Any, tags: TagSet) -> None:
+    """把标签写入 Vorbis comment（FLAC / OGG 共用）。"""
+    _apply_fields(tags, audio, use_id3=False)
+    if tags.albumartist is not None:
+        if tags.albumartist.strip() == "":
             if "albumartist" in audio:
                 del audio["albumartist"]
         else:
-            audio["albumartist"] = [normalize_artist_string(albumartist)]
-    if album is not None:
-        audio["album"] = [album.strip()]
-    if year is not None:
-        audio["date"] = [clean_year_string(year)]
-    if tracknumber is not None:
-        audio["tracknumber"] = [str(tracknumber)]
-    if composer is not None:
-        audio["composer"] = [composer.strip()]
-    if lyricist is not None:
-        audio["lyricist"] = [lyricist.strip()]
-    if lyrics is not None:
-        audio["lyrics"] = [lyrics]
+            audio["albumartist"] = [normalize_artist_string(tags.albumartist)]
+    if tags.lyrics is not None:
+        audio["lyrics"] = [tags.lyrics]
+
+
+def _mp4_track(audio: Any) -> str:
+    """MP4 的 trkn 是 [(序号, 总数)]，还原成 "3" 或 "3/12"。"""
+    try:
+        pair = audio.get("trkn")[0]
+        num = int(pair[0])
+        total = int(pair[1]) if len(pair) > 1 else 0
+        return f"{num}/{total}" if total else str(num)
+    except Exception:
+        return ""
+
 
 def read_audio_tags(filepath: str) -> Dict[str, Any]:
     """
@@ -271,6 +294,10 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         "composer": "",
         "lyricist": "",
         "lyrics": "",
+        # P2-17: ID3 分支会读到这两个字段，Vorbis/MP4 分支不会。
+        # 统一在初始化里给出，保证任何格式返回的键集合都一致。
+        "albumartist": "",
+        "tracknumber": "",
         "duration": None
     }
     if not os.path.exists(filepath):
@@ -302,6 +329,7 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         _take("year", lambda: clean_year_string(audio.get("date", [""])[0]))
         _take("composer", lambda: audio.get("composer", [""])[0])
         _take("lyricist", lambda: audio.get("lyricist", [""])[0])
+        _take("tracknumber", lambda: audio.get("tracknumber", [""])[0])
         _take("lyrics", lambda: audio.get("lyrics", [""])[0])
     elif isinstance(audio, MP4):
         _take("title", lambda: audio.get("\xa9nam", [""])[0])
@@ -309,19 +337,13 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         _take("album", lambda: audio.get("\xa9alb", [""])[0])
         _take("year", lambda: clean_year_string(audio.get("\xa9day", [""])[0]))
         _take("composer", lambda: audio.get("\xa9wrt", [""])[0])
+        _take("tracknumber", lambda: _mp4_track(audio))
         _take("lyrics", lambda: audio.get("\xa9lyr", [""])[0])
-    elif isinstance(audio, WAVE):
+    elif isinstance(audio, WAVE) or (DSF is not None and isinstance(audio, DSF)):
+        # R2: WAV 与 DSF 都靠内嵌 ID3 块存标签，处理方式完全一致，合并为一支。
+        # _extract_id3_dict 内部已做逐字段隔离，不需要再套一层 try。
         if getattr(audio, "tags", None):
-            try:
-                _extract_id3_dict(audio.tags, info)
-            except Exception:
-                pass
-    elif DSF is not None and isinstance(audio, DSF):
-        if getattr(audio, "tags", None):
-            try:
-                _extract_id3_dict(audio.tags, info)
-            except Exception:
-                pass
+            _extract_id3_dict(audio.tags, info)
     else:
         # 兜底：MP3 及 mutagen 无法归类的 ID3 容器
         try:
@@ -356,10 +378,14 @@ def update_audio_tags(
         return False
 
     ext = os.path.splitext(filepath)[1].lower()
+    tags = TagSet(
+        title=title, artist=artist, album=album, year=year, tracknumber=tracknumber,
+        composer=composer, lyricist=lyricist, lyrics=lyrics, albumartist=albumartist,
+    ).normalized()
 
     def _write_vorbis(tmp: str) -> bool:
         audio = FLAC(tmp) if ext == ".flac" else OggVorbis(tmp)
-        _apply_vorbis_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        _apply_vorbis_tags(audio, tags)
         audio.save()
         return True
 
@@ -369,7 +395,7 @@ def update_audio_tags(
         # 这里故意不加 try：让 safe_save_audio_tags 捕获异常后放弃写入，原文件保持不变。
         id3 = ID3(tmp)
         orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
-        _apply_id3_tags(id3, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        _apply_id3_tags(id3, tags)
         # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
         id3.save(tmp, v2_version=orig_v2)
         return True
@@ -378,7 +404,7 @@ def update_audio_tags(
         audio = WAVE(tmp)
         if audio.tags is None:
             audio.add_tags()
-        _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        _apply_id3_tags(audio.tags, tags)
         audio.save()
         return True
 
@@ -392,35 +418,32 @@ def update_audio_tags(
 
     def _write_mp4(tmp: str) -> bool:
         from mutagen.mp4 import MP4FreeForm
-        nonlocal title, album, composer, lyricist, year
-        title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
-        year = _yr(year)
         audio = MP4(tmp)
-        if title is not None:
-            audio["\xa9nam"] = [clean_title_string(title)]
-        if artist is not None:
-            audio["\xa9ART"] = [normalize_artist_string(artist)]
-        if albumartist is not None:
-            if albumartist.strip() == "":
+        if tags.title is not None:
+            audio["\xa9nam"] = [clean_title_string(tags.title)]
+        if tags.artist is not None:
+            audio["\xa9ART"] = [normalize_artist_string(tags.artist)]
+        if tags.albumartist is not None:
+            if tags.albumartist.strip() == "":
                 if "aART" in audio:
                     del audio["aART"]
             else:
-                audio["aART"] = [normalize_artist_string(albumartist)]
-        if album is not None:
-            audio["\xa9alb"] = [album.strip()]
-        if year is not None:
-            audio["\xa9day"] = [clean_year_string(year)]
-        if tracknumber is not None:
+                audio["aART"] = [normalize_artist_string(tags.albumartist)]
+        if tags.album is not None:
+            audio["\xa9alb"] = [tags.album.strip()]
+        if tags.year is not None:
+            audio["\xa9day"] = [tags.year]
+        if tags.tracknumber is not None:
             try:
-                audio["trkn"] = [(int(str(tracknumber).split("/")[0]), 0)]
+                audio["trkn"] = [(int(str(tags.tracknumber).split("/")[0]), 0)]
             except (ValueError, TypeError):
                 pass
-        if composer is not None:
-            audio["\xa9wrt"] = [composer.strip()]
-        if lyricist is not None:
-            audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(lyricist.strip().encode("utf-8"))]
-        if lyrics is not None:
-            audio["\xa9lyr"] = [lyrics]
+        if tags.composer is not None:
+            audio["\xa9wrt"] = [tags.composer.strip()]
+        if tags.lyricist is not None:
+            audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(tags.lyricist.strip().encode("utf-8"))]
+        if tags.lyrics is not None:
+            audio["\xa9lyr"] = [tags.lyrics]
         audio.save()
         return True
 

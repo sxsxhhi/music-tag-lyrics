@@ -45,27 +45,22 @@ def _silent_remove(path: Optional[str]) -> None:
 
 def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8", newline: str = "\n") -> None:
     """
-    原子地写入文本文件。
+    原子地写入单个文本文件（R4：等价于 ``atomic_write_many`` 的单文件特例）。
 
     :raises OSError: 写入或替换失败（此时原文件保持原样）
     """
-    tmp_path = _tmp_path_for(filepath, prefix=".tmp_txt", keep_ext=False)
-    try:
-        with open(tmp_path, "w", encoding=encoding, newline=newline) as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, filepath)
-    finally:
-        _silent_remove(tmp_path)
+    atomic_write_many({filepath: content}, encoding=encoding, newline=newline)
 
 
 def atomic_write_many(files: dict, encoding: str = "utf-8", newline: str = "\n") -> None:
     """
     一次性原子写入多个文本文件（P1-9）。
 
-    先把所有内容都写成临时文件，全部成功后才逐个 ``os.replace``。这样"第一个写成功、
-    第二个失败"不会留下半对产物；任何一步失败都会清理临时文件，已存在的目标文件保持原样。
+    先把所有内容都写成临时文件并 fsync，全部成功后才逐个 ``os.replace``。
+    这样"第一个写成功、第二个失败"不会留下半对产物。
+
+    注意：``os.replace`` 阶段不是跨文件事务 —— 若替换到一半失败（例如目标被占用），
+    已替换的文件已经是新内容，只有尚未替换的保持原样。这是本函数能提供的最强保证。
 
     :param files: {目标路径: 文本内容}
     """

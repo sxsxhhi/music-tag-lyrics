@@ -11,6 +11,7 @@ import re
 from typing import Dict, List, Any, Tuple
 
 from ..utils.time_utils import parse_match_to_ms, apply_time_offset
+from ._common import parse_offset_tag
 
 LRC_TAG_RE = re.compile(r"^\[([a-zA-Z]+):([^\]]*)\]")
 LRC_TIME_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]")
@@ -100,13 +101,7 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
             raw_lines.append((raw_ms, text))
 
     # Calculate overall offset (internal [offset:xxx] + external adjust)
-    internal_offset = 0
-    if "offset" in tags:
-        try:
-            internal_offset = int(tags["offset"])
-        except ValueError:
-            internal_offset = 0
-    total_offset = internal_offset + adjust
+    total_offset = parse_offset_tag(tags) + adjust
 
     # Apply offset and sort by timestamp
     adjusted_entries = [

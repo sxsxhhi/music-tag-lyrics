@@ -13,6 +13,7 @@ import json
 from typing import Dict, List, Any, Optional
 
 from ..utils.time_utils import apply_time_offset
+from ._common import parse_offset_tag
 
 TAG_RE = re.compile(r"^\[(\w+):([^\]]*)\]$")
 KRC_LINE_RE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
@@ -95,13 +96,7 @@ def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
         raw_lines.append((line_start, line_duration, content))
 
     # Calculate overall offset (internal [offset:xxx] + external adjust)
-    internal_offset = 0
-    if "offset" in tags:
-        try:
-            internal_offset = int(tags["offset"])
-        except ValueError:
-            internal_offset = 0
-    total_offset = internal_offset + adjust
+    total_offset = parse_offset_tag(tags) + adjust
 
     # Single-point extraction of embedded translations
     trans_list = extract_krc_language_translation(krc_text, tags)
