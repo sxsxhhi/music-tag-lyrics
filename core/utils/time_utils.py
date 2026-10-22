@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Universal Timestamp Math and Formatting Utility (v1.1.3)
+Universal Timestamp Math and Formatting Utility (v1.2.4)
 Centralizes time string parsing (LRC, KRC, TTML, SMPTE), millisecond arithmetic,
 bracket formatting, and offset/adjust application with boundary clamping.
 Zero external dependencies.

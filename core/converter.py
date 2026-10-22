@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Lyric Converter (v1.2.2)
+Lyric Converter (v1.2.4)
 Converts unified parsed lyric structures into standard Enhanced LRC (.lrc) and Salt Player (.spl) formats.
 Adheres strictly to the international Enhanced LRC (ELRC / A2 extension) standard.
 Line format: [01:26.48]<01:26.48>唱<01:27.20>词<01:27.42>字<01:30.00>

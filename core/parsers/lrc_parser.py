@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LRC / Enhanced LRC Lyric Parser (v1.1.3)
+LRC / Enhanced LRC Lyric Parser (v1.2.4)
 Parses standard line-by-line LRC text, international Enhanced LRC (ELRC / A2),
 and Salt Player .spl verbatim word timestamps into structured lyrics data.
 Supports [offset:xxx] tags, multi-timestamp line retention, and boundary offset clamping.

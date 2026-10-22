@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Kugou Music Lyric Fetcher (v1.2.2)
+Kugou Music Lyric Fetcher (v1.2.4)
 Searches and downloads word-level synchronized KRC lyrics from Kugou Music.
 Enforces bidirectional Live vs Studio mutual exclusion, multi-stage query ladder,
 KRCS keyword direct fallback, and server-side adjust offset application.

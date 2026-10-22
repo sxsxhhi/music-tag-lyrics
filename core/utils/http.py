@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Lightweight Universal HTTP Networking Utility (v1.1.3)
+Lightweight Universal HTTP Networking Utility (v1.2.4)
 Centralizes GET/POST requests, JSON decoding, custom User-Agents, and timeout handling.
 Zero external dependencies.
 """

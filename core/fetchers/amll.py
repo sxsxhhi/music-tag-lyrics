@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AMLL (Apple Music Lossless Lyrics) Community Database Fetcher (v1.1.3)
+AMLL (Apple Music Lossless Lyrics) Community Database Fetcher (v1.2.4)
 Fetches high-precision word-level TTML lyrics from amll-dev/amll-ttml-db on GitHub / jsDelivr.
 Links via NetEase song ID resolved with Version Guard.
 Zero external dependencies.

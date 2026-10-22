@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LRCSHARE Synced & Multi-Language Lyric Fetcher (v1.2.3)
+LRCSHARE Synced & Multi-Language Lyric Fetcher (v1.2.4)
 Fetches word-level verbatim, line-level lyrics, and structured Chinese translations
 from the LRCSHARE cloud repository (api.lrcshare.com).
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LRCLIB Synced Lyric Fetcher (v1.1.3)
+LRCLIB Synced Lyric Fetcher (v1.2.4)
 Fetches open-source synchronized lyrics from the LRCLIB global database (lrclib.net).
 Particularly excellent for Western, J-Pop, K-Pop, and global indie releases.
 Refactored to reuse shared http utility (DRY architecture).

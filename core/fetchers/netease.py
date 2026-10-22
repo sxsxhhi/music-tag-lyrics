@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NetEase Cloud Music Lyric Fetcher (v1.1.3)
+NetEase Cloud Music Lyric Fetcher (v1.2.4)
 Searches and retrieves synchronized lyrics from NetEase Music.
 Enforces Live vs Studio version mutual exclusion and duration filtering.
 Refactored to reuse shared http and version_guard utilities (DRY architecture).

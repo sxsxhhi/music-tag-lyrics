@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Safe I/O Utilities (v1.3.0)
+Safe I/O Utilities (v1.2.4)
 原子写与安全标签落盘：任何一步失败都不会让原文件处于半写状态。
 
 设计要点

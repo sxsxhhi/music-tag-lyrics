@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Apple Music TTML Lyric Parser (v1.3.0)
+Apple Music TTML Lyric Parser (v1.2.4)
 
 解析 TTML（Apple Music Lossless Lyrics）为统一的 lines/words 结构。
 

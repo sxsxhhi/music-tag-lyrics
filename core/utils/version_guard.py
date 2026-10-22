@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Universal Version Guard & Subtitle Cleaner (v1.1.3)
+Universal Version Guard & Subtitle Cleaner (v1.2.4)
 Centralizes bidirectional strict version mutual exclusion (Live vs Studio),
 demo/remix tag detection, bracketed subtitle stripping with version preservation,
 and duration proximity filtering.

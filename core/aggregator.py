@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Multi-Engine Lyric Aggregator & Dispatcher (v1.2.3)
+Multi-Engine Lyric Aggregator & Dispatcher (v1.2.4)
 Orchestrates concurrent/cascading retrieval across:
 1. Kugou (KRC word-level verbatim with native embedded 1:1 translation)
 2. AMLL (Apple Music Lossless Lyrics TTML)
