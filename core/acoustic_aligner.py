@@ -10,6 +10,11 @@ AcousticAligner: Demucs v4 + Stable-Whisper 声学咬合高精打轴引擎 (v1.2
 5. 保留原有 split_units, align_line_to_words, enrich_track_with_acoustic_words 以维持100%向后兼容
 """
 
+# P0-1: 让所有注解延迟求值。本文件有多处 `Tuple[np.ndarray, int]` 形式的返回注解，
+# 它们在**类定义期**就会被求值；numpy 缺失时 np 为 None，会抛
+# AttributeError 而不是 ImportError，导致整个模块无法导入（"numpy 可选"实际不成立）。
+from __future__ import annotations
+
 import os
 import sys
 import re
