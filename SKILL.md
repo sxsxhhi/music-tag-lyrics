@@ -10,10 +10,11 @@ description: 音乐音频内嵌元数据标准化清洗、下架歌曲逐字歌�
 本技能专为工业级高质量本地音乐管理设计，提供全流程自动化的**音频内嵌元数据全维度清洗修补**、**多源双轨歌词（.spl 逐字 / .lrc 外挂）获取**与**下架孤品 GPU 双端声学咬合逐字打轴兜底**能力。
 
 > [!IMPORTANT]
-> **绝对零外部依赖（纯原生自包含架构）**：
-> - 核心加解密算法（KRC XOR+Zlib、TTML XML、LRC 解析、AES/DES3）全部由技能内置的轻量 Python 模块实现（总计 < 300KB）；
-> - **坚决不依赖外部闭源软件或第三方工具**，用户可随时在干净环境中即开即用，本技能依然 100% 永久独立运行！
-> - **零大模型捆绑负担**：绝不强行打包 4GB 重型模型文件，技能包时刻保持轻量纯净。
+> **不依赖任何外部可执行软件（纯 Python 实现）**：
+> - 核心加解密算法（KRC XOR+Zlib、TTML XML、LRC 解析）全部由技能内置的轻量 Python 模块实现（总计 < 300KB）；
+> - **不依赖任何外部闭源软件、命令行工具或第三方程序**（无需 ffmpeg / Node / 播放器）；
+> - Python 侧仅需两个 pip 包：`mutagen`（读写内嵌标签，**必需**）与 `numpy`（仅逐字合成需要，缺失即自动跳过合成）；
+> - **零大模型捆绑负担**：绝不强行打包 4GB 重型模型文件，技能包时刻保持轻量纯净（Demucs 兜底路径为可选安装）。
 
 ---
 
@@ -216,14 +217,14 @@ flowchart TD
 1. **自动前置校验**：当全网商业曲库无逐字打点时，系统首先检索全网与本地是否具备权威纯文本歌词。
 2. **红线拦截**：若全网及本地均无任何权威歌词，立即触发红线阻断：
    ```text
-   🛑 [Demucs v4 绝对红线阻断 (v1.2.0)]
+   🛑 [Demucs v4 绝对红线阻断 (v1.2.4)]
    未能从商业曲库检索到《歌曲 - 歌手》的有效歌词，且本地未提供纯文本歌词。
    ⚠️ 核心铁律：【绝不语音听写，使用 Demucs v4 兜底时必须先从全网检索歌词，在正确歌词的基础上进行逐字打轴】！
    👉 解决方案：请在歌曲所在目录下放置纯文本歌词文件《歌曲 - 歌手.txt》后再重试。
    ```
 3. **用户显式授权协议**：当已获取权威歌词文本时，弹出授权提示：
    ```text
-   🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.0)]
+   🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.4)]
    已定位到权威歌词文本（共 X 行）。
    是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？
    （声明：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）
@@ -272,6 +273,7 @@ python scripts/process_song.py "path/to/music_folder/"
 - `--force-gpu`：强制启用 Demucs v4 + Whisper 进行 GPU 声学双端门禁逐字打轴。
 - `--lyrics-file "<path>"`：指定外部权威纯文本歌词文件路径。
 - `--out-dir "<path>"`：指定歌词输出目录（默认输出在音频文件同级目录）。
+- `--non-interactive`：无人值守模式，不弹 Demucs 授权确认（直接跳过兜底）；批量跑批与 CI 建议开启。
 
 ---
 
@@ -280,8 +282,15 @@ python scripts/process_song.py "path/to/music_folder/"
 ```
 music-tag-lyrics/
 ├── LICENSE                            # MIT License 开源协议
-├── SKILL.md                           # 技能全维度规范体系（本文件，v1.2.3）
-├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.2.3)
+├── requirements.txt                   # 必需依赖：mutagen（numpy 仅逐字合成需要）
+├── requirements-acoustic.txt          # 可选依赖：Demucs v4 声学打轴兜底
+├── tests/                             # 离线回归测试与基线跑批（24 条用例，不联网）
+│   ├── test_parsers.py                # 解析层：LRC / SPL / TTML / 时间戳
+│   ├── test_m1_safety.py              # 标签安全、空值归一、原子写
+│   ├── test_pipeline.py               # 流水线：双语剥离 / 校验门禁 / 坏 ID3
+│   └── run_baseline.py                # 9 首基线跑批（产物强制落在仓库外）
+├── SKILL.md                           # 技能全维度规范体系（本文件，v1.2.4）
+├── README.md                          # 面向 GitHub 部署的开源文档与 Release 说明 (v1.2.4)
 ├── scripts/
 │   ├── process_song.py                # 顶层一键 CLI 执行流水线 (newline='\n' 确定性输出，支持 --lyrics-only 与 --force-gpu)
 │   ├── tag_editor.py                  # mutagen 音频标签清洗（去重精简架构，多歌手'/'、乐队白名单、四位年份、全格式覆盖）
@@ -292,9 +301,10 @@ music-tag-lyrics/
     │   ├── http.py                    # 统一轻量 HTTP 客户端 (User-Agent, 超时, 自动解析)
     │   ├── time_utils.py              # 统一时间解析与格式化 (支持 [offset] 与 adjust 叠加)
     │   ├── version_guard.py           # 权威版本门禁 (Live/Studio/Demo/Remix 双向互斥与标题副标题清洗)
-    │   └── text_utils.py              # 统一 CJK / 语言判定 / 翻译行识别
-    ├── aggregator.py                  # 多源智能自适应调度中枢 (v1.2.3 3-Tier外语翻译级联与动态微调基准时间轴锚定)
-    ├── converter.py                   # 双轨输出标准 Enhanced LRC (支持词距空格注入、\xa0消融、ELRC双语与停顿闭合标签)
+    │   ├── text_utils.py              # 统一 CJK / 语言判定 / 翻译行识别
+    │   └── io_safe.py                 # 原子写与「副本改写→原子替换」的音频标签落盘
+    ├── aggregator.py                  # 多源智能自适应调度中枢 (v1.2.4 3-Tier外语翻译级联与动态微调基准时间轴锚定)
+    ├── converter.py                   # 双轨输出标准 Enhanced LRC (支持 join 词边界标记、\xa0消融、ELRC双语与停顿闭合标签)
     ├── acoustic_aligner.py            # Demucs v4 人声分离与 Whisper 双端能量门禁逐字声学咬合引擎 (核心兜底)
     ├── fetchers/
     │   ├── amll.py                    # AMLL Apple Music 官方母带 TTML 社区库抓取（欧美/全球一级）
@@ -305,6 +315,7 @@ music-tag-lyrics/
     ├── decryptors/
     │   └── krc_xor.py                 # 酷狗 16字节掩码 XOR + Zlib 原生解密解压
     └── parsers/
+        ├── _common.py                 # 解析器共享工具（[offset] 标签解析，KRC/LRC 共用）
         ├── ttml_parser.py             # Apple Music TTML XML 解析 (支持 SMPTE 纯秒数)
         ├── krc_parser.py              # KRC 逐字解析 (严格 type:1 语义翻译门禁，丢弃 type:0 罗马音)
         └── lrc_parser.py              # 标准 LRC / Enhanced LRC 双向解析器 (支持多时间戳行保留)

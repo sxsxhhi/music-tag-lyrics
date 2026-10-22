@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AcousticAligner: Demucs v4 + Stable-Whisper 声学咬合高精打轴引擎 (v1.2.0)
+AcousticAligner: Demucs v4 + Stable-Whisper 声学咬合高精打轴引擎 (v1.2.4)
 绝对红线：严禁语音听写，仅在 100% 正确的正版/权威歌词文本基础上执行时间轴咬合。
 核心特性：
 1. Demucs v4 GPU 干声剥离 (vocals.mono)

@@ -201,9 +201,11 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     res = "\n".join(output_lines) + "\n"
     return res.replace("\xa0", " ")
 
-def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: str = "", composer: str = "", verbatim_lrc: bool = True) -> str:
+def to_lrc(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: str = "", composer: str = "") -> str:
     """
     Exports unified lyric data to LRC format.
     Delegates directly to to_spl to guarantee 100% SHA-256 trilateral mirror parity.
+
+    注：旧签名里有一个从未被使用的 ``verbatim_lrc`` 形参，v1.2.4 起移除。
     """
     return to_spl(data, title, artist, lyricist, composer)

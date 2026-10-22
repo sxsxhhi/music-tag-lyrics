@@ -24,8 +24,7 @@ from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_get_json
 from ..utils.version_guard import (
     is_live_version,
-    matches_version_policy,
-    strip_subtitle_brackets
+    matches_version_policy
 )
 from ..utils.text_utils import has_hanzi, is_source_or_credit_line, is_instrumental_placeholder
 
@@ -291,10 +290,7 @@ class LrcShareFetcher:
 
         # X-21: 剔除来源/署名行，避免它们被当作歌词逐字输出
         if lines:
-            kept = [l for l in lines if not is_source_or_credit_line(l.get("text", ""))]
-            if len(kept) != len(lines):
-                has_any_words = any(len(l.get("words") or []) >= 2 for l in kept)
-            lines = kept
+            lines = [l for l in lines if not is_source_or_credit_line(l.get("text", ""))]
 
         # Attach translations by nearest timestamp matching
         if translation_rows and lines:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main CLI Processor for music-tag-lyrics Skill (v1.2.1)
+Main CLI Processor for music-tag-lyrics Skill (v1.2.4)
 Standardizes audio metadata tags (Artist with '/', clean Title, Album, 4-digit Year, embedded Lyrics)
 and generates paired standard Enhanced LRC (.spl and .lrc) lyrics in the song's directory.
 Provides Demucs v4 GPU fallback protocol with strict acoustic alignment:
@@ -89,7 +89,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print(f"\n" + "="*65)
-        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.0)]")
+        print(f"🛑 [Demucs v4 绝对红线阻断 (v1.2.4)]")
         print(f"未能从商业曲库检索到《{title} - {artist}》的有效歌词，且本地未提供纯文本歌词。")
         print(f"⚠️ 核心铁律：【绝不语音听写，使用 Demucs v4 兜底时必须先从全网检索歌词，在正确歌词的基础上进行逐字打轴】！")
         print(f"👉 解决方案：请在歌曲所在目录下放置纯文本歌词文件：")
@@ -106,7 +106,7 @@ def prompt_demucs_fallback(
     ]
     
     print(f"\n" + "="*65)
-    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.0)]")
+    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.4)]")
     print(f"未能从云端曲库直接匹配到现成逐字歌词，但已定位到权威歌词文本（共 {len(singing_lines)} 行）。")
     print(f"是否授权按需使用本地 GPU 调用 Demucs v4 剥离纯人声并进行双端能量门禁逐字声学咬合？")
     print(f"（注意：绝对遵循权威歌词文本，零 ASR 语音听写；任务完成后自动销毁临时干声文件）")
@@ -230,7 +230,7 @@ def process_single_song(
             non_interactive=non_interactive
         )
     else:
-        print("🔍 Fetching lyrics across multi-engines (AMLL/Kugou/LRCLIB/NetEase)...")
+        print("🔍 Fetching lyrics across multi-engines (Kugou/AMLL/LRCSHARE/NetEase/LRCLIB)...")
         lyric_data = LyricAggregator.fetch_best_lyrics(
             title=cleaned_title,
             artist=normalized_artist,
@@ -254,9 +254,8 @@ def process_single_song(
 
     source = lyric_data.get("source", "unknown")
     lyric_type = lyric_data.get("lyric_type", "line")
-    synthesized = lyric_data.get("synthesized_words", False)
-    
-    print(f"🎯 Matched Source: [{source.upper()}] (Type: {lyric_type.upper()}{', AI-Synthesized Words' if synthesized else ''})")
+
+    print(f"🎯 Matched Source: [{source.upper()}] (Type: {lyric_type.upper()})")
 
     # 4. Monotonicity, Natural Acoustic Gate and Outro Validation
     # P1-3: 语种判定统一走 is_foreign_track。旧实现用 is_western_track（日韩被判为"非外语"），
@@ -285,6 +284,8 @@ def process_single_song(
             from core.acoustic_aligner import enrich_track_with_acoustic_words
             validated_data = enrich_track_with_acoustic_words(validated_data)
             validated_data["synthesized_words"] = True
+            # P1-9: 这行提示必须放在合成之后 —— 旧实现读标记在读之前，永远显示不出来
+            print("   🎼 无逐字来源，已按行时长合成逐字时间戳（AI-Synthesized Words）")
         except ImportError as exc:
             print(f"   ℹ️ 无声学依赖，跳过逐字合成：{exc}")
         except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
@@ -294,7 +295,7 @@ def process_single_song(
     lyricist = tags.get("lyricist", "").strip()
     composer = tags.get("composer", "").strip()
     spl_content = to_spl(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
-    lrc_content = to_lrc(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer, verbatim_lrc=True)
+    lrc_content = to_lrc(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
 
     lrc_path = os.path.join(target_dir, f"{base_name}.lrc")
     spl_path = os.path.join(target_dir, f"{base_name}.spl")
@@ -338,7 +339,7 @@ def process_single_song(
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity music-tag-lyrics Processor (v1.2.0)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.4)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")

@@ -13,6 +13,7 @@ import re
 from typing import Dict, Any, Tuple, List
 
 from core.utils.text_utils import is_translation_line
+from core.utils.time_utils import strip_timing_tags
 
 # Preamble credit keywords for whitelist protection
 # P1-8: 单字 "词/曲" 必须带冒号才算署名行，否则 "词不达意"、"曲终人散" 会被误判
@@ -24,8 +25,9 @@ CREDIT_KEYWORD_PATTERN = re.compile(
 )
 
 def is_credit_line(line_text: str) -> bool:
-    clean = re.sub(r"\[\d{2}:\d{2}\.\d{2,3}\]", "", line_text).strip()
-    clean = re.sub(r"<\d{2}:\d{2}\.\d{2,3}>", "", clean).strip()
+    # P0-2: 时间戳剥离统一走 time_utils.strip_timing_tags（原先这里两行内联正则，
+    # 与别处的实现已经漂移：只支持两位分钟，>99 分钟的歌词行会剥不掉时间戳）。
+    clean = strip_timing_tags(line_text)
     return bool(CREDIT_KEYWORD_PATTERN.search(clean))
 
 def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float]:

@@ -34,7 +34,7 @@ from .fetchers.netease import NetEaseFetcher
 # 而"抓歌词"这条主路径并不需要 numpy。改为调用点懒加载。
 from .parsers.lrc_parser import parse_lrc
 from .utils.text_utils import (
-    is_cjk, is_foreign_track, has_hanzi, is_instrumental_placeholder
+    is_foreign_track, has_hanzi, is_instrumental_placeholder
 )
 
 logger = logging.getLogger(__name__)
@@ -62,10 +62,11 @@ def align_translation_to_baseline(
     """
     Applies Golden Baseline Timing Anchor (Iron Rule 18):
     Maps translation text onto candidate baseline lines using nearest-timestamp matching.
-    - If diff <= 300ms: within dynamic acoustic tolerance.
-    - If 300ms < diff <= tolerance_ms: mapped directly to baseline line without touching timestamps.
-    - If diff > 1500ms: rejected.
-    Baseline timestamps (start, end, words) remain strictly immutable.
+
+    实际行为（与旧 docstring 不同，旧文档描述过一个并不存在的 300ms 分级分支）：
+    - 为每条主行找时间差最小的**未被占用**译文行；
+    - 只有 ``diff <= tolerance_ms`` 且译文含汉字才挂载；
+    - 主行时间戳（start / end / words）严格不可变。
     Returns the number of lines successfully attached with translations.
     """
     if not candidate_lines or not translation_entries:
@@ -168,10 +169,9 @@ def enrich_foreign_translation(
 class LyricAggregator:
     """Aggregates multiple engines with language-aware dispatching."""
 
-    @classmethod
-    def is_western_track(cls, title: str, artist: str = "") -> bool:
-        """Determines whether a track is predominantly non-CJK."""
-        return not is_cjk(f"{title} {artist}")
+    # R9: 原 is_western_track() 已删除。它与 is_foreign_track() 语义冲突
+    # （日/韩曲会被判成"非外语"），且全仓库已无调用点。语种判定统一走
+    # core.utils.text_utils.is_foreign_track。
 
     @classmethod
     def fetch_best_lyrics(
@@ -188,8 +188,10 @@ class LyricAggregator:
         3. LRCSHARE (api.lrcshare.com word/line TTML)
         4. NetEase (Cloud music synced & translation)
         5. LRCLIB (Global open sync database)
-        6. Acoustic Aligner (AI syllable energy synthesizer fallback)
         Foreign tracks undergo 3-Tier translation cascade enrichment.
+
+        注意：逐字合成本函数**不做**。它在 process_song 里于 validate_and_fix_lyrics
+        之后执行 —— 提前合成会给每行补 words，导致 validator 的双语译文行识别失效。
         """
         is_foreign = is_foreign_track(title, artist)
         candidate = None
