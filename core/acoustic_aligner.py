@@ -14,7 +14,11 @@ import os
 import sys
 import re
 from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:  # C-01: numpy 只在声学路径需要，缺失时不应让"抓歌词"整条链路崩
+    np = None
 
 from .utils.text_utils import CJK_RE
 
@@ -101,13 +105,21 @@ def align_line_to_words(line_text: str, start_ms: int, duration_ms: int) -> List
 def enrich_track_with_acoustic_words(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Traverses lines and enriches any line missing word-level timing with synthesized words.
+
+    X-21: 来源标注/纯符号行不参与合成 —— 把 "LRC：xxx[https://lrcshare.com]" 这种
+    按字符均分出来的伪逐字，会污染整条时间轴。
     """
     lines = data.get("lines", [])
     for line in lines:
         if not line.get("words") and line.get("text"):
+            text = line["text"]
+            if not re.search(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text):
+                continue
+            if re.search(r"(?i)(?:^|\b)(?:lrc|elrc)\s*[:：]|https?://|www\.", text):
+                continue
             start = line.get("start", 0)
             duration = line.get("duration", 3000)
-            line["words"] = align_line_to_words(line["text"], start, duration)
+            line["words"] = align_line_to_words(text, start, duration)
             if line["words"]:
                 line["end"] = line["words"][-1]["end"]
     return data
@@ -127,17 +139,19 @@ class AcousticAligner:
     @classmethod
     def get_models(cls, device: str = 'cuda'):
         """Lazy-loads and caches Demucs and Stable-Whisper models."""
-        # Auto-detect and register ffmpeg into PATH if needed
+        # C-03: 只查通用位置，不再写死开发机路径；找不到就明确报错，不静默改全局 PATH
         import shutil
         if not shutil.which("ffmpeg"):
             for cand_dir in [
-                r"C:\Users\sxh20\AppData\Local\Programs\mediago\resources\bin",
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links"),
                 r"C:\ProgramData\chocolatey\bin",
-                r"C:\ffmpeg\bin"
+                r"C:\ffmpeg\bin",
             ]:
                 if os.path.isdir(cand_dir) and os.path.isfile(os.path.join(cand_dir, "ffmpeg.exe")):
                     os.environ["PATH"] = cand_dir + os.pathsep + os.environ.get("PATH", "")
                     break
+            else:
+                print("⚠️ 未找到 ffmpeg（Demucs 声学打轴需要）。请安装后重试，或使用非 GPU 路径。")
 
         try:
             import torch

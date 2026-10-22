@@ -22,6 +22,7 @@ Enforces 4 Core Iron Rules:
 Zero external dependencies.
 """
 
+import logging
 from typing import Dict, List, Any, Optional
 
 from .fetchers.amll import AMLLFetcher
@@ -29,9 +30,12 @@ from .fetchers.kugou import KugouFetcher
 from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
-from .acoustic_aligner import enrich_track_with_acoustic_words
+# C-01: 不在模块顶层导入 acoustic_aligner —— 它依赖 numpy，
+# 而"抓歌词"这条主路径并不需要 numpy。改为调用点懒加载。
 from .parsers.lrc_parser import parse_lrc
 from .utils.text_utils import is_cjk, is_foreign_track, has_hanzi
+
+logger = logging.getLogger(__name__)
 
 INSTRUMENTAL_KEYWORDS = ["纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics"]
 
@@ -132,8 +136,8 @@ def enrich_foreign_translation(
                         candidate["has_translation"] = True
                         candidate["translation_source"] = "netease"
                         return candidate
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
     # Tier 3: LRCSHARE (zh-Hans fallback)
     try:
@@ -151,8 +155,8 @@ def enrich_foreign_translation(
                     candidate["has_translation"] = True
                     candidate["translation_source"] = "lrcshare"
                     return candidate
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
     return candidate
 
@@ -190,8 +194,8 @@ class LyricAggregator:
             res = KugouFetcher.fetch(title, artist, duration_ms)
             if res and res.get("lines") and not is_instrumental_placeholder(res["lines"], duration_ms):
                 candidate = res
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 2. AMLL TTML (Apple Music word-level verbatim)
         if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
@@ -199,8 +203,8 @@ class LyricAggregator:
                 amll_res = AMLLFetcher.fetch(title, artist, duration_ms)
                 if amll_res and amll_res.get("lines") and not is_instrumental_placeholder(amll_res["lines"], duration_ms):
                     candidate = amll_res
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 3. LRCSHARE (api.lrcshare.com community TTML & word-level)
         if not candidate or (is_foreign and not candidate.get("has_embedded_translation")):
@@ -209,8 +213,8 @@ class LyricAggregator:
                 if ls_res and ls_res.get("lines") and not is_instrumental_placeholder(ls_res["lines"], duration_ms):
                     if not candidate or ls_res.get("has_translation"):
                         candidate = ls_res
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 4. NetEase (Cloud music synced & translation)
         if not candidate:
@@ -218,8 +222,8 @@ class LyricAggregator:
                 ne_res = NetEaseFetcher.fetch(title, artist, duration_ms)
                 if ne_res and ne_res.get("lines") and not is_instrumental_placeholder(ne_res["lines"], duration_ms):
                     candidate = ne_res
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         # 5. LRCLIB (Global open sync database)
         if not candidate:
@@ -227,8 +231,8 @@ class LyricAggregator:
                 lrc_res = LRCLIBFetcher.fetch(title, artist, album, duration_ms)
                 if lrc_res and lrc_res.get("lines") and not is_instrumental_placeholder(lrc_res["lines"], duration_ms):
                     candidate = lrc_res
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
 
         if not candidate:
             return None
@@ -237,10 +241,19 @@ class LyricAggregator:
         if is_foreign:
             candidate = enrich_foreign_translation(candidate, title, artist, duration_ms)
 
-        # Check if candidate has word-level timestamps; if not, synthesize via acoustic aligner
-        has_words = any(line.get("words") for line in candidate.get("lines", []))
+        # 逐字判定：至少有一行真的拆出了 ≥2 个词才算逐字。
+        # 旧实现 any(line.get("words")) 对 KRC 恒为真（KRC 会给无词级标签的行补一个"整行词"），
+        # 导致"没有逐字就声学合成"的兜底从未生效。
+        has_words = any(len(line.get("words") or []) >= 2 for line in candidate.get("lines", []))
         if not has_words:
-            candidate = enrich_track_with_acoustic_words(candidate)
-            candidate["synthesized_words"] = True
+            try:
+                # C-01: 懒加载，缺 numpy 时只跳过合成、不影响已取到的歌词
+                from .acoustic_aligner import enrich_track_with_acoustic_words
+                candidate = enrich_track_with_acoustic_words(candidate)
+                candidate["synthesized_words"] = True
+            except ImportError as exc:
+                logger.warning("无逐字且缺少 numpy/torch，跳过声学合成: %s", exc)
+            except Exception as exc:  # noqa: BLE001 - 合成失败不能拖垮整首
+                logger.warning("声学逐字合成失败，保留行级歌词: %s", exc)
 
         return candidate

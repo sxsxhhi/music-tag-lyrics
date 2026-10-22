@@ -29,6 +29,7 @@ from scripts.tag_editor import read_audio_tags, update_audio_tags, normalize_art
 from scripts.lyric_validator import validate_and_fix_lyrics
 from core.aggregator import LyricAggregator
 from core.converter import to_lrc, to_spl
+from core.utils.io_safe import atomic_write_text
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav"}
 
@@ -68,13 +69,19 @@ def prompt_demucs_fallback(
     title: str, 
     artist: str, 
     filepath: str, 
-    plain_text_lyrics: Optional[str] = None
+    plain_text_lyrics: Optional[str] = None,
+    non_interactive: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
     Prompts user for explicit authorization to use Demucs v4 GPU fallback.
     【核心红线】：绝不进行 ASR 语音听写！若无权威逐行文本，立即阻断并退出。
     若存在权威文本并获得用户授权，调用 AcousticAligner 执行双端声学咬合打轴。
     """
+    # 非交互模式：绝不阻塞等待输入（批量跑批时 input() 会永久挂死）
+    if non_interactive:
+        print("🛑 [--non-interactive] 跳过 Demucs 授权提示，不做任何重型计算。")
+        return None
+
     # 1. Check if plain text lyrics are available
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         plain_text_lyrics = find_local_plain_lyrics(filepath, title, artist)
@@ -135,7 +142,8 @@ def process_single_song(
     output_dir: Optional[str] = None,
     lyrics_only: bool = False,
     force_gpu: bool = False,
-    lyrics_file: Optional[str] = None
+    lyrics_file: Optional[str] = None,
+    non_interactive: bool = False
 ) -> bool:
     """
     Processes a single audio file:
@@ -166,7 +174,8 @@ def process_single_song(
 
     # 1. Read existing metadata tags
     tags = read_audio_tags(filepath)
-    duration_ms = tags.get("duration", 0)
+    # duration 为 None 表示"未知"（不是 0 秒）；归一成 0 交给门禁按"未知"处理
+    duration_ms = tags.get("duration") or 0
 
     # Infer Title and Artist if missing
     title = tags.get("title", "").strip()
@@ -213,7 +222,8 @@ def process_single_song(
             title=cleaned_title,
             artist=normalized_artist,
             filepath=filepath,
-            plain_text_lyrics=explicit_lyrics_text
+            plain_text_lyrics=explicit_lyrics_text,
+            non_interactive=non_interactive
         )
     else:
         print("🔍 Fetching lyrics across multi-engines (AMLL/Kugou/LRCLIB/NetEase)...")
@@ -230,7 +240,8 @@ def process_single_song(
                 title=cleaned_title, 
                 artist=normalized_artist, 
                 filepath=filepath,
-                plain_text_lyrics=explicit_lyrics_text
+                plain_text_lyrics=explicit_lyrics_text,
+                non_interactive=non_interactive
             )
 
     if not lyric_data or not lyric_data.get("lines"):
@@ -262,10 +273,9 @@ def process_single_song(
     lrc_path = os.path.join(target_dir, f"{base_name}.lrc")
     spl_path = os.path.join(target_dir, f"{base_name}.spl")
 
-    with open(lrc_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(lrc_content)
-    with open(spl_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(spl_content)
+    # D-06: 原子写，避免中途崩溃留下半截歌词文件
+    atomic_write_text(lrc_path, lrc_content)
+    atomic_write_text(spl_path, spl_content)
 
     print(f"📄 Generated .lrc -> {os.path.basename(lrc_path)}")
     print(f"💎 Generated .spl -> {os.path.basename(spl_path)}")
@@ -309,6 +319,8 @@ def main():
     parser.add_argument("--force-gpu", action="store_true", help="Force GPU acoustic alignment with Demucs v4")
     parser.add_argument("--lyrics-file", default=None, help="Explicit path to plain-text lyrics file")
     parser.add_argument("--out-dir", default=None, help="Custom output directory for lyrics")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="Never block on stdin: skip the Demucs authorization prompt (batch/CI use)")
     args = parser.parse_args()
 
     target = args.path
@@ -319,7 +331,8 @@ def main():
             output_dir=args.out_dir,
             lyrics_only=args.lyrics_only,
             force_gpu=args.force_gpu,
-            lyrics_file=args.lyrics_file
+            lyrics_file=args.lyrics_file,
+            non_interactive=args.non_interactive
         )
     elif os.path.isdir(target):
         count = 0
@@ -336,7 +349,8 @@ def main():
                         output_dir=args.out_dir,
                         lyrics_only=args.lyrics_only,
                         force_gpu=args.force_gpu,
-                        lyrics_file=args.lyrics_file
+                        lyrics_file=args.lyrics_file,
+                        non_interactive=args.non_interactive
                     ):
                         success_count += 1
         print(f"\nBatch processing completed: {success_count}/{count} succeeded.")

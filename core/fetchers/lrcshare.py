@@ -14,6 +14,7 @@ Key Architectural Features:
 Zero external dependencies.
 """
 
+import os
 import time
 import re
 import urllib.parse
@@ -29,11 +30,35 @@ from ..utils.version_guard import (
 from ..utils.text_utils import has_hanzi
 
 BASE_URL = "https://api.lrcshare.com/v1"
-API_KEY = "ls_b9160c7f8789e7b450e3c7c479b00da6"
+# C-04: 密钥只从环境变量读取，源码里不再保留默认值。
+# 未配置时该源会直接跳过（历史上它因参数顺序 bug 从未成功过，跳过不损失现有能力）。
+API_KEY = os.getenv("LRCSHARE_API_KEY", "").strip()
 LRCSHARE_UA = "Lyrico/1.0 (github.com/Replica0110/Lyrico)"
 
 WORD_TAG_RE = re.compile(r"<\d{1,6}(?::\d{1,6})?>")
 WORD_SPLIT_RE = re.compile(r"<(\d{1,6})(?::(\d{1,6}))?>")
+
+# X-21: 来源/署名行识别。lrcshare 的歌词里常混入
+# "LRC：X2ISPANDA[https://lrcshare.com]" 这类上传者署名，它们不是歌词，
+# 一旦进入输出还会被逐字合成器按字符均分，污染整条时间轴。
+SOURCE_LINE_RE = re.compile(
+    r"(?i)(?:^|\b)(?:lrc|elrc)\s*[:：]"
+    r"|https?://|www\."
+    r"|歌词来源|来源\s*[:：]|由.{0,12}提供|powered\s+by|歌词由.{0,12}制作"
+)
+
+
+def is_source_or_credit_line(text: str) -> bool:
+    """判断一行是否是来源标注/署名而非歌词正文。"""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if SOURCE_LINE_RE.search(t):
+        return True
+    # 整行没有文字也没有数字（纯符号/纯标点）→ 不是歌词
+    if not re.search(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", t):
+        return True
+    return False
 
 def strip_word_tags(text: str) -> str:
     """Removes <offset:dur> tags from text."""
@@ -286,6 +311,13 @@ class LrcShareFetcher:
                 "words": words
             })
 
+        # X-21: 剔除来源/署名行，避免它们被当作歌词逐字输出
+        if lines:
+            kept = [l for l in lines if not is_source_or_credit_line(l.get("text", ""))]
+            if len(kept) != len(lines):
+                has_any_words = any(len(l.get("words") or []) >= 2 for l in kept)
+            lines = kept
+
         # Attach translations by nearest timestamp matching
         if translation_rows and lines:
             sorted_trans = sorted(
@@ -329,6 +361,9 @@ class LrcShareFetcher:
         Public entry point to search and fetch lyrics from LRCSHARE.
         Applies duration proximity gating (±5.0s) and instrumental placeholder gating.
         """
+        if not API_KEY:
+            # 未配置 LRCSHARE_API_KEY：静默跳过该源（不报错、不阻塞其他源）
+            return None
         candidates = cls.search_songs(title, artist, limit=5)
         if not candidates:
             return None
@@ -336,8 +371,16 @@ class LrcShareFetcher:
         target_is_live = is_live_version(title)
 
         for cand in candidates:
-            cand_title = cand.get("title", "")
-            if not matches_version_policy(cand_title, target_is_live):
+            cand_title = cand.get("title", "") or ""
+            # album 可能是 {"id":..,"name":..} 也可能是纯字符串
+            cand_album_raw = cand.get("album", "")
+            if isinstance(cand_album_raw, dict):
+                cand_album = cand_album_raw.get("name", "") or ""
+            else:
+                cand_album = str(cand_album_raw) if cand_album_raw else ""
+            # F-01: 参数顺序必须是 (target_is_live, cand_title, cand_album)。
+            # 旧代码传的是 (cand_title, target_is_live)，导致录音室目标恒被丢弃、Live 目标直接抛异常。
+            if not matches_version_policy(target_is_live, cand_title, cand_album):
                 continue
 
             song_id = cand.get("id")

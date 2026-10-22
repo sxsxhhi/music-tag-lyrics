@@ -23,6 +23,13 @@ try:
 except ImportError:
     DSF = None
 
+try:
+    from core.utils.io_safe import safe_save_audio_tags
+except ImportError:  # 允许以脚本方式直接运行本文件
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.utils.io_safe import safe_save_audio_tags
+
 # Whitelist of bands, groups, and brand names that contain '&' or other separators but must NOT be split
 BAND_WHITELIST = {
     "伍佰 & China Blue",
@@ -84,9 +91,14 @@ def normalize_artist_string(artist_str: str) -> str:
     
     clean_str = artist_str.strip()
     
-    # Check whitelist protection
-    for band in BAND_WHITELIST:
-        if clean_str.lower() == band.lower():
+    # 白名单保护：只保护"名字里本来就含分隔符"的乐队（含 & , / + feat. 等），
+    # 因为只有这类名字会被切分误伤。"Beyond the Black" 这种不该被当成 "Beyond" 保护。
+    low = clean_str.lower()
+    for band in sorted(BAND_WHITELIST, key=len, reverse=True):
+        b = band.lower()
+        if not re.search(r"[&/,，、+]|feat|ft\.", b):
+            continue
+        if low == b or low.startswith(b + " ") or low.startswith(b + "(") or low.startswith(b + "["):
             return band
             
     # Split by any known separator
@@ -103,7 +115,8 @@ def clean_year_string(year_val: Any) -> str:
         return ""
     s = str(year_val).strip()
     m = re.search(r"\b(19\d\d|20\d\d)\b", s)
-    return m.group(1) if m else s[:4]
+    # 匹配不到返回空串：以前返回 s[:4] 会把 "unknown" 写成 "unkn" 塞进 TDRC
+    return m.group(1) if m else ""
 
 def clean_title_string(title_str: str) -> str:
     """
@@ -115,6 +128,21 @@ def clean_title_string(title_str: str) -> str:
     cleaned = re.sub(r"\[(FLAC|无损|Hi-Res|320K|MP3|HQ|简明宣发版)[^\]]*\]", "", title_str, flags=re.IGNORECASE)
     cleaned = re.sub(r"【(FLAC|无损|Hi-Res|320K|MP3|HQ)[^】]*】", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
+
+def _txt(value: Optional[str]) -> Optional[str]:
+    """空串/纯空白视为「未提供」，返回 None —— 避免把原有标签清空。"""
+    if value is None:
+        return None
+    v = str(value).strip()
+    return v or None
+
+
+def _yr(value: Optional[str]) -> Optional[str]:
+    """年份归一化：解析不出 4 位年份就视为「未提供」，绝不写入残缺值。"""
+    if value is None:
+        return None
+    return clean_year_string(value) or None
+
 
 def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
     """Helper: Extracts metadata fields from an ID3 tags structure into info dictionary."""
@@ -130,6 +158,9 @@ def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
         info["album"] = str(id3["TALB"])
     if "TDRC" in id3:
         info["year"] = clean_year_string(str(id3["TDRC"]))
+    elif "TYER" in id3:
+        # ID3v2.3 只有 TYER；不回退的话会读出空年份，随后空值覆盖掉原年份
+        info["year"] = clean_year_string(str(id3["TYER"]))
     if "TCOM" in id3:
         info["composer"] = str(id3["TCOM"])
     if "TEXT" in id3:
@@ -153,6 +184,8 @@ def _apply_id3_tags(
     albumartist: Optional[str] = None
 ) -> None:
     """Helper: Applies standardized metadata frames onto an ID3 structure."""
+    title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
+    year = _yr(year)
     if title is not None:
         id3["TIT2"] = TIT2(encoding=3, text=[clean_title_string(title)])
     if artist is not None:
@@ -174,10 +207,8 @@ def _apply_id3_tags(
     if lyricist is not None:
         id3["TEXT"] = TEXT(encoding=3, text=[lyricist.strip()])
     if lyrics is not None:
-        # Clean any old USLT keys first
-        for k in list(id3.keys()):
-            if k.startswith("USLT"):
-                del id3[k]
+        # 只覆盖自己写的那一帧（lang=eng, desc=""），其它语言/描述的 USLT 一律保留。
+        # 旧实现按 startswith("USLT") 全删，会把多语歌词与翻译帧一并抹掉。
         id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=lyrics)
 
 def _apply_vorbis_tags(
@@ -193,6 +224,8 @@ def _apply_vorbis_tags(
     albumartist: Optional[str] = None
 ) -> None:
     """Helper: Applies standardized metadata keys onto Vorbis Comment structure (FLAC/OGG)."""
+    title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
+    year = _yr(year)
     if title is not None:
         audio["title"] = [clean_title_string(title)]
     if artist is not None:
@@ -217,8 +250,14 @@ def _apply_vorbis_tags(
         audio["lyrics"] = [lyrics]
 
 def read_audio_tags(filepath: str) -> Dict[str, Any]:
-    """Reads embedded metadata tags from an audio file."""
-    info = {
+    """
+    Reads embedded metadata tags from an audio file.
+
+    每个字段独立 try —— 单个字段解析失败不会把整份信息清零（旧实现外层一个
+    ``except: pass``，任一字段抛错就返回全空，随后空值还会覆盖掉原标签）。
+    ``duration`` 为 ``None`` 表示**未知**（文件缺失/解析失败），调用方不得当作 0 秒。
+    """
+    info: Dict[str, Any] = {
         "title": "",
         "artist": "",
         "album": "",
@@ -226,53 +265,64 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         "composer": "",
         "lyricist": "",
         "lyrics": "",
-        "duration": 0
+        "duration": None
     }
     if not os.path.exists(filepath):
         return info
 
     try:
         audio = mutagen.File(filepath)
-        if audio is None:
-            return info
-            
-        info["duration"] = int(getattr(audio.info, "length", 0) * 1000)
-        
-        # Format-specific tag extraction
-        if isinstance(audio, (FLAC, OggVorbis)):
-            info["title"] = audio.get("title", [""])[0]
-            info["artist"] = "/".join(audio.get("artist", [""]))
-            info["album"] = audio.get("album", [""])[0]
-            info["year"] = clean_year_string(audio.get("date", [""])[0])
-            info["composer"] = audio.get("composer", [""])[0]
-            info["lyricist"] = audio.get("lyricist", [""])[0]
-            info["lyrics"] = audio.get("lyrics", [""])[0]
-        elif isinstance(audio, MP4):
-            info["title"] = audio.get("\xa9nam", [""])[0]
-            info["artist"] = "/".join(audio.get("\xa9ART", [""]))
-            info["album"] = audio.get("\xa9alb", [""])[0]
-            info["year"] = clean_year_string(audio.get("\xa9day", [""])[0])
-            info["composer"] = audio.get("\xa9wrt", [""])[0]
-            info["lyrics"] = audio.get("\xa9lyr", [""])[0]
-        elif isinstance(audio, WAVE):
-            if audio.tags:
-                _extract_id3_dict(audio.tags, info)
-        elif DSF is not None and isinstance(audio, DSF):
-            if audio.tags:
-                _extract_id3_dict(audio.tags, info)
-        else:
-            # Fallback ID3 for MP3 or DSF
-            ext = os.path.splitext(filepath)[1].lower()
-            if ext == ".dsf" and DSF is not None:
-                d = DSF(filepath)
-                if d.tags:
-                    _extract_id3_dict(d.tags, info)
-            else:
-                id3 = ID3(filepath)
-                _extract_id3_dict(id3, info)
     except Exception:
-        pass
-        
+        audio = None
+    if audio is None:
+        return info
+
+    try:
+        length = getattr(getattr(audio, "info", None), "length", None)
+        info["duration"] = int(length * 1000) if length else None
+    except Exception:
+        info["duration"] = None
+
+    def _take(key: str, getter) -> None:
+        try:
+            info[key] = getter() or ""
+        except Exception:
+            pass
+
+    if isinstance(audio, (FLAC, OggVorbis)):
+        _take("title", lambda: audio.get("title", [""])[0])
+        _take("artist", lambda: "/".join(audio.get("artist", [""])))
+        _take("album", lambda: audio.get("album", [""])[0])
+        _take("year", lambda: clean_year_string(audio.get("date", [""])[0]))
+        _take("composer", lambda: audio.get("composer", [""])[0])
+        _take("lyricist", lambda: audio.get("lyricist", [""])[0])
+        _take("lyrics", lambda: audio.get("lyrics", [""])[0])
+    elif isinstance(audio, MP4):
+        _take("title", lambda: audio.get("\xa9nam", [""])[0])
+        _take("artist", lambda: "/".join(audio.get("\xa9ART", [""])))
+        _take("album", lambda: audio.get("\xa9alb", [""])[0])
+        _take("year", lambda: clean_year_string(audio.get("\xa9day", [""])[0]))
+        _take("composer", lambda: audio.get("\xa9wrt", [""])[0])
+        _take("lyrics", lambda: audio.get("\xa9lyr", [""])[0])
+    elif isinstance(audio, WAVE):
+        if getattr(audio, "tags", None):
+            try:
+                _extract_id3_dict(audio.tags, info)
+            except Exception:
+                pass
+    elif DSF is not None and isinstance(audio, DSF):
+        if getattr(audio, "tags", None):
+            try:
+                _extract_id3_dict(audio.tags, info)
+            except Exception:
+                pass
+    else:
+        # 兜底：MP3 及 mutagen 无法归类的 ID3 容器
+        try:
+            _extract_id3_dict(ID3(filepath), info)
+        except Exception:
+            pass
+
     return info
 
 def update_audio_tags(
@@ -289,67 +339,101 @@ def update_audio_tags(
 ) -> bool:
     """
     Updates audio file metadata tags in-place.
+
+    所有格式统一走「副本改写 -> 原子替换」（core.utils.io_safe.safe_save_audio_tags）。
+    mutagen 的 save() 是截断后重写，直接作用在原文件上时进程中断就会留下损坏音频；
+    现在只改副本，写成功且副本非空才 os.replace 回原路径。
+
     Never moves or deletes the file.
-    Ensures artists are joined with '/' under Band Whitelist protection.
-    Formats year into 4-digit YYYY.
-    Supports atomic embedded lyrics update across FLAC, WAV, MP3, OGG, DSF, and MP4.
     """
     if not os.path.exists(filepath):
         return False
 
-    try:
-        ext = os.path.splitext(filepath)[1].lower()
-        if ext in [".flac", ".ogg"]:
-            audio = FLAC(filepath) if ext == ".flac" else OggVorbis(filepath)
-            _apply_vorbis_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
-            audio.save()
-            return True
-            
-        elif ext == ".mp3":
+    ext = os.path.splitext(filepath)[1].lower()
+
+    def _write_vorbis(tmp: str) -> bool:
+        audio = FLAC(tmp) if ext == ".flac" else OggVorbis(tmp)
+        _apply_vorbis_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        audio.save()
+        return True
+
+    def _write_mp3(tmp: str) -> bool:
+        try:
+            id3 = ID3(tmp)
+            orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
+        except Exception:
+            id3 = ID3()
+            orig_v2 = 4
+        _apply_id3_tags(id3, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
+        id3.save(tmp, v2_version=orig_v2)
+        return True
+
+    def _write_wave(tmp: str) -> bool:
+        audio = WAVE(tmp)
+        if audio.tags is None:
+            audio.add_tags()
+        _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        audio.save()
+        return True
+
+    def _write_dsf(tmp: str) -> bool:
+        audio = DSF(tmp)
+        if audio.tags is None:
+            audio.add_tags()
+        _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
+        audio.save()
+        return True
+
+    def _write_mp4(tmp: str) -> bool:
+        from mutagen.mp4 import MP4FreeForm
+        nonlocal title, album, composer, lyricist, year
+        title, album, composer, lyricist = _txt(title), _txt(album), _txt(composer), _txt(lyricist)
+        year = _yr(year)
+        audio = MP4(tmp)
+        if title is not None:
+            audio["\xa9nam"] = [clean_title_string(title)]
+        if artist is not None:
+            audio["\xa9ART"] = [normalize_artist_string(artist)]
+        if albumartist is not None:
+            if albumartist.strip() == "":
+                if "aART" in audio:
+                    del audio["aART"]
+            else:
+                audio["aART"] = [normalize_artist_string(albumartist)]
+        if album is not None:
+            audio["\xa9alb"] = [album.strip()]
+        if year is not None:
+            audio["\xa9day"] = [clean_year_string(year)]
+        if tracknumber is not None:
             try:
-                audio = ID3(filepath)
-            except Exception:
-                audio = ID3()
-            _apply_id3_tags(audio, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
-            audio.save(filepath)
-            return True
+                audio["trkn"] = [(int(str(tracknumber).split("/")[0]), 0)]
+            except (ValueError, TypeError):
+                pass
+        if composer is not None:
+            audio["\xa9wrt"] = [composer.strip()]
+        if lyricist is not None:
+            audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(lyricist.strip().encode("utf-8"))]
+        if lyrics is not None:
+            audio["\xa9lyr"] = [lyrics]
+        audio.save()
+        return True
 
-        elif ext == ".wav":
-            audio = WAVE(filepath)
-            if audio.tags is None:
-                audio.add_tags()
-            _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
-            audio.save()
-            return True
-
-        elif ext == ".dsf":
+    try:
+        if ext in (".flac", ".ogg"):
+            return safe_save_audio_tags(filepath, _write_vorbis)
+        if ext == ".mp3":
+            return safe_save_audio_tags(filepath, _write_mp3)
+        if ext == ".wav":
+            return safe_save_audio_tags(filepath, _write_wave)
+        if ext == ".dsf":
             if DSF is None:
                 raise ImportError("mutagen.dsf is not available")
-            audio = DSF(filepath)
-            if audio.tags is None:
-                audio.add_tags()
-            _apply_id3_tags(audio.tags, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
-            audio.save()
-            return True
-            
-        elif ext in [".m4a", ".mp4"]:
-            audio = MP4(filepath)
-            if title is not None:
-                audio["\xa9nam"] = [clean_title_string(title)]
-            if artist is not None:
-                audio["\xa9ART"] = [normalize_artist_string(artist)]
-            if album is not None:
-                audio["\xa9alb"] = [album.strip()]
-            if year is not None:
-                audio["\xa9day"] = [clean_year_string(year)]
-            if composer is not None:
-                audio["\xa9wrt"] = [composer.strip()]
-            if lyrics is not None:
-                audio["\xa9lyr"] = [lyrics]
-            audio.save()
-            return True
+            return safe_save_audio_tags(filepath, _write_dsf)
+        if ext in (".m4a", ".mp4"):
+            return safe_save_audio_tags(filepath, _write_mp4)
     except Exception as e:
         print(f"Error updating tags for {filepath}: {e}")
         return False
-        
+
     return False

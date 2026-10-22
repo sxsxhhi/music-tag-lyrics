@@ -73,6 +73,15 @@ def count_lines(path):
 
 def run_one(song, out_dir, timeout, python_exe):
     name = os.path.basename(song)
+    base = os.path.splitext(name)[0]
+    lrc = os.path.join(out_dir, base + ".lrc")
+    spl = os.path.join(out_dir, base + ".spl")
+    # 复跑时必须先清掉上一次的产物：否则失败的曲目会"继承"旧文件，
+    # 报出看起来正常的行数与哈希（实测踩过：no_lyrics 却显示 lines=29）。
+    for stale in (lrc, spl):
+        if os.path.exists(stale):
+            os.remove(stale)
+
     before = snapshot(song)
     print(f"\n{'=' * 66}\n▶ {name}\n{'=' * 66}", flush=True)
 
@@ -110,10 +119,6 @@ def run_one(song, out_dir, timeout, python_exe):
 
     after = snapshot(song)
     mtime_ok = (before == after)
-
-    base = os.path.splitext(name)[0]
-    lrc = os.path.join(out_dir, base + ".lrc")
-    spl = os.path.join(out_dir, base + ".spl")
 
     source = lyric_type = None
     synthesized = False

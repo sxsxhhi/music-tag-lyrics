@@ -1,0 +1,12 @@
+# 可选依赖：仅 Demucs v4 声学打轴兜底路径（--force-gpu）需要。
+# 主路径（抓取歌词、写标签、生成 .lrc/.spl）不需要这些包。
+# 安装：pip install -r requirements-acoustic.txt
+-r requirements.txt
+
+# 推荐先装 CUDA 版 torch：
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchaudio>=2.0.0
+demucs>=4.0.0
+stable-whisper>=2.15.0
+soundfile>=0.12.0

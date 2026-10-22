@@ -171,17 +171,23 @@ music-tag-lyrics/
 
 ### 1. 运行环境要求
 - Python 3.8+
-- 安装基础标签编辑库（必备）：
+- 安装必需依赖（缺 `numpy` 会在导入阶段直接报错，因此它和 mutagen 一样是硬依赖）：
   ```bash
-  pip install mutagen
+  pip install -r requirements.txt
   ```
-  *(注：所有解密、解压、XML 解析与网络请求均使用 Python 标准库，零冗余重度依赖)*
+  *(注：解密、解压、XML 解析与网络请求全部使用 Python 标准库；不依赖任何外部可执行软件)*
 - **可选：Demucs v4 本地 GPU 兜底依赖**（仅在需要对绝版孤品启用本地 GPU 音轨剥离与声学对齐时按需安装）：
   ```bash
-  # 推荐安装 PyTorch CUDA 版本
-  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
-  pip install demucs stable-ts soundfile
+  pip install -r requirements-acoustic.txt
+  # torch 建议先按 CUDA 版本单独安装：
+  # pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
   ```
+- **可选：LRCSHARE 源**（默认关闭）。该源需要自备密钥：
+  ```bash
+  # Windows PowerShell:  $env:LRCSHARE_API_KEY="<your-key>"
+  # macOS / Linux:       export LRCSHARE_API_KEY=<your-key>
+  ```
+  未设置时该源会被静默跳过，不影响其余四个源。
 
 ### 2. 处理单首歌曲
 执行后，音频内嵌标签自动原地更新（Artist 规范为 `/`、四位 Year、内嵌纯净逐字歌词），同级目录下直接生成 `.spl` 与 `.lrc`：
