@@ -167,7 +167,13 @@ def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
         info["lyricist"] = str(id3["TEXT"])
     if "TRCK" in id3:
         info["tracknumber"] = str(id3["TRCK"])
-    uslt = id3.get("USLT::eng") or id3.get("USLT::XXX") or id3.get("USLT::chi")
+    # P1-11: 不再只认 eng/XXX/chi 三个固定键。优先 eng，否则取任意一帧
+    # （jpn/kor 或多 desc 的歌词帧以前一律读不到，表现为"明明有内嵌歌词却显示空"）
+    uslt = None
+    for key in sorted(k for k in id3.keys() if k.startswith("USLT")):
+        uslt = id3[key]
+        if "eng" in key.lower():
+            break
     if uslt:
         info["lyrics"] = uslt.text
 
@@ -358,12 +364,11 @@ def update_audio_tags(
         return True
 
     def _write_mp3(tmp: str) -> bool:
-        try:
-            id3 = ID3(tmp)
-            orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
-        except Exception:
-            id3 = ID3()
-            orig_v2 = 4
+        # P0-4: 解析失败时**绝不**新建空 ID3() 再保存 —— 那会把 APIC/TXXX/USLT 等原有帧
+        # 全部抹掉，随后 os.replace 覆盖原文件，等于静默销毁用户的标签。
+        # 这里故意不加 try：让 safe_save_audio_tags 捕获异常后放弃写入，原文件保持不变。
+        id3 = ID3(tmp)
+        orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
         _apply_id3_tags(id3, title, artist, album, year, tracknumber, composer, lyricist, lyrics, albumartist)
         # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
         id3.save(tmp, v2_version=orig_v2)
