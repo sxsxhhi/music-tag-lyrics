@@ -24,6 +24,58 @@ from scripts.tag_editor import TagSet, read_audio_tags, update_audio_tags
 from mutagen.id3 import ID3, USLT
 
 
+def test_validate_does_not_mutate_input():
+    """P1-3：校验必须深拷贝，不得改脏调用方手里的 data。"""
+    data = {"lines": [
+        {"start": 5000, "end": 9000, "duration": 4000, "text": "第一句", "translation": "", "words": []},
+        {"start": 4000, "end": 8000, "duration": 4000, "text": "第二句倒流", "translation": "", "words": []},
+    ]}
+    before = [l["start"] for l in data["lines"]]
+    ok, out, _warns = validate_and_fix_lyrics(data, audio_duration_ms=0)
+    assert ok
+    assert [l["start"] for l in data["lines"]] == before, "入参被就地修改"
+    assert out["lines"][1]["start"] == 5100, out["lines"][1]["start"]
+
+
+def test_validate_word_no_overlap_after_repair():
+    """P1-3：超短词拉长后不得越过下一个词的起点。"""
+    data = {"lines": [{
+        "start": 10000, "end": 11000, "duration": 1000, "text": "甲乙", "translation": "",
+        "words": [
+            {"start": 10000, "end": 10040, "text": "甲", "duration": 40},
+            {"start": 10040, "end": 11000, "text": "乙", "duration": 960},
+        ],
+    }]}
+    ok, out, _warns = validate_and_fix_lyrics(data, audio_duration_ms=0)
+    ws = out["lines"][0]["words"]
+    assert ws[0]["end"] <= ws[1]["start"], f"重叠：{ws[0]} / {ws[1]}"
+
+
+def test_validate_keeps_real_end_duration():
+    """P1-3：只给 start/end 没有 duration 时，必须用 end-start，不能被改成 150ms。"""
+    data = {"lines": [{
+        "start": 1000, "end": 4000, "duration": 3000, "text": "长句", "translation": "",
+        "words": [{"start": 1000, "end": 4000, "text": "长句"}],
+    }]}
+    ok, out, _warns = validate_and_fix_lyrics(data, audio_duration_ms=0)
+    assert out["lines"][0]["words"][0]["duration"] == 3000
+
+
+def test_acoustic_gate_thresholds_do_not_contradict():
+    """P1-3：兜底 100ms 之后，不该再因为「恰好 80ms」触发 <80ms 告警。"""
+    data = {"lines": [{
+        "start": 1000, "end": 3000, "duration": 2000, "text": "甲乙", "translation": "",
+        "words": [
+            {"start": 1000, "end": 1040, "text": "甲", "duration": 40},
+            {"start": 2000, "end": 2040, "text": "乙", "duration": 40},
+        ],
+    }]}
+    ok, out, warns = validate_and_fix_lyrics(data, audio_duration_ms=0)
+    for w in out["lines"][0]["words"]:
+        assert w["duration"] == 100, w
+    assert not [w for w in warns if "Natural Acoustic Alert" in w], warns
+
+
 def _bilingual_candidate():
     """日文原曲 + 中文译文的行级候选（无逐字），模拟 LRCLIB 返回形态。"""
     return {

@@ -27,6 +27,7 @@ from scripts.tag_editor import (
 from core.fetchers.netease import NetEaseFetcher
 from scripts.lyric_validator import (
     validate_and_fix_lyrics, pair_plain_bilingual_lyrics, extract_lyricist_composer,
+    is_credit_line,
 )
 from core.aggregator import LyricAggregator
 from core.converter import to_spl
@@ -106,7 +107,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.7)]")
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.8)]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -211,7 +212,16 @@ def enrich_missing_words(
 ) -> Dict[str, Any]:
     """有逐字则不动；无逐字先问 GPU（带行窗）；拒绝/非交互/失败才 numpy。"""
     lines = validated_data.get("lines") or []
-    if any(len(l.get("words") or []) >= 2 for l in lines):
+    # P0-2: 旧条件是 any(len(words)>=2)。只要有一行凑够 2 个词，整首剩余
+    # 没有逐字的正文行都会被跳过补齐，产出「逐字行 + 纯文本行」混排，
+    # 与铁律 6「三端统一 Enhanced LRC 逐字」不一致。部分逐字的源
+    # （LRCSHARE 只有几行带字、KRC 只有间奏段带字）会命中这条。
+    # 改为：所有非署名、非空的正文行都已带逐字，才算「无需补齐」。
+    body_lines = [
+        l for l in lines
+        if (l.get("text") or "").strip() and not is_credit_line(l.get("text") or "")
+    ]
+    if body_lines and all(l.get("words") for l in body_lines):
         return validated_data
     if validated_data.get("gpu_aligned"):
         try:
@@ -263,7 +273,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.7)]")
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.8)]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -531,7 +541,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.7)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.8)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")

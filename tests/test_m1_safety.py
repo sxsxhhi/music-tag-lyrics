@@ -17,7 +17,7 @@ from scripts.tag_editor import (
     clean_year_string, normalize_artist_string, _txt, _yr,
     infer_title_artist_from_basename, extract_year_from_album,
 )
-from scripts.lyric_validator import extract_lyricist_composer
+from scripts.lyric_validator import extract_lyricist_composer, is_credit_line
 from core.fetchers.lrcshare import is_source_or_credit_line
 from core.utils.io_safe import atomic_write_text
 
@@ -80,6 +80,38 @@ def test_extract_lyricist_composer():
     kept, _ = extract_lyricist_composer("作词 : 方文山")
     # 已有 lyricist 不覆盖由调用方保证；提取函数本身仍返回署名
     assert kept == "方文山"
+
+
+def test_extract_lyricist_composer_same_line_dual():
+    """P0-4：同行双署名不得把「作曲」吞进作词人名里。"""
+    ly, co = extract_lyricist_composer("作词 : 张三 作曲 : 李四")
+    assert (ly, co) == ("张三", "李四"), (ly, co)
+
+    ly, co = extract_lyricist_composer("作词：小寒 / 作曲：林俊杰")
+    assert (ly, co) == ("小寒", "林俊杰"), (ly, co)
+
+    ly, co = extract_lyricist_composer("作词:方文山 / 作曲:周杰伦")
+    assert (ly, co) == ("方文山", "周杰伦"), (ly, co)
+
+    # 英文同行双署名
+    ly, co = extract_lyricist_composer("Lyrics: A  Composed by: B")
+    assert (ly, co) == ("A", "B"), (ly, co)
+
+    # 单署名仍然正确
+    ly, co = extract_lyricist_composer("作曲 : 董亚千")
+    assert (ly, co) == ("", "董亚千"), (ly, co)
+
+
+def test_is_credit_line_no_false_positive():
+    """P1-1：真实歌词首句不得被误判为署名行。"""
+    for song_line in ("鼓楼", "键盘上的泪", "作词人", "词不达意", "曲终人散", "吉他手"):
+        assert is_credit_line(song_line) is False, song_line
+
+    for credit in ("作词 : 张三", "作曲：李四", "词：小寒", "鼓 : 王超",
+                   "吉他：王路遥", "出品：某某公司", "OP : 滚石",
+                   "Lyrics : 方文山", "Lyrics by John", "Composed by B",
+                   "[00:46.42]<00:46.42>作词：姬赓"):
+        assert is_credit_line(credit) is True, credit
 
 
 def test_source_line_filter():
