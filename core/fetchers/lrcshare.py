@@ -14,6 +14,7 @@ from ..utils.version_guard import (
     matches_version_policy
 )
 from ..utils.text_utils import has_hanzi, is_source_or_credit_line, is_instrumental_placeholder
+from .kugou import parsed_duration_reject_reason
 
 BASE_URL = "https://api.lrcshare.com/v1"
 # C-04: 密钥只从环境变量读取，源码里不再保留默认值。
@@ -234,7 +235,8 @@ class LrcShareFetcher:
                 return {
                     "lines": parsed_raw.get("lines", []),
                     "has_words": False,
-                    "has_translation": False
+                    "has_translation": False,
+                    "time_precision": parsed_raw.get("time_precision", 2),
                 }
             return {"lines": [], "has_words": False, "has_translation": False}
 
@@ -308,7 +310,8 @@ class LrcShareFetcher:
         return {
             "lines": lines,
             "has_words": has_any_words,
-            "has_translation": has_trans
+            "has_translation": has_trans,
+            "time_precision": 3,
         }
 
     @classmethod
@@ -320,7 +323,9 @@ class LrcShareFetcher:
     ) -> Optional[Dict[str, Any]]:
         """
         Public entry point to search and fetch lyrics from LRCSHARE.
-        Applies duration proximity gating (±5.0s) and instrumental placeholder gating.
+        Applies parsed_duration_reject_reason (preview / overrun only) and
+        instrumental placeholder gating. Outro (last line earlier than track end)
+        is not rejected.
         """
         if not API_KEY:
             # 未配置 LRCSHARE_API_KEY：静默跳过该源（不报错、不阻塞其他源）
@@ -364,12 +369,15 @@ class LrcShareFetcher:
             if is_instrumental_placeholder(lines, duration_ms):
                 continue
 
-            # Duration Proximity Gate (Iron Rule 17: ±5.0s)
-            last_end = lines[-1]["end"]
-            if duration_ms > 0:
-                diff_ms = abs(last_end - duration_ms)
-                if diff_ms > 5000:
-                    continue
+            # 时长门禁（铁律 1 + 17）：只拒「预览截断」与「末字冲过曲长」；
+            # 末行早于曲终属于器乐尾奏，不得整源丢弃。
+            # 旧版用 abs(last_end - duration_ms) > 5000 对称拒，任何 >5s 的
+            # 尾奏都会连完整歌词一起被丢掉，与铁律 1「尾奏不得拒绝」直接冲突。
+            reject = parsed_duration_reject_reason(lines[-1]["end"], duration_ms)
+            if reject:
+                reason = "预览截断" if reject == "preview" else "冲轴"
+                print(f"   ℹ️ [LRCSHARE] 丢弃候选（{reason}）：末行 {lines[-1]['end']}ms / 曲长 {duration_ms}ms")
+                continue
 
             # Extract tags
             album_name = detail.get("album", {}).get("name", "") if isinstance(detail.get("album"), dict) else ""
@@ -385,7 +393,8 @@ class LrcShareFetcher:
                 },
                 "source": "lrcshare",
                 "lyric_type": "word" if parsed.get("has_words") else "line",
-                "has_translation": parsed.get("has_translation", False)
+                "has_translation": parsed.get("has_translation", False),
+                "time_precision": parsed.get("time_precision", 3),
             }
 
         return None

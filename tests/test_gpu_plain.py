@@ -133,6 +133,74 @@ def test_line_level_noninteractive_uses_numpy():
     assert len(out["lines"][0].get("words") or []) >= 2
 
 
+def test_partial_verbatim_track_fills_remaining_lines():
+    """P0-2：部分行有逐字时，其余无词行必须补齐，不得整首跳过。
+
+    旧条件是 any(len(words) >= 2)：只要一行凑够 2 个词，整首剩余无词的
+    正文行都被跳过，产出「逐字行 + 纯文本行」混排。
+    """
+    data = {
+        "source": "lrcshare",
+        "lyric_type": "word",
+        "lines": [
+            {"start": 1000, "end": 3000, "duration": 2000, "text": "第一句有逐字", "translation": "",
+             "words": [
+                 {"start": 1000, "end": 2000, "text": "第一", "duration": 1000},
+                 {"start": 2000, "end": 3000, "text": "句有逐字", "duration": 1000},
+             ]},
+            {"start": 3000, "end": 5000, "duration": 2000, "text": "第二句没有逐字", "translation": "", "words": []},
+            {"start": 5000, "end": 7000, "duration": 2000, "text": "第三句也没有", "translation": "", "words": []},
+        ],
+    }
+    out = ps.enrich_missing_words(
+        data, filepath="x.flac", title="T", artist="A", non_interactive=True
+    )
+    empty = [l.get("text") for l in out["lines"] if (l.get("text") or "").strip() and not l.get("words")]
+    assert not empty, f"仍有未补齐的正文行：{empty}"
+
+
+def test_all_verbatim_track_skips_enrichment():
+    """全部正文行都已有逐字时，必须原样返回，不得再触发合成。"""
+    data = {
+        "source": "kugou",
+        "lyric_type": "word",
+        "lines": [
+            {"start": 1000, "end": 3000, "duration": 2000, "text": "甲句有字", "translation": "",
+             "words": [
+                 {"start": 1000, "end": 2000, "text": "甲句", "duration": 1000},
+                 {"start": 2000, "end": 3000, "text": "有字", "duration": 1000},
+             ]},
+            {"start": 3000, "end": 5000, "duration": 2000, "text": "乙句有字", "translation": "",
+             "words": [
+                 {"start": 3000, "end": 4000, "text": "乙句", "duration": 1000},
+                 {"start": 4000, "end": 5000, "text": "有字", "duration": 1000},
+             ]},
+        ],
+    }
+    out = ps.enrich_missing_words(
+        data, filepath="x.flac", title="T", artist="A", non_interactive=True
+    )
+    assert not out.get("synthesized_words"), "全部逐字时不应触发 numpy 合成"
+    assert out["lines"][0]["words"][0]["text"] == "甲句"
+
+
+def test_credit_line_does_not_block_enrichment():
+    """署名行没有 words 不应拖累正文行的补齐判断。"""
+    data = {
+        "source": "lrcshare",
+        "lyric_type": "word",
+        "lines": [
+            {"start": 0, "end": 2000, "duration": 2000, "text": "作词 : 方文山", "translation": "", "words": []},
+            {"start": 3000, "end": 5000, "duration": 2000, "text": "正文一句", "translation": "", "words": []},
+        ],
+    }
+    out = ps.enrich_missing_words(
+        data, filepath="x.flac", title="T", artist="A", non_interactive=True
+    )
+    body = [l for l in out["lines"] if (l.get("text") or "").strip() and "作词" not in (l.get("text") or "")]
+    assert body and all(l.get("words") for l in body), "正文行未被补齐"
+
+
 def test_line_level_yes_passes_hints_and_keeps_translation():
     captured = {}
 

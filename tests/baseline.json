@@ -1,40 +1,39 @@
 {
-  "generated_at": "2026-10-22T17:01:15",
+  "generated_at": "2026-10-23T18:33:30",
   "python": "C:\\Users\\sxh20\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
   "source_dir": "D:\\WindowsAppp\\Desktop\\测试",
-  "out_dir": "F:\\TOOLs\\AI's DATA\\WorkBuddy's DATA\\Music\\baseline_v1",
+  "out_dir": "F:\\TOOLs\\AI's DATA\\ABC\\Music\\Work\\任务\\2026-10-23-v130\\_baseline",
   "timeout_s": 180,
-  "git_head": "0fcc1c5",
+  "git_head": "ca16c69",
   "summary": {
     "total": 9,
     "ok": 7,
-    "no_lyrics": 2,
+    "no_lyrics": 0,
     "timeout": 0,
-    "failed": 0,
+    "failed": 2,
     "audio_all_unchanged": true,
     "trilateral_all_mirrored": true,
     "source_dist": {
-      "kugou": 1,
-      "lrclib": 1,
-      "netease": 5
+      "kugou": 6,
+      "netease": 1
     },
     "type_dist": {
-      "line": 6,
-      "word": 1
+      "line": 1,
+      "word": 6
     }
   },
   "songs": [
     {
       "file": "Counting Stars - OneRepublic.flac",
       "status": "ok",
-      "elapsed_s": 39.41,
+      "elapsed_s": 1.66,
       "returncode": 0,
-      "source": "netease",
-      "lyric_type": "line",
-      "synthesized_words": true,
-      "lines": 201,
-      "lrc_sha256": "9a939838ef2817767d5e7185888629907e3a2209414239d4127fbde9a48b744a",
-      "spl_sha256": "9a939838ef2817767d5e7185888629907e3a2209414239d4127fbde9a48b744a",
+      "source": "kugou",
+      "lyric_type": "word",
+      "synthesized_words": false,
+      "lines": 196,
+      "lrc_sha256": "0418fb5e6e17e47077fc0773ad3ba829b4403205aa032e5671187ded451ff7e1",
+      "spl_sha256": "0418fb5e6e17e47077fc0773ad3ba829b4403205aa032e5671187ded451ff7e1",
       "trilateral_mirror": true,
       "audio_unchanged": true,
       "audio_before": {
@@ -47,19 +46,19 @@
         "size": 173534480,
         "sha256": "b63b87b6a434e6cb991a20d8079bc06b9736d81cc6c62bea5987b273566d1efc"
       },
-      "warnings": 95
+      "warnings": 4
     },
     {
       "file": "Y.M.C.A - Village People.flac",
       "status": "ok",
-      "elapsed_s": 32.85,
+      "elapsed_s": 1.9,
       "returncode": 0,
       "source": "netease",
       "lyric_type": "line",
-      "synthesized_words": true,
+      "synthesized_words": false,
       "lines": 127,
-      "lrc_sha256": "87acd17b32d51dce50e1efee27f5ecc4ba0951b0ef5e40b473d28bc374be4d4e",
-      "spl_sha256": "87acd17b32d51dce50e1efee27f5ecc4ba0951b0ef5e40b473d28bc374be4d4e",
+      "lrc_sha256": "25580d19252b4a3fea111ce6a81ba59b9319449a62f123734032df1f1048557d",
+      "spl_sha256": "25580d19252b4a3fea111ce6a81ba59b9319449a62f123734032df1f1048557d",
       "trilateral_mirror": true,
       "audio_unchanged": true,
       "audio_before": {
@@ -72,13 +71,13 @@
         "size": 154504283,
         "sha256": "911d35d2e19e7dffa0c4005a907e2700352ec8012721cf490fef01b9d25a3731"
       },
-      "warnings": 49
+      "warnings": 0
     },
     {
       "file": "三二一对不起 - 徐良&小凌.mp3",
-      "status": "no_lyrics",
-      "elapsed_s": 6.47,
-      "returncode": 0,
+      "status": "no_output",
+      "elapsed_s": 5.52,
+      "returncode": 1,
       "source": null,
       "lyric_type": null,
       "synthesized_words": false,
@@ -102,14 +101,14 @@
     {
       "file": "僕が死のうと思ったのは(曾经我也想过一了百了) - 中島美嘉.flac",
       "status": "ok",
-      "elapsed_s": 4.82,
+      "elapsed_s": 2.08,
       "returncode": 0,
-      "source": "netease",
-      "lyric_type": "line",
-      "synthesized_words": true,
-      "lines": 54,
-      "lrc_sha256": "3ff0da431eeda38e9e03fed5c93db25b4bfe15617fdc73e3e57cfd57e9ab8866",
-      "spl_sha256": "3ff0da431eeda38e9e03fed5c93db25b4bfe15617fdc73e3e57cfd57e9ab8866",
+      "source": "kugou",
+      "lyric_type": "word",
+      "synthesized_words": false,
+      "lines": 101,
+      "lrc_sha256": "ad779e202fab432069fa36f05ad1c50f48b1b007d3f6ffec74abc1b4944eee1c",
+      "spl_sha256": "ad779e202fab432069fa36f05ad1c50f48b1b007d3f6ffec74abc1b4944eee1c",
       "trilateral_mirror": true,
       "audio_unchanged": true,
       "audio_before": {
@@ -122,13 +121,13 @@
         "size": 252879477,
         "sha256": "6cbb13fb596569874cea528a49f1919998faf2c8b6aac23a00a5818a8f9de631"
       },
-      "warnings": 3
+      "warnings": 1
     },
     {
       "file": "广场 - 李志.mp3",
-      "status": "no_lyrics",
-      "elapsed_s": 7.71,
-      "returncode": 0,
+      "status": "no_output",
+      "elapsed_s": 4.81,
+      "returncode": 1,
       "source": null,
       "lyric_type": null,
       "synthesized_words": false,
@@ -152,14 +151,14 @@
     {
       "file": "焚情 - 黄凯芹.flac",
       "status": "ok",
-      "elapsed_s": 5.41,
+      "elapsed_s": 1.87,
       "returncode": 0,
-      "source": "lrclib",
-      "lyric_type": "line",
-      "synthesized_words": true,
-      "lines": 33,
-      "lrc_sha256": "2a87648e08bee78265b9b1bd5a3f926bbde128ce10081dbf28dba7fe8cda985f",
-      "spl_sha256": "2a87648e08bee78265b9b1bd5a3f926bbde128ce10081dbf28dba7fe8cda985f",
+      "source": "kugou",
+      "lyric_type": "word",
+      "synthesized_words": false,
+      "lines": 36,
+      "lrc_sha256": "6aba711623e6213f2e8d49fd3500dc98847ed51c75a1d69179f7781ce294a528",
+      "spl_sha256": "6aba711623e6213f2e8d49fd3500dc98847ed51c75a1d69179f7781ce294a528",
       "trilateral_mirror": true,
       "audio_unchanged": true,
       "audio_before": {
@@ -177,64 +176,64 @@
     {
       "file": "爱一点 - 王力宏&章子怡.flac",
       "status": "ok",
-      "elapsed_s": 5.05,
-      "returncode": 0,
-      "source": "netease",
-      "lyric_type": "line",
-      "synthesized_words": true,
-      "lines": 42,
-      "lrc_sha256": "90f6af7c45896b00aa66d1713705608b125f768867bfafe6e2f5761a555caf12",
-      "spl_sha256": "90f6af7c45896b00aa66d1713705608b125f768867bfafe6e2f5761a555caf12",
-      "trilateral_mirror": true,
-      "audio_unchanged": true,
-      "audio_before": {
-        "mtime": 1792506407.534,
-        "size": 36401271,
-        "sha256": "136ebe74dff9a2027778441f4f3040c151707cb2c59a7d10350fdaa596177964"
-      },
-      "audio_after": {
-        "mtime": 1792506407.534,
-        "size": 36401271,
-        "sha256": "136ebe74dff9a2027778441f4f3040c151707cb2c59a7d10350fdaa596177964"
-      },
-      "warnings": 4
-    },
-    {
-      "file": "疯狂果宝 - 陈洁丽;陆双;祖晴;王巍.flac",
-      "status": "ok",
-      "elapsed_s": 5.3,
-      "returncode": 0,
-      "source": "netease",
-      "lyric_type": "line",
-      "synthesized_words": true,
-      "lines": 66,
-      "lrc_sha256": "a501a07a1c43fd495e007b072b4e494e4b442ca93959c4035134dd2b23547a07",
-      "spl_sha256": "a501a07a1c43fd495e007b072b4e494e4b442ca93959c4035134dd2b23547a07",
-      "trilateral_mirror": true,
-      "audio_unchanged": true,
-      "audio_before": {
-        "mtime": 1792547218.12,
-        "size": 111079893,
-        "sha256": "ee9dd75a9a6dff0cfbfb9de0ccba5a3601a910d634651eb72fa18dcfd2ef1f7f"
-      },
-      "audio_after": {
-        "mtime": 1792547218.12,
-        "size": 111079893,
-        "sha256": "ee9dd75a9a6dff0cfbfb9de0ccba5a3601a910d634651eb72fa18dcfd2ef1f7f"
-      },
-      "warnings": 16
-    },
-    {
-      "file": "불꽃(火花) - 高耀太.flac",
-      "status": "ok",
-      "elapsed_s": 1.78,
+      "elapsed_s": 1.82,
       "returncode": 0,
       "source": "kugou",
       "lyric_type": "word",
       "synthesized_words": false,
-      "lines": 98,
-      "lrc_sha256": "b4539cc17a413b758793b2b189932de3d2daf83a3981542474b1804588d23432",
-      "spl_sha256": "b4539cc17a413b758793b2b189932de3d2daf83a3981542474b1804588d23432",
+      "lines": 46,
+      "lrc_sha256": "697a5d2ff56c7151b3e46da99bc7fb54aed8bfc5a43e24bac5b3eaeec067d27b",
+      "spl_sha256": "697a5d2ff56c7151b3e46da99bc7fb54aed8bfc5a43e24bac5b3eaeec067d27b",
+      "trilateral_mirror": true,
+      "audio_unchanged": true,
+      "audio_before": {
+        "mtime": 1792506407.534,
+        "size": 36401271,
+        "sha256": "136ebe74dff9a2027778441f4f3040c151707cb2c59a7d10350fdaa596177964"
+      },
+      "audio_after": {
+        "mtime": 1792506407.534,
+        "size": 36401271,
+        "sha256": "136ebe74dff9a2027778441f4f3040c151707cb2c59a7d10350fdaa596177964"
+      },
+      "warnings": 2
+    },
+    {
+      "file": "疯狂果宝 - 陈洁丽;陆双;祖晴;王巍.flac",
+      "status": "ok",
+      "elapsed_s": 1.9,
+      "returncode": 0,
+      "source": "kugou",
+      "lyric_type": "word",
+      "synthesized_words": false,
+      "lines": 64,
+      "lrc_sha256": "685490b24e67df994be9cc2279c99ff0d5034ededa50bec4190af138943374b2",
+      "spl_sha256": "685490b24e67df994be9cc2279c99ff0d5034ededa50bec4190af138943374b2",
+      "trilateral_mirror": true,
+      "audio_unchanged": true,
+      "audio_before": {
+        "mtime": 1792547218.12,
+        "size": 111079893,
+        "sha256": "ee9dd75a9a6dff0cfbfb9de0ccba5a3601a910d634651eb72fa18dcfd2ef1f7f"
+      },
+      "audio_after": {
+        "mtime": 1792547218.12,
+        "size": 111079893,
+        "sha256": "ee9dd75a9a6dff0cfbfb9de0ccba5a3601a910d634651eb72fa18dcfd2ef1f7f"
+      },
+      "warnings": 0
+    },
+    {
+      "file": "불꽃(火花) - 高耀太.flac",
+      "status": "ok",
+      "elapsed_s": 1.67,
+      "returncode": 0,
+      "source": "kugou",
+      "lyric_type": "word",
+      "synthesized_words": false,
+      "lines": 102,
+      "lrc_sha256": "674a92512b94aeb94da979374c7ca0cb80eb1039451dcd55dbce1a81b5c3af44",
+      "spl_sha256": "674a92512b94aeb94da979374c7ca0cb80eb1039451dcd55dbce1a81b5c3af44",
       "trilateral_mirror": true,
       "audio_unchanged": true,
       "audio_before": {
@@ -247,7 +246,7 @@
         "size": 178476910,
         "sha256": "bce00532a555d56cd28d7d7fc5941cd5808e500b5ca0a66681a155f9df493e16"
       },
-      "warnings": 0
+      "warnings": 4
     }
   ]
 }

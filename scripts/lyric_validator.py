@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """歌词校验：单调性、Intro/Outro、双语行配对。外语 GPU 打轴前用 pair_plain_bilingual_lyrics 只留原文。"""
 
+import copy
 import re
 from typing import Dict, Any, Tuple, List, Optional
 
@@ -9,10 +10,15 @@ from core.utils.time_utils import strip_timing_tags
 
 # Preamble credit keywords for whitelist protection
 # P1-8: 单字 "词/曲" 必须带冒号才算署名行，否则 "词不达意"、"曲终人散" 会被误判
+# P1-1: 多字关键词同样必须跟冒号/空白/行尾。旧版 "^(…|鼓|键盘|…)" 会把
+#       "鼓楼"、"键盘上的泪"、"作词人" 这类真实歌词误判成署名行，
+#       进而让 to_spl 算错首唱时间、把真实首句跳过。
 CREDIT_KEYWORD_PATTERN = re.compile(
-    r"^(作词|作曲|编曲|制作|监制|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|OP|SP|"
-    r"Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|작사|작곡|편곡|作詞|作曲|編曲)"
-    r"|^(词|曲)\s*[:：]",
+    r"^(?:作词|作曲|编曲|制作|监制|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|"
+    r"作詞|編曲|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|"
+    r"작사|작곡|편곡)"
+    r"(?:\s*[:：]|\s|$)"
+    r"|^(?:词|曲)\s*[:：]",
     re.IGNORECASE
 )
 
@@ -26,6 +32,9 @@ def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float
     """
     Checks whether word durations conform to natural acoustic human singing (>= 100ms).
     Returns: (is_healthy, tiny_ratio)
+
+    P1-3: 阈值改为 < 80ms。旧版用 <= 80ms，而修复逻辑的下限恰好是 80ms，
+    导致「修完仍然报警」的自相矛盾。
     """
     if not words or len(words) < 2:
         return True, 0.0
@@ -33,7 +42,7 @@ def check_acoustic_naturalness(words: List[Dict[str, Any]]) -> Tuple[bool, float
     tiny_count = 0
     for w in words:
         dur = w.get("duration", 0)
-        if dur <= 80:  # Machine dummy compression threshold
+        if dur < 80:  # Machine dummy compression threshold
             tiny_count += 1
             
     ratio = tiny_count / len(words)
@@ -76,13 +85,37 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 _META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
-_CREDIT_EXTRACT_RE = re.compile(
-    r"^(作词作曲|作詞作曲|词曲|作词|作詞|作曲|Lyrics|Written|Composed|词|曲)\s*[:：]\s*(.+)$",
+# P0-4: 分段式切分。旧版 ^…(.+)$ 的 (.+) 贪婪吃到行尾，导致
+#   "作词 : 张三 作曲 : 李四" -> ('张三 作曲 : 李四', '')、作曲整体丢失，
+#   垃圾串还会写进 TCOM 标签。改为先定位每个「关键词:」标记，再取到下一个标记之前。
+_CREDIT_TOKEN_RE = re.compile(
+    r"(作词作曲|作詞作曲|词曲|作词|作詞|作曲|Lyrics|Written|Composed)"
+    r"(?:\s+by)?\s*[:：]"
+    r"|(词|曲)\s*[:：]",
     re.IGNORECASE,
 )
 _CREDIT_BOTH = {"作词作曲", "作詞作曲", "词曲"}
 _CREDIT_LYRICIST = {"作词", "作詞", "词", "lyrics", "written"}
 _CREDIT_COMPOSER = {"作曲", "曲", "composed"}
+
+
+def split_credit_pairs(clean: str) -> List[Tuple[str, str]]:
+    """把一行里所有「关键词: 值」切成 [(kind, value), …]。
+
+    值取到下一个关键词标记之前，并剥掉尾随的 / 、 , ， | 与空白。
+    "作词 : 张三 作曲 : 李四" -> [("作词", "张三"), ("作曲", "李四")]
+    """
+    tokens = list(_CREDIT_TOKEN_RE.finditer(clean or ""))
+    pairs: List[Tuple[str, str]] = []
+    for i, m in enumerate(tokens):
+        # 双组正则：group(1) 是多字关键词，group(2) 是单字 词/曲
+        kind = (m.group(1) or m.group(2) or "").strip()
+        start = m.end()
+        end = tokens[i + 1].start() if i + 1 < len(tokens) else len(clean)
+        value = clean[start:end].strip().strip("/、,，|").strip()
+        if kind and value:
+            pairs.append((kind, value))
+    return pairs
 
 
 def extract_lyricist_composer(text: str) -> Tuple[str, str]:
@@ -102,21 +135,18 @@ def extract_lyricist_composer(text: str) -> Tuple[str, str]:
         seen += 1
         if seen > 12:
             break
-        m = _CREDIT_EXTRACT_RE.match(clean)
-        if not m:
-            continue
-        kind = m.group(1).strip()
-        names = normalize_artist_string(m.group(2).strip())
-        if not names:
-            continue
-        key = kind.lower()
-        if kind in _CREDIT_BOTH:
-            lyricists.append(names)
-            composers.append(names)
-        elif key in _CREDIT_LYRICIST:
-            lyricists.append(names)
-        elif key in _CREDIT_COMPOSER:
-            composers.append(names)
+        for kind, value in split_credit_pairs(clean):
+            names = normalize_artist_string(value)
+            if not names:
+                continue
+            key = kind.lower()
+            if kind in _CREDIT_BOTH:
+                lyricists.append(names)
+                composers.append(names)
+            elif key in _CREDIT_LYRICIST:
+                lyricists.append(names)
+            elif key in _CREDIT_COMPOSER:
+                composers.append(names)
 
     def _uniq(items: List[str]) -> str:
         out: List[str] = []
@@ -162,7 +192,9 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
     if is_non_zh:
         data = strip_translation_lines_from_parsed(data)
         
-    lines = list(data.get("lines", []))
+    # P1-3: 深拷贝，避免修时间轴时把调用方手里的 data 一起改脏
+    # （旧版 list() 只是浅拷贝，line/word dict 仍与调用方共享）。
+    lines = copy.deepcopy(data.get("lines", []))
     warnings = []
     
     if not lines:
@@ -196,17 +228,38 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
                 warnings.append(f"Line {i} Word {k} timestamp inversion: {w_start}ms < {last_word_start}ms. Auto-correcting.")
                 w["start"] = last_word_start
                 w_start = last_word_start
-                
-            w_dur = max(80, w.get("duration", 150))
-            w["duration"] = w_dur
-            w["end"] = w_start + w_dur
+
+            # P1-3: 计算时长时优先沿用源里真实的 end（只给 start/end 的候选
+            # 旧版会被 w.get("duration", 150) 改成 150ms，3000ms 的词直接丢精度）；
+            # 兜底下限抬到 100ms，与 check_acoustic_naturalness 的 <80ms 判定错开，
+            # 避免「修完恰好等于 80 仍在报警」的自相矛盾。
+            raw_end = w.get("end")
+            if isinstance(raw_end, int) and raw_end > w_start:
+                w_dur = raw_end - w_start
+            elif w.get("duration"):
+                w_dur = int(w["duration"])
+            else:
+                w_dur = 100
+            w_dur = max(100, w_dur)
+
+            # P1-3: 与下一个词的起点钳制，避免拉长后压到下一词（旧版 40ms 词拉到 80ms
+            # 会越过下一词 start，产生时间轴重叠）。
+            w_end = w_start + w_dur
+            if k + 1 < len(words):
+                nxt_start = words[k + 1].get("start")
+                if isinstance(nxt_start, int) and nxt_start > w_start:
+                    w_end = min(w_end, nxt_start)
+
+            w["start"] = w_start
+            w["duration"] = w_end - w_start
+            w["end"] = w_end
             last_word_start = w_start
 
         # Natural Acoustic Gate
         if words:
             healthy, ratio = check_acoustic_naturalness(words)
             if not healthy:
-                warnings.append(f"Line {i} Natural Acoustic Alert: {ratio*100:.1f}% words <= 80ms.")
+                warnings.append(f"Line {i} Natural Acoustic Alert: {ratio*100:.1f}% words < 80ms.")
 
         if words:
             line["end"] = max(line_start + 500, words[-1]["end"])

@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional, Callable
 
 from .fetchers.amll import AMLLFetcher
-from .fetchers.kugou import KugouFetcher
+from .fetchers.kugou import KugouFetcher, parsed_duration_reject_reason
 from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
@@ -128,28 +128,43 @@ class LyricAggregator:
         is_foreign = is_foreign_track(title, artist)
         candidate = None
 
-        def _probe(fetch_fn: Callable[[], Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+        def _probe(fetch_fn: Callable[[], Optional[Dict[str, Any]]], source: str = "") -> Optional[Dict[str, Any]]:
             try:
                 res = fetch_fn()
-                if res and res.get("lines") and not is_instrumental_placeholder(res["lines"], duration_ms):
-                    return res
+                if not res or not res.get("lines"):
+                    return None
+                if is_instrumental_placeholder(res["lines"], duration_ms):
+                    return None
+                # P1-A: 五源统一时长门禁。旧版只有酷狗有门禁，AMLL/网易/LRCLIB
+                # 完全不校验，尾部被截断的歌词会静默通过。
+                # 只拒「预览截断」与「末字冲轴」，末行早于曲终属器乐尾奏、放行（铁律 1）。
+                # 仅在拿到真实音频时长时启用：行级源的 lines[-1]["end"] 可能是
+                # lrc_parser 合成的 start+3500，用它跑 preview 会造成假拒。
+                if duration_ms > 0:
+                    last_end = res["lines"][-1].get("end", 0)
+                    reject = parsed_duration_reject_reason(last_end, duration_ms)
+                    if reject:
+                        reason = "预览截断" if reject == "preview" else "冲轴"
+                        print(f"   ℹ️ [{source or 'unknown'}] 丢弃候选（{reason}）：末行 {last_end}ms / 曲长 {duration_ms}ms")
+                        return None
+                return res
             except Exception as exc:
                 logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
             return None
 
         # 1. Kugou
-        candidate = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms)) or candidate
+        candidate = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms), "kugou") or candidate
 
         # 2. AMLL
         if not candidate or (is_foreign and not candidate_has_translation(candidate)):
-            amll_res = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms))
+            amll_res = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms), "amll")
             if amll_res:
                 candidate = amll_res
 
         # 3. NetEase（提前一档）。外语缺译文时：仅当网易自带可用 tlyric 才整包替换。
         need_ne = (not candidate) or (is_foreign and not candidate_has_translation(candidate))
         if need_ne:
-            ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms))
+            ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms), "netease")
             if ne_res:
                 entries = _hanzi_tlyric_entries(ne_res.get("tlyric", ""))
                 attached = False
@@ -162,12 +177,12 @@ class LyricAggregator:
 
         # 4. LRCSHARE：缺主词，或外语缺译文且该源自身带译文整包
         if not candidate or (is_foreign and not candidate_has_translation(candidate)):
-            ls_res = _probe(lambda: LrcShareFetcher.fetch(title, artist, duration_ms))
+            ls_res = _probe(lambda: LrcShareFetcher.fetch(title, artist, duration_ms), "lrcshare")
             if ls_res and (not candidate or ls_res.get("has_translation")):
                 candidate = ls_res
 
         # 5. LRCLIB
         if not candidate:
-            candidate = _probe(lambda: LRCLIBFetcher.fetch(title, artist, album, duration_ms))
+            candidate = _probe(lambda: LRCLIBFetcher.fetch(title, artist, album, duration_ms), "lrclib")
 
         return candidate

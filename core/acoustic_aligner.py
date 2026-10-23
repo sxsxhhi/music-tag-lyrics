@@ -396,8 +396,9 @@ class AcousticAligner:
         clean_lines = []
         parsed_hints = []
         for l in raw_lines:
-            # Check for LRC timestamp [mm:ss.xx]
-            m = re.match(r"^\[(\d{2}):(\d{2}\.\d{2,3})\](.*)$", l)
+            # Check for LRC timestamp [mm:ss.xx]（P1-5: 分钟位 1-3 位，与铁律 10 的三位分钟对齐；
+            # 小数位 1-3 位，兼容厘秒与毫秒源）
+            m = re.match(r"^\[(\d{1,3}):(\d{1,2}\.\d{1,3})\](.*)$", l)
             if m:
                 sec = int(m.group(1)) * 60 + float(m.group(2))
                 txt = m.group(3).strip()
@@ -437,8 +438,10 @@ class AcousticAligner:
                         for w in s.words:
                             line_w.append({
                                 "text": w.word.strip(),
-                                "start": round(w.start + st, 2),
-                                "end": round(w.end + st, 2)
+                                # v1.2.8: 保留毫秒（旧版 round(,2) 是秒级四舍五入 = 10ms 量化，
+                                # 会让 3 位输出永远是 x.x0，等于假 3 位）
+                                "start": round(w.start + st, 3),
+                                "end": round(w.end + st, 3)
                             })
                 all_line_words.append((line_txt, line_w))
             finally:

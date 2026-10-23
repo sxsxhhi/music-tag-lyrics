@@ -8,8 +8,25 @@ from ..utils.time_utils import parse_match_to_ms, apply_time_offset
 from ._common import parse_offset_tag
 
 LRC_TAG_RE = re.compile(r"^\[([a-zA-Z]+):([^\]]*)\]")
-LRC_TIME_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]")
-WORD_TAG_RE = re.compile(r"<(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?>|\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]")
+# 分钟位 1-3 位（铁律 10.2「0 丢行」：旧版只认 1-2 位，[123:45.67] 这种 >99 分钟的行会被静默丢弃）
+LRC_TIME_RE = re.compile(r"\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
+WORD_TAG_RE = re.compile(r"<(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?>|\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
+
+# 任意时间戳（行级或词级），用于探测源的小数位粒度
+_ANY_TIME_RE = re.compile(r"[\[<]\d{1,3}:\d{1,2}(?:\.(\d{1,3}))?[\]>]")
+
+
+def detect_time_precision(text: str) -> int:
+    """探测源里出现过的最细粒度：有 3 位毫秒就返回 3，否则返回 2。
+
+    v1.2.8 精度策略：源是 3 位毫秒就出 3 位，源只有 1-2 位才退回 2 位。
+    毫秒整数本身分不出源精度（[00:01.23] 与 [00:01.230] 解析后都是 1230），
+    所以必须在解析这一步把粒度记下来，一路传到输出层。
+    """
+    for m in _ANY_TIME_RE.finditer(text or ""):
+        if len(m.group(1) or "") >= 3:
+            return 3
+    return 2
 
 def parse_enhanced_words(line_text: str, default_start_ms: int, offset_ms: int = 0) -> Tuple[str, List[Dict[str, Any]]]:
     """
@@ -133,5 +150,7 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
 
     return {
         "tags": tags,
-        "lines": lines
+        "lines": lines,
+        # v1.2.8：把源的时间戳粒度带出去，输出层据此决定出 2 位还是 3 位
+        "time_precision": detect_time_precision(lrc_text),
     }

@@ -67,19 +67,27 @@ def strip_timing_tags(text: str) -> str:
         return ""
     return _TIMING_TAG_RE.sub("", text).strip()
 
-def format_time_tag(ms: int, bracket: str = "[]") -> str:
+def format_time_tag(ms: int, bracket: str = "[]", precision: int = 2) -> str:
     """
-    格式化为 [mm:ss.xx] / <mm:ss.xx>。
+    格式化为 [mm:ss.xx]（precision=2）或 [mm:ss.xxx]（precision=3）。
 
     P1-6: 用整数厘秒做四舍五入，避免 59996ms 被格式化成 [00:60.00]（非法时间戳）；
     分钟位不再做两位截断，超过 99 分钟输出 [100:00.00]，与解析侧的三位分钟正则配套。
+
+    精度策略（v1.2.8）：源是 3 位毫秒就出 3 位，源只有 1-2 位才退回 2 位。
+    precision=3 时不量化，直接保留毫秒；precision=2 时走整数厘秒舍入。
+    注意 2 位分支用的是 Python 的 round（银行家舍入），±5ms 有界、不累积。
     """
     if ms < 0:
         ms = 0
+    l_b, r_b = bracket[0], bracket[1]
+    if precision >= 3:
+        minutes, rem_ms = divmod(int(ms), 60000)
+        seconds, millis = divmod(rem_ms, 1000)
+        return f"{l_b}{minutes:02d}:{seconds:02d}.{millis:03d}{r_b}"
     total_cs = int(round(ms / 10.0))
     minutes, rem_cs = divmod(total_cs, 6000)
     seconds = rem_cs / 100.0
-    l_b, r_b = bracket[0], bracket[1]
     return f"{l_b}{minutes:02d}:{seconds:05.2f}{r_b}"
 
 def apply_time_offset(timestamp_ms: int, offset_ms: int = 0) -> int:

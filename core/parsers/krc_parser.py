@@ -140,5 +140,7 @@ def parse_krc(krc_text: str, adjust: int = 0) -> Dict[str, Any]:
         "tags": tags,
         "lines": lines,
         "has_embedded_translation": bool(any(t.strip() for t in trans_list)),
-        "embedded_translations": trans_list
+        "embedded_translations": trans_list,
+        # v1.2.8：KRC 的时间戳本身就是毫秒整数，按 3 位输出
+        "time_precision": 3,
     }

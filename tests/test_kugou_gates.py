@@ -84,6 +84,44 @@ def test_live_krcs_duration_align():
     assert krcs_version_ok(False, "秋城 (Live)", "", cand_dur_sec=250, target_dur_sec=250) is False
 
 
+def test_lrcshare_shares_same_gate():
+    """P1-B：LRCSHARE 旧版用 abs(末行-曲长)>5000 对称拒，6s 尾奏就会整源丢弃。
+    改走统一门禁后，尾奏必须放行，只拒预览与冲轴。"""
+    from core.fetchers.lrcshare import parsed_duration_reject_reason as ls_gate
+
+    # 曲 300s、末行 294s（6s 尾奏）：旧版 abs(6000) > 5000 会拒，现在必须放行
+    assert ls_gate(294000, 300000) is None
+    # 曲 300s、末行 240s（60s 器乐尾奏）：也必须放行
+    assert ls_gate(240000, 300000) is None
+    # 曲 200s、末行 30s：预览截断，仍要拒
+    assert ls_gate(30000, 200000) == "preview"
+    # 末行超出曲长 20s：冲轴，仍要拒
+    assert ls_gate(320000, 300000) == "overrun"
+    # 无音频时长时不判
+    assert ls_gate(30000, 0) is None
+
+
+def test_lrcshare_parse_lyric_lines_keeps_precision():
+    """原生 time_ms 路径固定 3 位；parse_lrc 兜底透传探测到的精度。"""
+    from core.fetchers.lrcshare import LrcShareFetcher
+
+    native = LrcShareFetcher.parse_lyric_lines({
+        "versions": [{
+            "kind": "original",
+            "rows": [
+                {"time_ms": 1000, "end_ms": 2000, "text": "甲"},
+                {"time_ms": 2000, "end_ms": 3000, "text": "乙"},
+            ],
+        }]
+    })
+    assert native.get("time_precision") == 3, native
+
+    fallback = LrcShareFetcher.parse_lyric_lines({}, default_lrc="[00:01.230]三位")
+    assert fallback.get("time_precision") == 3, fallback
+    fallback2 = LrcShareFetcher.parse_lyric_lines({}, default_lrc="[00:01.23]两位")
+    assert fallback2.get("time_precision") == 2, fallback2
+
+
 def main():
     cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = []

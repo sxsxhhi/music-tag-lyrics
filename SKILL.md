@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗与多源歌词修补（v1.2.7）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖五源与全球搜词。写入歌词只留单帧 USLT。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗与多源歌词修补（v1.2.8）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖五源与全球搜词。写入歌词只留单帧 USLT。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.7)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.8)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -52,18 +52,22 @@ flowchart TD
 
 ### 3. 非国语标准 ELRC 动态流光与防跳屏铁律
 - **铁律准则**：
-  1. 译文副行必须继承对应原唱行的 `[mm:ss.xx]`，紧随其下；
+  1. 译文副行必须继承对应原唱行的行级时间戳（与铁律 6 同一精度：源 3 位则 `[mm:ss.xxx]`，否则 `[mm:ss.xx]`），紧随其下；
   2. 副行纯文本，严禁 `<>` 逐字；合成或 GPU 打轴都**只给原文写 `words`**；
   3. 无官方译文则保持纯原文（协同 Rule 13）。
 
 ### 4. 声学自然度门禁防挤压铁律
-- **铁律准则**：人类单字/单词通常 200ms~800ms。严禁 ≤80ms 机器伪时间戳。平滑算法不得压缩真实声学时长。
+- **铁律准则**：人类单字/单词通常 200ms~800ms。严禁 <80ms 机器伪时间戳。平滑算法不得压缩真实声学时长。
+- **实现口径（v1.2.8 与代码对齐）**：当前只在 `lyric_validator.check_acoustic_naturalness` 里**告警**（tiny 占比 >15% 时打印），不拒绝、不丢弃候选。校验修复的时长下限为 100ms，与告警阈值 80ms 错开，避免「修完恰好 80ms 仍在报警」。
 
 ### 5. 外文经典金曲 Apple Music 官方母带逐字直连铁律
 - **铁律准则**：非国语欧美热单优先 AMLL（Apple Music TTML）。
+- **实际调度（v1.2.8 对齐）**：酷狗**恒为第一档**。AMLL 只在「酷狗未命中」或「外语曲且酷狗缺译文」时才探测（`core/aggregator.py:143`）。中文歌只要酷狗命中就不会走 AMLL。
+- **已知单点依赖**：AMLL 通道按**网易 ID** 取 `ncm-lyrics/{id}.ttml`（`core/fetchers/amll.py:35`）。网易搜不到时该通道直接失效，**不会**回落到 AMLL DB 的 `am-lyrics/`（Apple Music ID 目录）。
 
 ### 6. 三位一体国际标准 Enhanced LRC 与 100% SHA-256 镜像铁律
-- **铁律准则**：内嵌 lyrics == 同级 `.spl` == 同级 `.lrc`，统一 Enhanced LRC：`[mm:ss.xx]<mm:ss.xx>w1<t2>...<tend>`。
+- **铁律准则**：内嵌 lyrics == 同级 `.spl` == 同级 `.lrc`，统一 Enhanced LRC：`[mm:ss.xxx]<mm:ss.xxx>w1<t2>...<tend>`。
+- **精度自适应（v1.2.8）**：源时间戳是 3 位毫秒就输出 3 位，源只有 1–2 位才退回 2 位（`[mm:ss.xx]`）。粒度在解析层探测（`lrc_parser.detect_time_precision`；TTML 与 KRC 固定 3 位），经 `data["time_precision"]` 透传给 `to_spl()` / `to_lrc()`。解析侧一律容忍 1–3 位小数。
 
 ### 7. 跨平台换行符确定性对齐铁律
 - **铁律准则**：歌词文件写入显式 `newline="\n"`，保证 `sha256(embedded) == sha256(.spl) == sha256(.lrc)`。
@@ -83,7 +87,7 @@ flowchart TD
 ### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律
 - **铁律准则**：
   1. 解析行/字时间戳强制 `total_offset = offset + adjust`，`>= 0` 箝位；
-  2. LRC 多时间戳行逐个保留，0 丢行；
+  2. LRC 多时间戳行逐个保留，0 丢行；分钟位支持 1–3 位（`[123:45.67]` 不再被静默丢弃）；
   3. 常规曲（>90s）首句非报幕起唱 >32s 发出 Intro Gate 警告。
 
 ### 11. 【核心红线】绝不语音听写，必须先检后轴铁律
@@ -105,11 +109,15 @@ flowchart TD
 - **铁律准则**：仅 `type == 1` 且通过汉字检测才算译文；丢弃 `type: 0` 罗马音/假名。
 
 ### 16. 【核心红线】纯音乐占位防篡改与有效行数门禁
-- **铁律准则**：含「纯音乐 / 伴奏 / Instrumental / No Lyrics」等占位则拒绝；常规声乐（>60s 且原词 ≥10 行）不得被 ≤6 行覆盖；译文行数低于 `max(4, 0.3 × 原词行数)` 熔断。
+- **铁律准则（v1.2.8 与实现对齐）**：
+  1. 含「纯音乐 / 伴奏 / Instrumental / No Lyrics」等占位则拒绝 —— 实际判定为「曲长 >60s 且候选 ≤6 行 且文本含关键词」（`core/utils/text_utils.py`）；
+  2. 译文行数低于 `max(4, 0.3 × 原词行数)` 熔断 —— 当前**只在网易 tlyric 路径生效**（`core/aggregator.py` 的 `attach_same_source_translation`）；酷狗内嵌译文与 LRCSHARE 译文尚未套用该下限；
+  3. 已知缺口：「常规声乐（>60s 且原词 ≥10 行）不得被 ≤6 行覆盖」暂无对应实现 —— 抓词是一次性择优，不存在"覆盖已有歌词"的场景，该表述源自早期设计。
 
 ### 17. 【核心红线】物理时长严密邻近与版本防串扰门禁
-- **铁律准则**：分源容差**不可统一**。LRCSHARE 末行 ±5s；酷狗**搜歌元数据 ±10s**；网易/LRCLIB 搜索元数据 ±35s。偏差 >8s 不得仅因「含译文」加分；>15s 剔除。
-- **酷狗解析末行**：只拒「曲 >90s 且末行 <45s」预览，以及「末行超过曲终 +8s」冲轴。**禁止**用「解析末行 ±8s」整份剔除（那会把尾奏当残缺）。
+- **搜歌元数据容差（分源，不可统一）**：酷狗 **±10s**；网易/LRCLIB 搜索元数据 **±35s**。偏差 >8s 不得仅因「含译文」加分；>15s 剔除。
+- **解析末行（五源同一套）**：只拒「曲 >90s 且末行 <45s」预览，以及「末行超过曲终 +8s」冲轴。**禁止**用「解析末行 ±N s」整份剔除（那会把器乐尾奏当残缺）。
+  > v1.2.8 变更：删去原「LRCSHARE 末行 ±5s」。该条与铁律 1「末行早于曲终 = 尾奏，不得拒绝」直接冲突，`core/fetchers/lrcshare.py` 已改走统一门禁 `parsed_duration_reject_reason`。同一条统一门禁也已下沉到 `core/aggregator.py` 的 `_probe`，AMLL / 网易 / LRCLIB 不再无声通过。
 
 ### 18. 【核心红线】黄金基准时间轴锚定与动态微调门禁
 - **铁律准则**：
@@ -119,6 +127,7 @@ flowchart TD
 
 ### 运行纪律（丢弃必须说清）
 - 源返回空时必须打印**丢弃原因**（预览 / 冲轴 / 版本互斥）。禁止对用户说「酷狗没有」，除非搜歌候选数为 0。
+- v1.2.8：解析末行门禁已统一到 `core/aggregator.py` 的 `_probe`，五个源（酷狗 / AMLL / 网易 / LRCSHARE / LRCLIB）被拒时都会打印 `[源名] 丢弃候选（预览截断 / 冲轴）`；LRCSHARE 的内部同类门禁也改走 `parsed_duration_reject_reason` 并打印原因。
 - numpy 按行合成必须标明「非酷狗逐字、非 GPU」，禁止把合成轴说成酷狗逐字。
 
 ---
@@ -146,7 +155,7 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.2.7)]
+🛑 [Demucs v4 绝对红线阻断 (v1.2.8)]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```
@@ -164,6 +173,6 @@ Y：干声分离后 Forced Alignment；外语只对齐原文，译文挂回 `tra
 - 纯文本搜集：`core/plain_lyric_search.py`（五源 plain + GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`；抓取：`core/fetchers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / io_safe）
-- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`、`test_kugou_gates.py`
+- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`、`test_kugou_gates.py`、`test_converter_prelude.py`
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
