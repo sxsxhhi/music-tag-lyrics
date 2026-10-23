@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import mutagen
 from mutagen.flac import FLAC
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT
 from mutagen.wave import WAVE
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
@@ -119,6 +119,15 @@ def clean_year_string(year_val: Any) -> str:
     m = re.search(r"\b(19\d\d|20\d\d)\b", s)
     # 匹配不到返回空串：以前返回 s[:4] 会把 "unknown" 写成 "unkn" 塞进 TDRC
     return m.group(1) if m else ""
+
+
+def extract_year_from_album(album: str) -> str:
+    """从专辑名抽出四位公历，如「2018 (上)」「花粥2019巡演LIVE」。"""
+    if not album:
+        return ""
+    m = re.search(r"(?:^|\D)(19\d{2}|20\d{2})(?:\D|$)", album.strip())
+    return m.group(1) if m else ""
+
 
 def clean_title_string(title_str: str) -> str:
     """
@@ -269,8 +278,10 @@ def _apply_id3_tags(id3: Any, tags: TagSet) -> None:
         else:
             id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(tags.albumartist)])
     if tags.lyrics is not None:
-        # 只覆盖自己写的那一帧（lang=eng, desc=""），其它语言/描述的 USLT 一律保留。
-        # 旧实现按 startswith("USLT") 全删，会把多语歌词与翻译帧一并抹掉。
+        # 写入 Enhanced LRC 时清掉全部 USLT / SYLT，避免逐行旧帧与逐字新帧并存。
+        for key in list(id3.keys()):
+            if key.startswith("USLT") or key.startswith("SYLT"):
+                del id3[key]
         id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=tags.lyrics)
 
 

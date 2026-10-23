@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """网易云歌词：检索、Live 互斥、时长门禁、官方 tlyric。"""
 
+import time
 from typing import Dict, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
@@ -16,11 +17,8 @@ class NetEaseFetcher:
     """Fetcher for NetEase Cloud Music lyrics with Version Guard."""
 
     @classmethod
-    def search_song_id(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[int]:
-        """
-        Searches NetEase song catalog and returns the best matching song ID.
-        Applies version mutual exclusion (Live vs Studio) and duration filtering.
-        """
+    def search_best_song(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+        """检索网易曲目，返回最匹配的一首（含 album.publishTime）。"""
         keyword = f"{title} {artist}".strip()
         search_url = "https://music.163.com/api/search/get/web?csrf_token="
         post_data = {
@@ -40,33 +38,56 @@ class NetEaseFetcher:
             return None
 
         target_is_live = is_live_version(title)
-        
-        # Filter candidates by version policy and duration
         valid_candidates = []
         for s in songs:
             s_name = s.get("name", "")
             s_album = s.get("album", {}).get("name", "")
-            s_dur = s.get("duration", 0)  # ms
-            
+            s_dur = s.get("duration", 0)
+
             if not is_title_fuzzy_match(s_name, title):
                 continue
-
-            # Version policy check
             if not matches_version_policy(target_is_live, s_name, s_album):
                 continue
-                
-            # Duration acceptability check
             if not is_duration_acceptable(s_dur, duration_ms, tolerance_sec=35):
                 continue
-                
             d_diff = abs(s_dur - duration_ms) if duration_ms > 0 else 0
             valid_candidates.append((d_diff, s))
 
-        if valid_candidates:
-            valid_candidates.sort(key=lambda x: x[0])
-            return valid_candidates[0][1].get("id")
+        if not valid_candidates:
+            return None
+        valid_candidates.sort(key=lambda x: x[0])
+        return valid_candidates[0][1]
 
-        return None
+    @classmethod
+    def search_song_id(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[int]:
+        """
+        Searches NetEase song catalog and returns the best matching song ID.
+        Applies version mutual exclusion (Live vs Studio) and duration filtering.
+        """
+        song = cls.search_best_song(title, artist, duration_ms)
+        if not song:
+            return None
+        return song.get("id")
+
+    @classmethod
+    def lookup_year(cls, title: str, artist: str = "", duration_ms: int = 0) -> str:
+        """从网易专辑 publishTime 取四位年份。"""
+        song = cls.search_best_song(title, artist, duration_ms)
+        if not song:
+            return ""
+        ts = (song.get("album") or {}).get("publishTime") or 0
+        try:
+            ts_i = int(ts)
+        except (TypeError, ValueError):
+            return ""
+        if ts_i <= 0:
+            return ""
+        if ts_i > 10_000_000_000:
+            ts_i //= 1000
+        year = time.gmtime(ts_i).tm_year
+        if 1900 <= year <= 2099:
+            return str(year)
+        return ""
 
     @classmethod
     def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, str]]:

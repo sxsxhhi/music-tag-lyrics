@@ -15,7 +15,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from scripts.tag_editor import (
     clean_year_string, normalize_artist_string, _txt, _yr,
-    infer_title_artist_from_basename,
+    infer_title_artist_from_basename, extract_year_from_album,
 )
 from scripts.lyric_validator import extract_lyricist_composer
 from core.fetchers.lrcshare import is_source_or_credit_line
@@ -28,6 +28,9 @@ def test_year_normalisation():
     # X-12: 解析不出年份时必须返回空串，不能返回前 4 个字符
     assert clean_year_string("unknown") == ""
     assert clean_year_string("现场版") == ""
+    assert extract_year_from_album("2018 (上)") == "2018"
+    assert extract_year_from_album("花粥2019“两碗三百”巡演LIVE") == "2019"
+    assert extract_year_from_album("平凡的一天") == ""
 
 
 def test_empty_value_normalisation():

@@ -123,21 +123,22 @@ def test_broken_id3_never_overwrites():
         shutil.rmtree(work, ignore_errors=True)
 
 
-def test_id3_write_keeps_other_language_frames():
-    """P0-4/D-02：只覆盖 eng+空 desc 那一帧，chi 帧必须保留。"""
+def test_id3_write_replaces_all_lyric_frames():
+    """写入逐字时清掉旧 USLT（含其它语言）与 SYLT，只留一帧 Enhanced LRC。"""
     work = tempfile.mkdtemp(prefix="mtl_pipe_")
     try:
         p = os.path.join(work, "tagged.mp3")
         tag = ID3()
         tag.add(USLT(encoding=3, lang="eng", desc="", text="OLD"))
-        tag.add(USLT(encoding=3, lang="chi", desc="", text="中文帧"))
+        tag.add(USLT(encoding=3, lang="chi", desc="", text="中文逐行"))
         tag.save(p)
 
         assert update_audio_tags(p, lyrics="<00:01.00>新歌词") is True
         t = ID3(p)
         frames = {k: str(t[k].text) for k in t.keys() if k.startswith("USLT")}
-        assert frames["USLT::chi"] == "中文帧", frames
+        assert list(frames) == ["USLT::eng"], frames
         assert frames["USLT::eng"] == "<00:01.00>新歌词", frames
+        assert not any(k.startswith("SYLT") for k in t.keys())
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

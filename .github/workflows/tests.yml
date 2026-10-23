@@ -23,3 +23,5 @@ jobs:
         run: python tests/test_m1_safety.py
       - name: GPU plain-text fallback
         run: python tests/test_gpu_plain.py
+      - name: Kugou duration gates
+        run: python tests/test_kugou_gates.py

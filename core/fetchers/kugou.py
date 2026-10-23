@@ -16,14 +16,66 @@ from ..utils.version_guard import (
     is_title_fuzzy_match,
 )
 
+# 铁律 17：搜歌元数据 ±10s；解析末行只拒预览与冲轴。
+KRCS_METADATA_WINDOW_SEC = 10
+PREVIEW_MIN_TRACK_MS = 90000
+PREVIEW_MAX_LAST_END_MS = 45000
+OVERRUN_TOLERANCE_MS = 8000
+
+# empty = 搜歌 0 条；gated = 有候选被门禁丢掉；ok = 交出歌词
+_LAST_KUGOU_STATUS = "empty"
+
+
+def last_kugou_status() -> str:
+    return _LAST_KUGOU_STATUS
+
+
+def _set_kugou_status(kind: str) -> None:
+    global _LAST_KUGOU_STATUS
+    _LAST_KUGOU_STATUS = kind
+
+
+def parsed_duration_reject_reason(last_end_ms: int, target_duration_ms: int) -> Optional[str]:
+    """预览 / 冲轴才拒；末行早于曲终是尾奏，返回 None。"""
+    if target_duration_ms <= 0:
+        return None
+    if target_duration_ms > PREVIEW_MIN_TRACK_MS and last_end_ms < PREVIEW_MAX_LAST_END_MS:
+        return "preview"
+    if last_end_ms > target_duration_ms + OVERRUN_TOLERANCE_MS:
+        return "overrun"
+    return None
+
 
 def _reject_parsed_duration(last_end_ms: int, target_duration_ms: int) -> bool:
-    """长曲预览截断或末行偏差过大则拒绝。阈值 90000/45000/8000 原样保留。"""
-    if target_duration_ms <= 0:
-        return False
-    if target_duration_ms > 90000 and last_end_ms < 45000:
+    """只拦预览截断和末字冲过曲长；尾奏导致末行早于曲终不拒（铁律 1 / F-03）。"""
+    return parsed_duration_reject_reason(last_end_ms, target_duration_ms) is not None
+
+
+def krcs_version_ok(
+    target_is_live: bool,
+    cand_title: str,
+    cand_album: str = "",
+    cand_dur_sec: int = 0,
+    target_dur_sec: int = 0,
+) -> bool:
+    """KRCS 标题无 Live、专辑为空时，时长贴齐本地 Live ±10s 视为同版本。"""
+    if matches_version_policy(target_is_live, cand_title or "", cand_album or ""):
         return True
-    return abs(last_end_ms - target_duration_ms) > 8000
+    if target_is_live and target_dur_sec > 0:
+        return abs(int(cand_dur_sec) - int(target_dur_sec)) <= KRCS_METADATA_WINDOW_SEC
+    return False
+
+
+def _log_parsed_discard(reason: str, last_end_ms: int, target_duration_ms: int) -> None:
+    last_s = last_end_ms / 1000.0
+    dur_s = target_duration_ms / 1000.0
+    if reason == "preview":
+        print(f"   ⚠️ 酷狗丢弃：预览截断（末行 {last_s:.1f}s / 曲长 {dur_s:.1f}s）")
+    elif reason == "overrun":
+        print(f"   ⚠️ 酷狗丢弃：末行冲轴（末行 {last_s:.1f}s / 曲长 {dur_s:.1f}s）")
+    else:
+        print(f"   ⚠️ 酷狗丢弃：{reason}（末行 {last_s:.1f}s / 曲长 {dur_s:.1f}s）")
+    _set_kugou_status("gated")
 
 def select_best_krc_candidate(
     candidates: List[Dict[str, Any]],
@@ -54,7 +106,9 @@ def select_best_krc_candidate(
             continue
                 
         cand_last_end = lines[-1].get("end", lines[-1].get("start", 0))
-        if _reject_parsed_duration(cand_last_end, target_duration_ms):
+        reason = parsed_duration_reject_reason(cand_last_end, target_duration_ms)
+        if reason:
+            _log_parsed_discard(reason, cand_last_end, target_duration_ms)
             continue
             
         # Scoring
@@ -77,6 +131,8 @@ def select_best_krc_candidate(
         scored_candidates.append((score, parsed))
         
     if not scored_candidates:
+        if candidates:
+            _set_kugou_status("gated")
         return None
         
     scored_candidates.sort(key=lambda x: x[0], reverse=True)
@@ -181,33 +237,49 @@ class KugouFetcher:
         target_is_live = is_live_version(title)
 
         def _version_ok(c) -> bool:
-            return matches_version_policy(
+            return krcs_version_ok(
                 target_is_live,
                 c.get("song", "") or "",
-                c.get("album", "") or ""
+                c.get("album", "") or "",
+                get_cand_dur_sec(c),
+                duration_sec,
             )
 
         if duration_sec > 0:
             valid = []
+            skipped_version = 0
+            skipped_duration = 0
             for c in candidates:
                 if not is_title_fuzzy_match(c.get("song", ""), title):
                     continue
                 if not _version_ok(c):
+                    skipped_version += 1
                     continue
                 c_dur = get_cand_dur_sec(c)
                 diff = abs(c_dur - duration_sec)
-                # Iron Rule 17: Candidate duration within 8s proximity
-                if diff <= 8:
+                # Iron Rule 17: 搜歌元数据 ±10s
+                if diff <= KRCS_METADATA_WINDOW_SEC:
                     valid.append((diff, c))
+                else:
+                    skipped_duration += 1
             if valid:
                 valid.sort(key=lambda x: x[0])
                 ranked_cands = [x[1] for x in valid]
             else:
+                if skipped_version or skipped_duration:
+                    _set_kugou_status("gated")
+                    print(
+                        f"   ⚠️ 酷狗丢弃：版本互斥或时长未贴齐"
+                        f"（版本 {skipped_version} / 时长 {skipped_duration}，窗口 ±{KRCS_METADATA_WINDOW_SEC}s）"
+                    )
                 return None
         else:
             title_matching = [c for c in candidates
                               if is_title_fuzzy_match(c.get("song", ""), title) and _version_ok(c)]
             if not title_matching:
+                if candidates:
+                    _set_kugou_status("gated")
+                    print("   ⚠️ 酷狗丢弃：版本互斥（KRCS 候选标题/专辑未过 Live 门）")
                 return None
             ranked_cands = title_matching
             
@@ -249,6 +321,7 @@ class KugouFetcher:
         Main entry point for fetching KRC lyrics.
         Enforces bidirectional strict version exclusion (Live vs Studio).
         """
+        _set_kugou_status("empty")
         songs = cls.search_song(title, artist)
         target_is_live = is_live_version(title)
         
@@ -259,12 +332,15 @@ class KugouFetcher:
             s_album = song.get("album", "")
             if matches_version_policy(target_is_live, s_title, s_album):
                 filtered_songs.append(song)
+            elif songs:
+                _set_kugou_status("gated")
             
         # If strict filter left no songs and target is live, search krcs directly
         if not filtered_songs and target_is_live:
             duration_sec = int(duration_ms // 1000) if duration_ms > 0 else 0
             direct_krc = cls.search_krc_by_keyword(title, artist, duration_sec)
             if direct_krc and direct_krc.get("lines"):
+                _set_kugou_status("ok")
                 return direct_krc
                 
         def candidate_rank(song):
@@ -294,22 +370,36 @@ class KugouFetcher:
             h = song.get("hash")
             s_dur = song.get("duration", 0)
             # Iron Rule 17: Pre-filter candidate song metadata duration
-            if duration_ms > 0 and s_dur > 0 and abs(s_dur - duration_ms) > 10000:
+            if duration_ms > 0 and s_dur > 0 and abs(s_dur - duration_ms) > KRCS_METADATA_WINDOW_SEC * 1000:
+                _set_kugou_status("gated")
+                print(
+                    f"   ⚠️ 酷狗丢弃：搜歌时长未贴齐"
+                    f"（候选 {s_dur // 1000}s / 本地 {duration_ms // 1000}s，窗口 ±{KRCS_METADATA_WINDOW_SEC}s）"
+                )
                 continue
             if h:
                 res = cls.fetch_lyrics_by_hash(h, duration_ms, title, artist)
                 if res and res.get("lines"):
                     lines = res["lines"]
-                    # Iron Rule 17: Enforce duration proximity on actual parsed lines
+                    # Iron Rule 17: 解析末行只拒预览/冲轴
                     if duration_ms > 0 and lines:
                         last_t_ms = lines[-1].get("end", lines[-1].get("start", 0))
-                        if _reject_parsed_duration(last_t_ms, duration_ms):
+                        reason = parsed_duration_reject_reason(last_t_ms, duration_ms)
+                        if reason:
+                            _log_parsed_discard(reason, last_t_ms, duration_ms)
                             continue
+                    _set_kugou_status("ok")
                     return res
                     
         # Final safety net: if still not found, try krcs keyword search
         if title:
             duration_sec = int(duration_ms // 1000) if duration_ms > 0 else 0
-            return cls.search_krc_by_keyword(title, artist, duration_sec)
-            
+            res = cls.search_krc_by_keyword(title, artist, duration_sec)
+            if res and res.get("lines"):
+                _set_kugou_status("ok")
+                return res
+
+        if songs or filtered_songs:
+            _set_kugou_status("gated")
+            print("   ⚠️ 酷狗有搜歌命中但歌词全被门禁丢掉（预览/冲轴/版本互斥），不是「酷狗没有」")
         return None

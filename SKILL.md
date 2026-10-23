@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗与多源歌词修补（v1.2.6）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。Live/录音室互斥覆盖五源与全球搜词。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗与多源歌词修补（v1.2.7）。调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖五源与全球搜词。写入歌词只留单帧 USLT。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.6)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.2.7)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -45,6 +45,7 @@ flowchart TD
 
 ### 1. 乐器长尾奏（Outro）识别防假截断铁律
 - **铁律准则**：严禁粗暴以时长差判定残缺。必须以唱词语义完整性、尾段副歌重现度、歌手真实停唱点综合判定，保护自然华彩尾奏。
+- **解析口径**：末行结束早于曲终 = 尾奏，**不得拒绝**。只拒预览截断（曲长 >90s 且末行 <45s）和末行冲过曲终 +8s。
 
 ### 2. 多歌手 `/` 连接符与乐队白名单保护铁律
 - **铁律准则**：`BAND_WHITELIST` 锁定乐队名。仅对真正的独立多合唱艺人把 `&` 等改为 `/`。
@@ -77,6 +78,7 @@ flowchart TD
   3. Hash 无果则 KRCS 关键词 + 时长降级；
   4. 版本括号参与匹配，营销垃圾括号清除；
   5. 互斥覆盖五源 API、全球纯文本、自动同目录 txt；`--lyrics-file` 用户明示则不拦。文件名补全与标题清洗保留 `(Live)` / 现场。
+  6. KRCS 标题无 Live、专辑为空时：候选时长与本地 Live **±10s** 视为同版本，放行。录音室本地仍拦截带 Live 的候选。
 
 ### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律
 - **铁律准则**：
@@ -106,13 +108,18 @@ flowchart TD
 - **铁律准则**：含「纯音乐 / 伴奏 / Instrumental / No Lyrics」等占位则拒绝；常规声乐（>60s 且原词 ≥10 行）不得被 ≤6 行覆盖；译文行数低于 `max(4, 0.3 × 原词行数)` 熔断。
 
 ### 17. 【核心红线】物理时长严密邻近与版本防串扰门禁
-- **铁律准则**：分源容差**不可统一**。LRCSHARE 末行 ±5s；酷狗元数据 ±10s、解析末行 ±8s；网易/LRCLIB 搜索元数据 ±35s。偏差 >8s 不得仅因「含译文」加分；>15s 剔除。
+- **铁律准则**：分源容差**不可统一**。LRCSHARE 末行 ±5s；酷狗**搜歌元数据 ±10s**；网易/LRCLIB 搜索元数据 ±35s。偏差 >8s 不得仅因「含译文」加分；>15s 剔除。
+- **酷狗解析末行**：只拒「曲 >90s 且末行 <45s」预览，以及「末行超过曲终 +8s」冲轴。**禁止**用「解析末行 ±8s」整份剔除（那会把尾奏当残缺）。
 
 ### 18. 【核心红线】黄金基准时间轴锚定与动态微调门禁
 - **铁律准则**：
   1. 主行 start/end/words 不可被译文改写；
   2. aggregator 译文挂载窗口为 **1500ms 最近邻**（LRCSHARE 内部仍 2000ms，不要混用）；
   3. 外语缺译文时用同一源整包替换，禁止跨源把 tlyric 挂到酷狗轴上。
+
+### 运行纪律（丢弃必须说清）
+- 源返回空时必须打印**丢弃原因**（预览 / 冲轴 / 版本互斥）。禁止对用户说「酷狗没有」，除非搜歌候选数为 0。
+- numpy 按行合成必须标明「非酷狗逐字、非 GPU」，禁止把合成轴说成酷狗逐字。
 
 ---
 
@@ -123,9 +130,9 @@ flowchart TD
 | **Title（标题）** | 纯净歌曲原名，保留官方副标题与 `(Live)` | 剔除 `[FLAC-无损]`、`【HQ高品质】`、宣发尾缀；已有标题不覆盖 | 缺标题时 `广场-李志.flac` → `广场`；`起风了 (Live)-歌手` 保留 Live |
 | **Artist（艺术家）** | 多合唱强制 `/`；缺歌手按文件名补全 | 严禁误拆白名单乐队；白名单命中仍保留 Live 后缀 | `徐良 & 小凌` → `徐良/小凌`；`Earth, Wind & Fire (Live)` 原样 |
 | **Album（专辑）** | 原样回写 | 空则跳过，不覆盖原值 | 不查发行专辑、不拦热歌榜 |
-| **Year（年份）** | 4 位公历 `YYYY` | 解析不出则不写，严禁乱码充数 | `2016-08-01` → `2016` |
+| **Year（年份）** | 4 位公历 `YYYY`；空或等于当年日历年时从专辑名四位数字、再网易 `publishTime` 补 | 解析不出则不写；严禁把「今天」写成发行年 | `2016-08-01` → `2016`；专辑 `2018 (上)` → `2018` |
 | **Lyricist / Composer** | 仅空时从歌词署名行提取 | 已有不覆盖；`--lyrics-only` 不写这两项 | `作词 : 方文山` → TEXT；`词不达意` 不提取 |
-| **Lyrics（内嵌歌词）** | Enhanced LRC，与 `.spl`/`.lrc` 镜像 | 译文不得独立时间戳插队 | FLAC/WAV/MP3/M4A/OGG/DSF |
+| **Lyrics（内嵌歌词）** | Enhanced LRC，与 `.spl`/`.lrc` 镜像；写入时删除全部 `USLT*`/`SYLT*`，只留一帧 | 译文不得独立时间戳插队；禁止逐行+逐字并存 | FLAC/WAV/MP3/M4A/OGG/DSF |
 
 ---
 
@@ -139,7 +146,7 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.2.6)]
+🛑 [Demucs v4 绝对红线阻断 (v1.2.7)]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```
@@ -157,6 +164,6 @@ Y：干声分离后 Forced Alignment；外语只对齐原文，译文挂回 `tra
 - 纯文本搜集：`core/plain_lyric_search.py`（五源 plain + GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`；抓取：`core/fetchers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / io_safe）
-- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`
+- 离线测：`tests/test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`、`test_kugou_gates.py`
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`

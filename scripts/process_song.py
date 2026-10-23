@@ -17,10 +17,14 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
 
+from datetime import date
+
 from scripts.tag_editor import (
     read_audio_tags, update_audio_tags, normalize_artist_string,
     clean_title_string, clean_year_string, infer_title_artist_from_basename,
+    extract_year_from_album,
 )
+from core.fetchers.netease import NetEaseFetcher
 from scripts.lyric_validator import (
     validate_and_fix_lyrics, pair_plain_bilingual_lyrics, extract_lyricist_composer,
 )
@@ -102,7 +106,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.6)]")
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.7)]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -193,7 +197,7 @@ def apply_numpy_word_synth(validated_data: Dict[str, Any]) -> Dict[str, Any]:
     from core.acoustic_aligner import enrich_track_with_acoustic_words
     out = enrich_track_with_acoustic_words(validated_data)
     out["synthesized_words"] = True
-    print("   🎼 已降级：按行时长合成逐字时间戳（numpy / AI-Synthesized Words，非 GPU）")
+    print("   🎼 已降级：按行时长合成逐字时间戳（numpy，非酷狗逐字、非 GPU）")
     return out
 
 
@@ -259,7 +263,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.6)]")
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.7)]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -336,6 +340,16 @@ def process_single_song(
     cleaned_title = clean_title_string(title)
     normalized_artist = normalize_artist_string(artist)
     cleaned_year = clean_year_string(year)
+    album_year = extract_year_from_album(album)
+    this_year = str(date.today().year)
+    if not cleaned_year or cleaned_year == this_year:
+        looked = album_year or NetEaseFetcher.lookup_year(
+            cleaned_title, normalized_artist, duration_ms
+        )
+        if looked and looked != this_year:
+            cleaned_year = looked
+        elif not cleaned_year:
+            cleaned_year = looked or album_year
     lyricist = tags.get("lyricist", "").strip()
     composer = tags.get("composer", "").strip()
     extracted_ly, extracted_co = extract_lyricist_composer(tags.get("lyrics") or "")
@@ -387,7 +401,12 @@ def process_single_song(
             )
 
     if not lyric_data or not lyric_data.get("lines"):
-        print(f"❌ No lyrics found or authorized for {cleaned_title} - {normalized_artist}")
+        from core.fetchers.kugou import last_kugou_status
+        if last_kugou_status() == "gated":
+            print(f"❌ 有候选被门禁丢掉，五源未交出可用歌词：{cleaned_title} - {normalized_artist}")
+            print("   （上方应有预览/冲轴/版本互斥原因；禁止说「酷狗没有」）")
+        else:
+            print(f"❌ 五源均无候选：{cleaned_title} - {normalized_artist}")
         if update_tags and not lyrics_only:
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,
@@ -512,7 +531,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.6)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.7)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
