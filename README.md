@@ -93,43 +93,48 @@
 ### 1. 六级歌词多源调度与单调等级引擎
 
 ```mermaid
-flowchart TD
-  subgraph host ["🎧 音频宿主原地改签"]
+flowchart LR
+  subgraph host ["🎧 音频输入"]
     Audio["音频文件<br/>FLAC / MP3 / M4A / WAV / OGG / DSF"]
   end
 
-  subgraph engine ["🎵 music-tag-lyrics 核心管道"]
-    Tags["tag_editor 元数据清洗<br/>规范艺人 / 4位年份 / 署名拆分 / 原地原子写入"]
-    
-    subgraph cascade ["🌐 六级歌词多源调度 (单调等级门禁)"]
-      direction TB
-      T1["Tier 1: Apple Music TTML<br/>am-lyrics 4-origin 攒票容灾 + iTunes 消歧"]
-      T2["Tier 2: 酷狗音乐 (Kugou)<br/>原生 KRC XOR+Zlib 解密"]
-      T3["Tier 3: AMLL (NCM)<br/>社区 Apple TTML 直通"]
-      T4["Tier 4: 网易云音乐<br/>行级 LRC + 官方 tlyric 精修译文"]
-      T5["Tier 5: LRCSHARE<br/>云端多语言 TTML / LRC"]
-      T6["Tier 6: LRCLIB<br/>全球开放同步歌词库"]
-      T1 --> T2 --> T3 --> T4 --> T5 --> T6
-    end
+  subgraph prep ["🏷️ 原地清洗"]
+    Tags["tag_editor 元数据清洗<br/>规范艺人 / 4位年份 / 署名拆分 / 原位原子写"]
+  end
 
-    Valid["lyric_validator<br/>尾奏放行 / 预览拦截 / 单调时序校验"]
-    Conv["converter<br/>Enhanced LRC 逐字流光 & SPL 转换"]
+  subgraph cascade ["🌐 六级歌词多源调度 (单调等级门禁)"]
+    direction TB
+    subgraph row1 ["第 1~3 档 (优先梯级)"]
+      direction LR
+      T1["Tier 1: Apple Music<br/>am-lyrics 4-origin 攒票 + iTunes 消歧"] --> T2["Tier 2: 酷狗音乐<br/>原生 KRC XOR+Zlib 解密"] --> T3["Tier 3: AMLL<br/>社区 NCM TTML 直通"]
+    end
+    subgraph row2 ["第 4~6 档 (回退梯级)"]
+      direction LR
+      T4["Tier 4: 网易云音乐<br/>行级 LRC + 官方精修 tlyric"] --> T5["Tier 5: LRCSHARE<br/>云端多语言 TTML / LRC"] --> T6["Tier 6: LRCLIB<br/>全球开放同步歌词库"]
+    end
+    T3 --> T4
+  end
+
+  subgraph resolve ["⚙️ 校验与声学对齐"]
+    Valid["lyric_validator<br/>尾奏放行 / 预览拦截 / 时序校验"]
     GPU["acoustic_aligner (Demucs v4)<br/>双端能量门禁 + Whisper 强制打轴"]
     Synth["行内加权合成<br/>(无逐字有逐行非 GPU 兜底)"]
-    Search["权威文本全球检索<br/>GitHub/raw 优先 > 必应/DuckDuckGo > 本地 txt"]
+    Search["权威文本全球检索<br/>GitHub/raw > 必应/DDG > 本地 txt"]
+    RedLine["🛑 绝不语音听写红线阻断"]
   end
 
   subgraph delivery ["💎 三位一体同目录交付"]
+    Conv["converter 格式转换"]
     OutFiles["basename.spl<br/>basename.lrc<br/>内嵌歌词 (USLT / ©lyr / LYRICS)<br/>(100% SHA-256 绝对镜像)"]
   end
 
   Audio --> Tags --> cascade
   cascade -->|命中完整逐字| Valid
-  cascade -->|有行级无逐字: 经用户确认| GPU
-  cascade -->|有行级无逐字: 拒绝或非交互| Synth
-  cascade -->|无歌词候选| Search
+  cascade -->|有行无字: 经用户确认| GPU
+  cascade -->|有行无字: 拒绝/非交互| Synth
+  cascade -->|未命中歌词| Search
   Search -->|搜到权威文本: 经用户确认| GPU
-  Search -->|无权威文本| RedLine["🛑 绝不语音听写红线阻断"]
+  Search -->|无权威文本| RedLine
   GPU --> Valid
   Synth --> Valid
   Valid --> Conv --> OutFiles
