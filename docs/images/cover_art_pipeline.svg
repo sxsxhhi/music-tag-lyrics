@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" width="960" height="280">
+  <defs>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel-bg: #f6f8fa;
+        --panel-border: #d0d7de;
+        --card-bg: #ffffff;
+        --card-border: #e1e4e8;
+        --text-title: #1f2328;
+        --text-body: #24292f;
+        --text-sub: #57606a;
+        --accent-blue: #0969da;
+        --accent-blue-bg: #ddf4ff;
+        --accent-purple: #8250df;
+        --accent-purple-bg: #fbefff;
+        --accent-green: #1a7f37;
+        --accent-green-bg: #dafbe1;
+        --accent-orange: #bc4c00;
+        --accent-orange-bg: #fff1e5;
+        --accent-red: #cf222e;
+        --accent-red-bg: #ffebe9;
+        --line: #8c959f;
+        --arrow: #57606a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1117;
+          --panel-bg: #161b22;
+          --panel-border: #30363d;
+          --card-bg: #21262d;
+          --card-border: #363b42;
+          --text-title: #f0f6fc;
+          --text-body: #c9d1d9;
+          --text-sub: #8b949e;
+          --accent-blue: #58a6ff;
+          --accent-blue-bg: #0d2d5e;
+          --accent-purple: #bc8cff;
+          --accent-purple-bg: #351a68;
+          --accent-green: #3fb950;
+          --accent-green-bg: #11381c;
+          --accent-orange: #f0883e;
+          --accent-orange-bg: #4d2306;
+          --accent-red: #f85149;
+          --accent-red-bg: #491316;
+          --line: #6e7681;
+          --arrow: #8b949e;
+        }
+      }
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+      .title { font-size: 18px; font-weight: 700; fill: var(--text-title); }
+      .subtitle { font-size: 12px; fill: var(--text-sub); }
+      .sect-title { font-size: 13px; font-weight: 700; fill: var(--text-title); }
+      .card-title { font-size: 13px; font-weight: 600; fill: var(--text-title); }
+      .card-desc { font-size: 11px; fill: var(--text-sub); }
+      .badge-text { font-size: 10px; font-weight: 600; }
+    </style>
+
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--arrow)"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-green)"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-blue)"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="280" rx="12" fill="var(--bg)"/>
+
+  <!-- Header -->
+  <text x="32" y="32" class="title">🖼️ music-tag-lyrics 三级专辑封面自动获取与原子注入架构</text>
+  <text x="32" y="50" class="subtitle">缺失时自动检索 · Apple Music 顺风车 1000x1000bb 原图 → 网易云 → 酷狗 · 魔数门禁 · 已有封面 100% 绝对保护</text>
+
+  <!-- Stage 1: Detection (x=32, w=140) -->
+  <rect x="32" y="70" width="140" height="190" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="46" y="94" class="sect-title">🔍 1. 封面状态探测</text>
+
+  <g transform="translate(44, 108)">
+    <rect width="116" height="66" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="10" y="22" class="card-title">已有内嵌封面?</text>
+    <text x="10" y="40" class="card-desc">检测 APIC / covr</text>
+    <text x="10" y="54" class="card-desc">/ PICTURE 标签</text>
+  </g>
+
+  <!-- Skip Branch -->
+  <path d="M 102 174 L 102 208" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="44" y="210" width="116" height="36" rx="4" fill="var(--accent-green-bg)"/>
+  <text x="54" y="226" class="badge-text" fill="var(--accent-green)">✅ 已有封面</text>
+  <text x="54" y="238" class="badge-text" fill="var(--accent-green)">100% 绝不覆盖跳过</text>
+
+  <!-- Flow 1 -> 2 (Missing Cover) -->
+  <path d="M 160 141 L 194 141" stroke="var(--accent-blue)" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <rect x="156" y="122" width="44" height="16" rx="3" fill="var(--accent-blue-bg)"/>
+  <text x="160" y="133" class="badge-text" fill="var(--accent-blue)">无封面</text>
+
+  <!-- Stage 2: 3-Tier Cascade (x=198, w=430) -->
+  <rect x="198" y="70" width="430" height="190" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="212" y="94" class="sect-title">🌐 2. 三级梯级自动检索 (--no-cover 可关闭)</text>
+
+  <!-- Tier 1 -->
+  <g transform="translate(210, 108)">
+    <rect width="126" height="138" rx="6" fill="var(--card-bg)" stroke="var(--accent-blue)" stroke-width="1.5"/>
+    <text x="10" y="22" class="card-title" fill="var(--accent-blue)">Tier 1: Apple Music</text>
+    <rect x="10" y="30" width="106" height="18" rx="3" fill="var(--accent-blue-bg)"/>
+    <text x="14" y="43" class="badge-text" fill="var(--accent-blue)">iTunes 顺风车首选</text>
+    <text x="10" y="66" class="card-desc">• 复用 iTunes 检索结果</text>
+    <text x="10" y="82" class="card-desc">• 正则提取原尺寸大图</text>
+    <text x="10" y="98" class="card-desc">• 1000x1000bb.jpg</text>
+    <text x="10" y="114" class="card-desc">• 零额外 API 请求开销</text>
+    <text x="10" y="130" class="badge-text" fill="var(--accent-green)">清晰度最高</text>
+  </g>
+
+  <path d="M 336 177 L 348 177" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Tier 2 -->
+  <g transform="translate(350, 108)">
+    <rect width="126" height="138" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="10" y="22" class="card-title">Tier 2: 网易云音乐</text>
+    <rect x="10" y="30" width="106" height="18" rx="3" fill="var(--panel-bg)"/>
+    <text x="14" y="43" class="badge-text" fill="var(--text-sub)">song/detail 接口</text>
+    <text x="10" y="66" class="card-desc">• 关键词直搜歌曲</text>
+    <text x="10" y="82" class="card-desc">• 提取 album.picUrl</text>
+    <text x="10" y="98" class="card-desc">• 高清专辑封面大图</text>
+    <text x="10" y="114" class="card-desc">• 华语/外语全面收录</text>
+    <text x="10" y="130" class="badge-text" fill="var(--text-sub)">二级强力回退</text>
+  </g>
+
+  <path d="M 476 177 L 488 177" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Tier 3 -->
+  <g transform="translate(490, 108)">
+    <rect width="124" height="138" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="10" y="22" class="card-title">Tier 3: 酷狗音乐</text>
+    <rect x="10" y="30" width="104" height="18" rx="3" fill="var(--panel-bg)"/>
+    <text x="14" y="43" class="badge-text" fill="var(--text-sub)">album/info 接口</text>
+    <text x="10" y="66" class="card-desc">• 酷狗专辑元数据</text>
+    <text x="10" y="82" class="card-desc">• 提取 img 专辑图</text>
+    <text x="10" y="98" class="card-desc">• 华语经典绝版补全</text>
+    <text x="10" y="114" class="card-desc">• 三级最终兜底源</text>
+    <text x="10" y="130" class="badge-text" fill="var(--text-sub)">终极保底</text>
+  </g>
+
+  <!-- Flow 2 -> 3 Gate -->
+  <path d="M 628 177 L 650 177" stroke="var(--line)" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 3: Security Gate (x=654, w=140) -->
+  <rect x="654" y="70" width="140" height="190" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="668" y="94" class="sect-title">🛡️ 3. 物理安全门禁</text>
+
+  <g transform="translate(664, 108)">
+    <rect width="120" height="138" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="10" y="22" class="card-title">二进制门禁校验</text>
+    <text x="10" y="44" class="card-desc">• JPEG 魔数校验</text>
+    <text x="18" y="58" class="badge-text" fill="var(--accent-purple)">ÿØÿ</text>
+    <text x="10" y="76" class="card-desc">• PNG 魔数校验</text>
+    <text x="18" y="90" class="badge-text" fill="var(--accent-purple)">PNG</text>
+    <text x="10" y="108" class="card-desc">• 大小硬约束</text>
+    <text x="18" y="122" class="badge-text" fill="var(--accent-red)">≥ 1KB 真实有效</text>
+  </g>
+
+  <!-- Flow 3 -> 4 Atomic Injection -->
+  <path d="M 794 177 L 816 177" stroke="var(--accent-green)" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+  <!-- Stage 4: Atomic Inject (x=820, w=108) -->
+  <rect x="820" y="70" width="108" height="190" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="830" y="94" class="sect-title">💾 4. 原子注入</text>
+
+  <g transform="translate(828, 108)">
+    <rect width="92" height="138" rx="6" fill="var(--card-bg)" stroke="var(--accent-green)" stroke-width="1.5"/>
+    <text x="8" y="22" class="card-title" fill="var(--accent-green)">原地原子写</text>
+    <text x="8" y="42" class="card-desc">• 与标签同事务</text>
+    <text x="8" y="56" class="card-desc">• 零中间冗余</text>
+    <text x="8" y="74" class="card-desc">• FLAC:</text>
+    <text x="8" y="86" class="badge-text" fill="var(--text-sub)">PICTURE 块</text>
+    <text x="8" y="102" class="card-desc">• MP3/WAV/DSF:</text>
+    <text x="8" y="114" class="badge-text" fill="var(--text-sub)">ID3 APIC 帧</text>
+    <text x="8" y="128" class="card-desc">• M4A: covr</text>
+  </g>
+</svg>
