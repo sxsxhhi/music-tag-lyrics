@@ -1,0 +1,288 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480">
+  <defs>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel-bg: #f6f8fa;
+        --panel-border: #d0d7de;
+        --card-bg: #ffffff;
+        --card-border: #e1e4e8;
+        --text-title: #1f2328;
+        --text-body: #24292f;
+        --text-sub: #57606a;
+        --accent-blue: #0969da;
+        --accent-blue-bg: #ddf4ff;
+        --accent-purple: #8250df;
+        --accent-purple-bg: #fbefff;
+        --accent-green: #1a7f37;
+        --accent-green-bg: #dafbe1;
+        --accent-orange: #bc4c00;
+        --accent-orange-bg: #fff1e5;
+        --accent-red: #cf222e;
+        --accent-red-bg: #ffebe9;
+        --line: #8c959f;
+        --arrow: #57606a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1117;
+          --panel-bg: #161b22;
+          --panel-border: #30363d;
+          --card-bg: #21262d;
+          --card-border: #363b42;
+          --text-title: #f0f6fc;
+          --text-body: #c9d1d9;
+          --text-sub: #8b949e;
+          --accent-blue: #58a6ff;
+          --accent-blue-bg: #0d2d5e;
+          --accent-purple: #bc8cff;
+          --accent-purple-bg: #351a68;
+          --accent-green: #3fb950;
+          --accent-green-bg: #11381c;
+          --accent-orange: #f0883e;
+          --accent-orange-bg: #4d2306;
+          --accent-red: #f85149;
+          --accent-red-bg: #491316;
+          --line: #6e7681;
+          --arrow: #8b949e;
+        }
+      }
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+      .title { font-size: 18px; font-weight: 700; fill: var(--text-title); }
+      .subtitle { font-size: 12px; fill: var(--text-sub); }
+      .sect-title { font-size: 13px; font-weight: 700; fill: var(--text-title); }
+      .card-title { font-size: 13px; font-weight: 600; fill: var(--text-title); }
+      .card-desc { font-size: 11px; fill: var(--text-sub); }
+      .badge-text { font-size: 10px; font-weight: 600; }
+      .branch-lbl { font-size: 10px; font-weight: 600; fill: var(--text-sub); }
+    </style>
+
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--arrow)"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-green)"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-blue)"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="480" rx="12" fill="var(--bg)"/>
+
+  <!-- Header -->
+  <text x="32" y="36" class="title">🎵 music-tag-lyrics 六级歌词多源调度与单调等级引擎</text>
+  <text x="32" y="54" class="subtitle">Apple TTML 4-origin 攒票 → 酷狗 KRC → AMLL → 网易云 → LRCSHARE → LRCLIB → Demucs v4 GPU 兜底</text>
+
+  <!-- Section 1: Input & Tag Clean (x=32, w=150) -->
+  <rect x="32" y="76" width="150" height="376" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="46" y="102" class="sect-title">🎧 音频输入与清洗</text>
+
+  <!-- Step 1.1 Audio Input -->
+  <g transform="translate(44, 120)">
+    <rect width="126" height="96" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="12" y="24" class="card-title">音频母体文件</text>
+    <text x="12" y="44" class="card-desc">FLAC / MP3 / M4A</text>
+    <text x="12" y="60" class="card-desc">WAV / OGG / DSF</text>
+    <rect x="12" y="70" width="102" height="18" rx="4" fill="var(--accent-blue-bg)"/>
+    <text x="18" y="83" class="badge-text" fill="var(--accent-blue)">原地只读探测</text>
+  </g>
+
+  <!-- Flow 1.1 -> 1.2 -->
+  <path d="M 107 216 L 107 240" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 1.2 Tag Clean -->
+  <g transform="translate(44, 246)">
+    <rect width="126" height="176" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="12" y="24" class="card-title">🏷️ tag_editor</text>
+    <text x="12" y="44" class="card-desc">• 规范合唱歌手 /</text>
+    <text x="12" y="62" class="card-desc">• 4位公历年份清洗</text>
+    <text x="12" y="80" class="card-desc">• 同行双署名拆分</text>
+    <text x="12" y="98" class="card-desc">• 歌名-歌手自动兜底</text>
+    <text x="12" y="116" class="card-desc">• 单帧歌词防冲突</text>
+    <rect x="12" y="142" width="102" height="20" rx="4" fill="var(--accent-green-bg)"/>
+    <text x="18" y="156" class="badge-text" fill="var(--accent-green)">原地原子安全替换</text>
+  </g>
+
+  <!-- Flow 1 -> 2 -->
+  <path d="M 182 250 L 210 250" stroke="var(--line)" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+  <!-- Section 2: 2x3 Cascade Engine (x=214, w=446) -->
+  <rect x="214" y="76" width="446" height="376" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="230" y="102" class="sect-title">🌐 六级歌词多源调度 (单调等级门禁 D6)</text>
+  <rect x="526" y="88" width="120" height="20" rx="4" fill="var(--accent-purple-bg)"/>
+  <text x="532" y="102" class="badge-text" fill="var(--accent-purple)">阻断低级源降级顶替</text>
+
+  <!-- ROW 1 (Priority Tiers 1-3) -->
+  <rect x="226" y="116" width="422" height="136" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-dasharray="3 3"/>
+  <text x="238" y="136" class="badge-text" fill="var(--accent-blue)">⭐ 优先梯级 (Tier 1 ~ 3)</text>
+
+  <!-- T1: Apple TTML -->
+  <g transform="translate(236, 146)">
+    <rect width="124" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--accent-blue)" stroke-width="1.5"/>
+    <text x="8" y="20" class="card-title" fill="var(--accent-blue)">Tier 1: Apple TTML</text>
+    <text x="8" y="38" class="card-desc">• am-lyrics 4-origin</text>
+    <text x="8" y="54" class="card-desc">• 攒票容灾 (≥2 404)</text>
+    <text x="8" y="70" class="card-desc">• iTunes 实时消歧</text>
+    <rect x="8" y="76" width="108" height="14" rx="3" fill="var(--accent-blue-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-blue)">3位毫秒母带逐字</text>
+  </g>
+
+  <path d="M 360 194 L 374 194" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- T2: Kugou KRC -->
+  <g transform="translate(376, 146)">
+    <rect width="124" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="20" class="card-title">Tier 2: 酷狗音乐</text>
+    <text x="8" y="38" class="card-desc">• 原生 KRC XOR 解密</text>
+    <text x="8" y="54" class="card-desc">• 华语经典高精首选</text>
+    <text x="8" y="70" class="card-desc">• 毫秒逐字极速直连</text>
+    <rect x="8" y="76" width="108" height="14" rx="3" fill="var(--accent-green-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-green)">华语逐字命中高</text>
+  </g>
+
+  <path d="M 500 194 L 514 194" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- T3: AMLL -->
+  <g transform="translate(516, 146)">
+    <rect width="122" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="20" class="card-title">Tier 3: AMLL</text>
+    <text x="8" y="38" class="card-desc">• 社区 NCM 直连</text>
+    <text x="8" y="54" class="card-desc">• Apple TTML 直通</text>
+    <text x="8" y="70" class="card-desc">• 丰富官方曲库补充</text>
+    <rect x="8" y="76" width="106" height="14" rx="3" fill="var(--accent-blue-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-blue)">母带级逐字</text>
+  </g>
+
+  <!-- Connect Row 1 to Row 2: T3 -> T4 loop -->
+  <path d="M 638 194 Q 652 194 652 260 T 236 260 L 236 295" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+  <!-- ROW 2 (Fallback Tiers 4-6) -->
+  <rect x="226" y="280" width="422" height="142" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-dasharray="3 3"/>
+  <text x="238" y="300" class="badge-text" fill="var(--accent-orange)">🔄 回退与全球梯级 (Tier 4 ~ 6)</text>
+
+  <!-- T4: Netease -->
+  <g transform="translate(236, 310)">
+    <rect width="124" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="20" class="card-title">Tier 4: 网易云音乐</text>
+    <text x="8" y="38" class="card-desc">• 行级 LRC 完整收录</text>
+    <text x="8" y="54" class="card-desc">• 官方精修 tlyric</text>
+    <text x="8" y="70" class="card-desc">• 杜绝机翻整包挂载</text>
+    <rect x="8" y="76" width="108" height="14" rx="3" fill="var(--accent-purple-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-purple)">官方精修翻译源</text>
+  </g>
+
+  <path d="M 360 358 L 374 358" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- T5: LRCSHARE -->
+  <g transform="translate(376, 310)">
+    <rect width="124" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="20" class="card-title">Tier 5: LRCSHARE</text>
+    <text x="8" y="38" class="card-desc">• 社区云端 TTML/LRC</text>
+    <text x="8" y="54" class="card-desc">• 多语言版本精准筛选</text>
+    <text x="8" y="70" class="card-desc">• Token 负向预过滤</text>
+    <rect x="8" y="76" width="108" height="14" rx="3" fill="var(--accent-blue-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-blue)">云端高精补全</text>
+  </g>
+
+  <path d="M 500 358 L 514 358" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- T6: LRCLIB -->
+  <g transform="translate(516, 310)">
+    <rect width="122" height="96" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="20" class="card-title">Tier 6: LRCLIB</text>
+    <text x="8" y="38" class="card-desc">• 全球最大开放歌词库</text>
+    <text x="8" y="54" class="card-desc">• 同步歌词免认证 API</text>
+    <text x="8" y="70" class="card-desc">• 欧美小众曲目大兜底</text>
+    <rect x="8" y="76" width="106" height="14" rx="3" fill="var(--accent-orange-bg)"/>
+    <text x="12" y="87" class="badge-text" fill="var(--accent-orange)">全球开放兜底</text>
+  </g>
+
+  <!-- Flow 2 -> 3 Branches -->
+  <!-- Branch 1: Verbatim hit -> Validator -->
+  <path d="M 660 194 L 690 194" stroke="var(--accent-green)" stroke-width="2" marker-end="url(#arrow-green)"/>
+  <rect x="662" y="176" width="60" height="16" rx="3" fill="var(--accent-green-bg)"/>
+  <text x="666" y="188" class="badge-text" fill="var(--accent-green)">命中逐字</text>
+
+  <!-- Branch 2: Lines only -> GPU / Synth -->
+  <path d="M 660 330 L 678 330 L 678 280 L 690 280" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="664" y="322" class="branch-lbl">有行无字</text>
+
+  <!-- Branch 3: No lines -> Search -->
+  <path d="M 660 380 L 678 380 L 678 360 L 690 360" fill="none" stroke="var(--accent-orange)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="664" y="396" class="branch-lbl">无候选</text>
+
+  <!-- Section 3: Verification & Alignment (x=694, w=126) -->
+  <rect x="694" y="76" width="126" height="376" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="704" y="102" class="sect-title">⚙️ 门禁与对齐</text>
+
+  <!-- 3.1 Validator -->
+  <g transform="translate(702, 120)">
+    <rect width="110" height="110" rx="6" fill="var(--card-bg)" stroke="var(--accent-green)" stroke-width="1.5"/>
+    <text x="8" y="20" class="card-title" fill="var(--accent-green)">lyric_validator</text>
+    <text x="8" y="38" class="card-desc">• 尾奏 Solo 保护</text>
+    <text x="8" y="54" class="card-desc">• 预览截断拦截</text>
+    <text x="8" y="70" class="card-desc">• 冲轴超长拦截</text>
+    <text x="8" y="86" class="card-desc">• tk ≥ tk-1 单调校验</text>
+    <text x="8" y="102" class="card-desc">• 词时长冲突钳制</text>
+  </g>
+
+  <!-- 3.2 GPU / Synth -->
+  <g transform="translate(702, 240)">
+    <rect width="110" height="88" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+    <text x="8" y="18" class="card-title">Demucs v4 GPU</text>
+    <text x="8" y="34" class="card-desc">• 双端能量门禁</text>
+    <text x="8" y="48" class="card-desc">• 短窗隔离 (≥2.5s)</text>
+    <text x="8" y="62" class="card-desc">• 词间停顿闭合标签</text>
+    <rect x="8" y="68" width="94" height="14" rx="3" fill="var(--accent-purple-bg)"/>
+    <text x="12" y="79" class="badge-text" fill="var(--accent-purple)">拒绝则 numpy 合成</text>
+  </g>
+
+  <!-- 3.3 Search / Redline -->
+  <g transform="translate(702, 338)">
+    <rect width="110" height="102" rx="6" fill="var(--card-bg)" stroke="var(--accent-red)" stroke-width="1"/>
+    <text x="8" y="18" class="card-title">权威文本检索</text>
+    <text x="8" y="34" class="card-desc">• GitHub raw 优先</text>
+    <text x="8" y="48" class="card-desc">• 必应/DuckDuckGo</text>
+    <text x="8" y="62" class="card-desc">• 本地同名 txt</text>
+    <rect x="6" y="70" width="98" height="26" rx="4" fill="var(--accent-red-bg)"/>
+    <text x="10" y="82" class="badge-text" fill="var(--accent-red)">🛑 绝不语音听写</text>
+    <text x="10" y="93" class="badge-text" fill="var(--accent-red)">无权威文本则阻断</text>
+  </g>
+
+  <!-- Flow 3 -> 4 Delivery -->
+  <path d="M 812 175 L 836 175" stroke="var(--accent-green)" stroke-width="2" marker-end="url(#arrow-green)"/>
+  <path d="M 812 284 L 824 284 L 824 175 L 836 175" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+
+  <!-- Section 4: Delivery (x=838, w=90) -->
+  <rect x="838" y="76" width="90" height="376" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
+  <text x="846" y="102" class="sect-title">💎 交付</text>
+
+  <g transform="translate(844, 120)">
+    <rect width="78" height="320" rx="6" fill="var(--card-bg)" stroke="var(--accent-green)" stroke-width="1.5"/>
+    <text x="8" y="24" class="card-title" fill="var(--accent-green)">三位一体</text>
+    <text x="8" y="44" class="card-desc">同目录输出</text>
+
+    <line x1="8" y1="56" x2="70" y2="56" stroke="var(--card-border)" stroke-width="1"/>
+
+    <text x="8" y="80" class="card-title">.spl</text>
+    <text x="8" y="96" class="card-desc">椒盐逐字</text>
+
+    <line x1="8" y1="108" x2="70" y2="108" stroke="var(--card-border)" stroke-width="1"/>
+
+    <text x="8" y="132" class="card-title">.lrc</text>
+    <text x="8" y="148" class="card-desc">ELRC标准</text>
+
+    <line x1="8" y1="160" x2="70" y2="160" stroke="var(--card-border)" stroke-width="1"/>
+
+    <text x="8" y="184" class="card-title">内嵌标签</text>
+    <text x="8" y="200" class="card-desc">USLT / ©lyr</text>
+    <text x="8" y="214" class="card-desc">LYRICS 帧</text>
+
+    <rect x="6" y="240" width="66" height="68" rx="4" fill="var(--accent-green-bg)"/>
+    <text x="10" y="260" class="badge-text" fill="var(--accent-green)">100%</text>
+    <text x="10" y="276" class="badge-text" fill="var(--accent-green)">SHA-256</text>
+    <text x="10" y="292" class="badge-text" fill="var(--accent-green)">逐字节一致</text>
+  </g>
+</svg>
