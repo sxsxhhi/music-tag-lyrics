@@ -10,12 +10,13 @@ from typing import List, Optional
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .utils.http import http_get_text, UA_DESKTOP
+from .utils.text_utils import LRC_META_LINE_RE
 from .utils.time_utils import strip_timing_tags
 from .utils.version_guard import is_title_fuzzy_match, is_live_version, matches_version_policy
 
 logger = logging.getLogger(__name__)
 
-_META_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.I)
+# 元数据行正则统一走 text_utils.LRC_META_LINE_RE（A2 去重，与 lyric_validator 共用）
 _HREF_RE = re.compile(r"""href=["'](https?://[^"'#\s]+)["']""", re.I)
 _GITHUB_BLOB_RE = re.compile(
     r"https?://(?:www\.)?github\.com/([\w.-]+)/([\w.-]+)/blob/([^/]+)/(.+)",
@@ -35,7 +36,7 @@ def lrc_or_plain_to_text(raw: str) -> str:
     out = []
     for line in (raw or "").splitlines():
         s = line.strip()
-        if not s or _META_RE.match(s):
+        if not s or LRC_META_LINE_RE.match(s):
             continue
         s = strip_timing_tags(s).strip()
         if s:

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:amll="http://www.example.com/amll">
+  <head>
+    <amll:meta key="musicName" value="大石碎胸口" />
+    <amll:meta key="artists" value="万能青年旅店" />
+    <amll:meta key="album" value="万能青年旅店" />
+  </head>
+  <body dur="00:06:07.136">
+    <div>
+      <p begin="00:00:28.700" end="00:00:33.500">
+        <span begin="00:00:28.700" end="00:00:29.500">大</span>
+        <span begin="00:00:29.500" end="00:00:30.200">石</span>
+        <span begin="00:00:30.200">碎</span>
+        <span begin="00:00:31.000" end="00:00:33.500">胸口</span>
+        <span ttm:role="x-roman" begin="00:00:28.700" end="00:00:33.500">da shi sui xiong kou</span>
+        <span ttm:role="x-bg" begin="00:00:32.000" end="00:00:33.500">(和声)</span>
+        <span ttm:role="x-translation">Chest smashed by boulder</span>
+      </p>
+      <p begin="00:06:00.000" end="00:06:07.136">
+        <span begin="00:06:00.000" end="00:06:07.136">尾声</span>
+      </p>
+    </div>
+  </body>
+</tt>

@@ -27,3 +27,7 @@ jobs:
         run: python tests/test_kugou_gates.py
       - name: Converter prelude credits
         run: python tests/test_converter_prelude.py
+      - name: Apple TTML ladder
+        run: python tests/test_apple_ttml.py
+      - name: Cover art ladder
+        run: python tests/test_cover_art.py

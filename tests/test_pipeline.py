@@ -265,12 +265,14 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
             raise AssertionError("LRCSHARE should not run after NetEase whole-package attach")
 
     reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
+    agg.AppleTTMLFetcher = FakeNone
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNE
@@ -292,6 +294,7 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
         def fetch(cls, *a, **k):
             return {"source": "netease", "lyric_type": "line", "lines": [dict(x) for x in ne_lines]}
 
+    agg.AppleTTMLFetcher = FakeNone
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNENoTrans
@@ -333,6 +336,7 @@ def test_chinese_kugou_not_replaced_by_netease_tlyric():
             raise AssertionError("华语酷狗已命中时不应再探网易")
 
     reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
@@ -345,6 +349,7 @@ def test_chinese_kugou_not_replaced_by_netease_tlyric():
         def fetch(cls, *a, **k):
             return None
 
+    agg.AppleTTMLFetcher = FakeNone
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = BoomNE

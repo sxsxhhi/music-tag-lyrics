@@ -156,6 +156,7 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
             p_end = p_begin + 2500
 
         body = _strip_span_blocks(pm.group(2), "x-bg")
+        body = _strip_span_blocks(body, "x-roman")
         spans = list(_SPAN_RE.finditer(body))
 
         words: List[Dict[str, Any]] = []
@@ -217,6 +218,7 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
                 "end": p_end,
                 "text": line_text,
                 "join": "none",
+                "synthetic": True,
             })
 
         # P1-4: 纯 x-bg 段被抽空后会剩下 text="" 与 words=[] 的幽灵行，
