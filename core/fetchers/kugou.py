@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""酷狗 KRC 抓取：Live 互斥、KRCS 降级、adjust 叠加、时长门禁。"""
+"""酷狗 KRC 抓取：Live/Remix 互斥、专辑加权、KRCS 降级、adjust 叠加、时长门禁。"""
 
 import urllib.parse
 import base64
@@ -11,6 +11,7 @@ from ..utils.http import http_get_json, UA_KUGOU
 from ..utils.text_utils import is_instrumental_placeholder
 from ..utils.version_guard import (
     is_live_version,
+    is_remix_version,
     strip_subtitle_brackets,
     matches_version_policy,
     is_title_fuzzy_match,
@@ -57,9 +58,10 @@ def krcs_version_ok(
     cand_album: str = "",
     cand_dur_sec: int = 0,
     target_dur_sec: int = 0,
+    target_is_remix: Optional[bool] = None,
 ) -> bool:
     """KRCS 标题无 Live、专辑为空时，时长贴齐本地 Live ±10s 视为同版本。"""
-    if matches_version_policy(target_is_live, cand_title or "", cand_album or ""):
+    if matches_version_policy(target_is_live, cand_title or "", cand_album or "", target_is_remix=target_is_remix):
         return True
     if target_is_live and target_dur_sec > 0:
         return abs(int(cand_dur_sec) - int(target_dur_sec)) <= KRCS_METADATA_WINDOW_SEC
@@ -139,7 +141,7 @@ def select_best_krc_candidate(
     return scored_candidates[0][1]
 
 class KugouFetcher:
-    """Fetcher for Kugou Music KRC lyrics with Live-guard and KRCS fallback."""
+    """Fetcher for Kugou Music KRC lyrics with Live/Remix guard, album weighting, and KRCS fallback."""
     
     @staticmethod
     def search_song(title: str, artist: str = "") -> List[Dict[str, Any]]:
@@ -214,11 +216,17 @@ class KugouFetcher:
             return None
 
     @classmethod
-    def search_krc_by_keyword(cls, title: str, artist: str = "", duration_sec: int = 0) -> Optional[Dict[str, Any]]:
+    def search_krc_by_keyword(
+        cls,
+        title: str,
+        artist: str = "",
+        duration_sec: int = 0,
+        album: str = "",
+    ) -> Optional[Dict[str, Any]]:
         """
         Directly queries krcs.kugou.com keyword search endpoint.
         Acts as secondary fallback when hash-based lookup yields empty candidate lists.
-        Filters candidates by duration proximity to prevent studio/live mismatch.
+        Filters candidates by version policy, duration proximity, and prioritizes matching album.
         """
         keyword = f"{title} {artist}".strip()
         search_url = f"http://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword={urllib.parse.quote(keyword)}&duration={duration_sec}&hash="
@@ -234,9 +242,8 @@ class KugouFetcher:
             d = int(c.get("duration", 0))
             return d // 1000 if d > 10000 else d
 
-        # P1-1: 这条兜底路径以前完全没有版本门禁 —— 只比标题和时长，
-        # Live 目标可能拿到录音室版本、反之亦然。三个调用点都经过这里，所以在入口统一拦截。
         target_is_live = is_live_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
 
         def _version_ok(c) -> bool:
             return krcs_version_ok(
@@ -245,7 +252,21 @@ class KugouFetcher:
                 c.get("album", "") or "",
                 get_cand_dur_sec(c),
                 duration_sec,
+                target_is_remix=target_is_remix,
             )
+
+        def _krc_cand_rank(c):
+            c_alb = (c.get("album", "") or "").strip().lower()
+            alb_c = (album or "").strip().lower()
+            alb_score = 0
+            if alb_c and c_alb:
+                if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
+                    alb_score = 60
+                elif alb_c in c_alb or c_alb in alb_c:
+                    alb_score = 30
+            c_dur = get_cand_dur_sec(c)
+            diff = abs(c_dur - duration_sec) if duration_sec > 0 else 0
+            return (-alb_score, diff)
 
         if duration_sec > 0:
             valid = []
@@ -265,7 +286,7 @@ class KugouFetcher:
                 else:
                     skipped_duration += 1
             if valid:
-                valid.sort(key=lambda x: x[0])
+                valid.sort(key=lambda x: _krc_cand_rank(x[1]))
                 ranked_cands = [x[1] for x in valid]
             else:
                 if skipped_version or skipped_duration:
@@ -281,8 +302,9 @@ class KugouFetcher:
             if not title_matching:
                 if candidates:
                     _set_kugou_status("gated")
-                    print("   ⚠️ 酷狗丢弃：版本互斥（KRCS 候选标题/专辑未过 Live 门）")
+                    print("   ⚠️ 酷狗丢弃：版本互斥（KRCS 候选标题/专辑未过门禁）")
                 return None
+            title_matching.sort(key=_krc_cand_rank)
             ranked_cands = title_matching
             
         return select_best_krc_candidate(ranked_cands, cls.download_krc_by_id, target_duration_ms=duration_sec*1000)
@@ -293,7 +315,8 @@ class KugouFetcher:
         song_hash: str,
         duration_ms: int = 0,
         title: str = "",
-        artist: str = ""
+        artist: str = "",
+        album: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Retrieves KRC lyrics by song hash.
@@ -313,26 +336,34 @@ class KugouFetcher:
                     
         # Fallback to keyword direct query if title is provided
         if title:
-            return cls.search_krc_by_keyword(title, artist, duration_sec)
+            return cls.search_krc_by_keyword(title, artist, duration_sec, album=album)
             
         return None
 
     @classmethod
-    def fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+    def fetch(
+        cls,
+        title: str,
+        artist: str = "",
+        duration_ms: int = 0,
+        album: str = "",
+    ) -> Optional[Dict[str, Any]]:
         """
         Main entry point for fetching KRC lyrics.
-        Enforces bidirectional strict version exclusion (Live vs Studio).
+        Enforces bidirectional strict version exclusion (Live vs Studio, Remix vs Original).
+        Prioritizes candidates matching target album.
         """
         _set_kugou_status("empty")
         songs = cls.search_song(title, artist)
         target_is_live = is_live_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
         
         # Apply strict version mutual exclusion
         filtered_songs = []
         for song in songs:
             s_title = song.get("title", "")
             s_album = song.get("album", "")
-            if matches_version_policy(target_is_live, s_title, s_album):
+            if matches_version_policy(target_is_live, s_title, s_album, target_is_remix=target_is_remix):
                 filtered_songs.append(song)
             elif songs:
                 _set_kugou_status("gated")
@@ -340,7 +371,7 @@ class KugouFetcher:
         # If strict filter left no songs and target is live, search krcs directly
         if not filtered_songs and target_is_live:
             duration_sec = int(duration_ms // 1000) if duration_ms > 0 else 0
-            direct_krc = cls.search_krc_by_keyword(title, artist, duration_sec)
+            direct_krc = cls.search_krc_by_keyword(title, artist, duration_sec, album=album)
             if direct_krc and direct_krc.get("lines"):
                 _set_kugou_status("ok")
                 return direct_krc
@@ -355,12 +386,21 @@ class KugouFetcher:
             else:
                 t_score = 0
                 
+            s_alb = song.get("album", "").strip().lower()
+            alb_c = album.strip().lower()
+            alb_score = 0
+            if alb_c and s_alb:
+                if alb_c == s_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(s_alb):
+                    alb_score = 60
+                elif alb_c in s_alb or s_alb in alb_c:
+                    alb_score = 30
+
             s_a = song.get("artist", "").strip().lower()
             a_c = artist.strip().lower()
             a_score = 20 if (a_c and (a_c in s_a or s_a in a_c)) else 0
             
             d_diff = abs(song.get("duration", 0) - duration_ms) if duration_ms > 0 else 0
-            return (-t_score, -a_score, d_diff)
+            return (-t_score, -alb_score, -a_score, d_diff)
             
         # Hard gate: only retain songs whose title actually matches
         title_matched_songs = [s for s in filtered_songs if is_title_fuzzy_match(s.get("title", ""), title)]
@@ -380,7 +420,7 @@ class KugouFetcher:
                 )
                 continue
             if h:
-                res = cls.fetch_lyrics_by_hash(h, duration_ms, title, artist)
+                res = cls.fetch_lyrics_by_hash(h, duration_ms, title, artist, album=album)
                 if res and res.get("lines"):
                     lines = res["lines"]
                     # Iron Rule 17: 解析末行只拒预览/冲轴
@@ -396,7 +436,7 @@ class KugouFetcher:
         # Final safety net: if still not found, try krcs keyword search
         if title:
             duration_sec = int(duration_ms // 1000) if duration_ms > 0 else 0
-            res = cls.search_krc_by_keyword(title, artist, duration_sec)
+            res = cls.search_krc_by_keyword(title, artist, duration_sec, album=album)
             if res and res.get("lines"):
                 _set_kugou_status("ok")
                 return res
