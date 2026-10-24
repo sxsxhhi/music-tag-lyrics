@@ -297,7 +297,8 @@ def process_single_song(
     lyrics_only: bool = False,
     force_gpu: bool = False,
     lyrics_file: Optional[str] = None,
-    non_interactive: bool = False
+    non_interactive: bool = False,
+    enable_apple: bool = True,
 ) -> bool:
     """
     Processes a single audio file:
@@ -391,12 +392,13 @@ def process_single_song(
             duration_ms=duration_ms,
         )
     else:
-        print("🔍 Fetching lyrics across multi-engines (Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
+        print("🔍 Fetching lyrics across multi-engines (AppleTTML/Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
         lyric_data = LyricAggregator.fetch_best_lyrics(
             title=cleaned_title,
             artist=normalized_artist,
             album=album,
-            duration_ms=duration_ms
+            duration_ms=duration_ms,
+            enable_apple=enable_apple
         )
 
         if not lyric_data or not lyric_data.get("lines"):
@@ -413,10 +415,10 @@ def process_single_song(
     if not lyric_data or not lyric_data.get("lines"):
         from core.fetchers.kugou import last_kugou_status
         if last_kugou_status() == "gated":
-            print(f"❌ 有候选被门禁丢掉，五源未交出可用歌词：{cleaned_title} - {normalized_artist}")
+            print(f"❌ 有候选被门禁丢掉，六源未交出可用歌词：{cleaned_title} - {normalized_artist}")
             print("   （上方应有预览/冲轴/版本互斥原因；禁止说「酷狗没有」）")
         else:
-            print(f"❌ 五源均无候选：{cleaned_title} - {normalized_artist}")
+            print(f"❌ 六源均无候选：{cleaned_title} - {normalized_artist}")
         if update_tags and not lyrics_only:
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,
@@ -541,7 +543,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.2.8)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.0)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
@@ -550,11 +552,14 @@ def main():
     parser.add_argument("--out-dir", default=None, help="Custom output directory for lyrics")
     parser.add_argument("--non-interactive", action="store_true",
                         help="不弹 GPU 授权：有行级歌词则 numpy 合成，无行级则本首失败")
+    parser.add_argument("--no-apple-ttml", action="store_true",
+                        help="禁用 Apple Music TTML 引擎")
     args = parser.parse_args()
 
     target = args.path
     if os.path.isfile(target):
         # P1-10: 单文件模式也返回真实退出码，脚本化调用才能判成败
+        enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
         ok = process_single_song(
             target, 
             update_tags=not args.no_tags, 
@@ -562,7 +567,8 @@ def main():
             lyrics_only=args.lyrics_only,
             force_gpu=args.force_gpu,
             lyrics_file=args.lyrics_file,
-            non_interactive=args.non_interactive
+            non_interactive=args.non_interactive,
+            enable_apple=enable_apple
         )
         return 0 if ok else 1
     elif os.path.isdir(target):
@@ -576,6 +582,7 @@ def main():
                     fp = os.path.join(root, f)
                     # P1-10: 单曲异常不能中断整批
                     try:
+                        enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
                         ok = process_single_song(
                             fp, 
                             update_tags=not args.no_tags, 
@@ -583,7 +590,8 @@ def main():
                             lyrics_only=args.lyrics_only,
                             force_gpu=args.force_gpu,
                             lyrics_file=args.lyrics_file,
-                            non_interactive=args.non_interactive
+                            non_interactive=args.non_interactive,
+                            enable_apple=enable_apple
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""多源歌词调度：酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB。外语原文与译文必须同一源整包。"""
+"""多源歌词调度：Apple TTML → 酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB。外语原文与译文必须同一源整包。"""
 
 import logging
 from typing import Dict, List, Any, Optional, Callable
 
+from .fetchers.apple_ttml import AppleTTMLFetcher
 from .fetchers.amll import AMLLFetcher
 from .fetchers.kugou import KugouFetcher, parsed_duration_reject_reason
 from .fetchers.lrcshare import LrcShareFetcher
@@ -114,8 +115,50 @@ def enrich_foreign_translation(
     return candidate
 
 
+def _rank(cand: Optional[Dict[str, Any]], is_foreign: bool) -> int:
+    """外语：译文是硬前提；华语：只要逐字。返回 -1..3。"""
+    if not cand:
+        return -1
+    # 优化 1: cand.get("lyric_type") in ("word", "verbatim")
+    is_word = cand.get("lyric_type") in ("word", "verbatim") or any(
+        l.get("words") for l in cand.get("lines") or []
+    )
+    word = 1 if is_word else 0
+    trans = 1 if candidate_has_translation(cand) else 0
+    return (trans * 2 + word) if is_foreign else (2 + word)
+
+
+def _adopt(
+    cur: Optional[Dict[str, Any]],
+    new: Optional[Dict[str, Any]],
+    is_foreign: bool,
+    trace: Optional[List[str]] = None
+) -> Optional[Dict[str, Any]]:
+    """单调等级采纳原则：只有严格更高等级才允许整包替换当前候选。"""
+    if not new:
+        return cur
+    if not cur:
+        return new  # 从无到有，永远允许
+
+    cur_rank = _rank(cur, is_foreign)
+    new_rank = _rank(new, is_foreign)
+
+    if new_rank > cur_rank:
+        if cur.get("source") == "apple-ttml":
+            print(f"ℹ️ [apple-ttml] 已交出原文逐字，因等级提升整包换 {new.get('source')}")
+            if trace is not None:
+                trace.append("replaced_by_higher_rank")
+        return new
+
+    if cur.get("source") == "apple-ttml":
+        print(f"ℹ️ [apple-ttml] 拒绝被 {new.get('source')} 顶替（等级 {new_rank} ≤ {cur_rank}）")
+        if trace is not None:
+            trace.append("downgrade_blocked")
+    return cur
+
+
 class LyricAggregator:
-    """Kugou → AMLL → NetEase → LRCSHARE → LRCLIB。Demucs 在 process_song 失败分支。"""
+    """Apple TTML → Kugou → AMLL → NetEase → LRCSHARE → LRCLIB。Demucs 在 process_song 失败分支。"""
 
     @classmethod
     def fetch_best_lyrics(
@@ -123,10 +166,16 @@ class LyricAggregator:
         title: str,
         artist: str = "",
         album: str = "",
-        duration_ms: int = 0
+        duration_ms: int = 0,
+        *,
+        enable_apple: bool = True
     ) -> Optional[Dict[str, Any]]:
         is_foreign = is_foreign_track(title, artist)
-        candidate = None
+        candidate: Optional[Dict[str, Any]] = None
+        trace: List[str] = []
+
+        def need_more(c: Optional[Dict[str, Any]]) -> bool:
+            return (not c) or (is_foreign and not candidate_has_translation(c))
 
         def _probe(fetch_fn: Callable[[], Optional[Dict[str, Any]]], source: str = "") -> Optional[Dict[str, Any]]:
             try:
@@ -135,11 +184,7 @@ class LyricAggregator:
                     return None
                 if is_instrumental_placeholder(res["lines"], duration_ms):
                     return None
-                # P1-A: 五源统一时长门禁。旧版只有酷狗有门禁，AMLL/网易/LRCLIB
-                # 完全不校验，尾部被截断的歌词会静默通过。
-                # 只拒「预览截断」与「末字冲轴」，末行早于曲终属器乐尾奏、放行（铁律 1）。
-                # 仅在拿到真实音频时长时启用：行级源的 lines[-1]["end"] 可能是
-                # lrc_parser 合成的 start+3500，用它跑 preview 会造成假拒。
+                # 六源统一时长门禁：只拒预览与冲轴
                 if duration_ms > 0:
                     last_end = res["lines"][-1].get("end", 0)
                     reject = parsed_duration_reject_reason(last_end, duration_ms)
@@ -152,18 +197,25 @@ class LyricAggregator:
                 logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
             return None
 
-        # 1. Kugou
-        candidate = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms), "kugou") or candidate
+        # T1 Apple TTML —— 第 1 档
+        if enable_apple:
+            apple_cand = _probe(lambda: AppleTTMLFetcher.fetch(
+                title, artist=artist, duration_ms=duration_ms, album=album), "apple-ttml")
+            candidate = _adopt(candidate, apple_cand, is_foreign, trace)
 
-        # 2. AMLL
-        if not candidate or (is_foreign and not candidate_has_translation(candidate)):
-            amll_res = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms), "amll")
-            if amll_res:
-                candidate = amll_res
+        # T2 酷狗 —— 仅 T1 为空时尝试
+        if not candidate:
+            kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms), "kugou")
+            candidate = _adopt(candidate, kg_cand, is_foreign, trace)
 
-        # 3. NetEase（提前一档）。外语缺译文时：仅当网易自带可用 tlyric 才整包替换。
-        need_ne = (not candidate) or (is_foreign and not candidate_has_translation(candidate))
-        if need_ne:
+        # T3 AMLL(ncm) —— need_more 时进；仅 rank 提升才采纳
+        if need_more(candidate):
+            amll_cand = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms), "amll")
+            if amll_cand:
+                candidate = _adopt(candidate, amll_cand, is_foreign, trace)
+
+        # T4 网易 —— 整包替换必须自带可用 tlyric，且 rank 严格提升
+        if need_more(candidate):
             ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms), "netease")
             if ne_res:
                 entries = _hanzi_tlyric_entries(ne_res.get("tlyric", ""))
@@ -173,15 +225,15 @@ class LyricAggregator:
                 if not candidate:
                     candidate = ne_res
                 elif attached:
-                    candidate = ne_res
+                    candidate = _adopt(candidate, ne_res, is_foreign, trace)
 
-        # 4. LRCSHARE：缺主词，或外语缺译文且该源自身带译文整包
-        if not candidate or (is_foreign and not candidate_has_translation(candidate)):
+        # T5 LRCSHARE —— 缺主词，或外语缺译文且该源自身带译文整包，且 rank 提升
+        if need_more(candidate):
             ls_res = _probe(lambda: LrcShareFetcher.fetch(title, artist, duration_ms), "lrcshare")
             if ls_res and (not candidate or ls_res.get("has_translation")):
-                candidate = ls_res
+                candidate = _adopt(candidate, ls_res, is_foreign, trace)
 
-        # 5. LRCLIB
+        # T6 LRCLIB —— 仅完全无候选
         if not candidate:
             candidate = _probe(lambda: LRCLIBFetcher.fetch(title, artist, album, duration_ms), "lrclib")
 

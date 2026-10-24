@@ -69,9 +69,9 @@ def strip_timing_tags(text: str) -> str:
 
 def format_time_tag(ms: int, bracket: str = "[]", precision: int = 2) -> str:
     """
-    格式化为 [mm:ss.xx]（precision=2）或 [mm:ss.xxx]（precision=3）。
+    格式化为 [mm:ss.xx]（precision=2，默认）或 [mm:ss.xxx]（precision=3）。
 
-    P1-6: 用整数厘秒做四舍五入，避免 59996ms 被格式化成 [00:60.00]（非法时间戳）；
+    P1-6: 用整数厘秒做舍入（Python round，银行家舍入，见下），避免 59996ms 被格式化成 [00:60.00]（非法时间戳）；
     分钟位不再做两位截断，超过 99 分钟输出 [100:00.00]，与解析侧的三位分钟正则配套。
 
     精度策略（v1.2.8）：源是 3 位毫秒就出 3 位，源只有 1-2 位才退回 2 位。

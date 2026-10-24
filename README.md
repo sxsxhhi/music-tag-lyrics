@@ -6,8 +6,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.2.8)。**  
-> 调度顺序：酷狗 (KRC) → AMLL (Apple Music TTML) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（最后一档）。恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**（全文见 `SKILL.md`）。外语原文与译文必须同一源整包；逐字只打原文，译文为 ELRC 行级副行。
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.3.0)。**  
+> 调度顺序：Apple TTML(am-lyrics) → 酷狗 (KRC) → AMLL (ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（最后一档）。恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**（全文见 `SKILL.md`）。外语原文与译文必须同一源整包；逐字只打原文，译文为 ELRC 行级副行。
 
 ---
 
@@ -183,6 +183,7 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| [**v1.3.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.0) | `2026-10-24` | **Apple TTML 升为第 1 档 · 多镜像 Origin 攒票 · 索引反查与单调等级调度** | • **Apple TTML 升为第 1 档**：所有歌曲优先尝试 Apple Music TTML（`am-lyrics/{appleId}.ttml`）；多镜像按 origin 攒票回退（gbclstudio / jsdelivr / bikonoo / dimeta），单次 404 不终局，≥2 个不同 origin 404 才判定 NOT_FOUND<br/>• **本地索引反查 + iTunes 实时兜底**：`am-lyrics/index.jsonl` 2,745 行聚合折叠为 1,773 组（唯一 rawLyricFile），支持 strict/loose/title 反查；33 个同名多文件歧义键通过全量专辑展开与批量 Lookup 精准消歧<br/>• **单调等级调度（D6）**：严格定义四级 Rank（逐字+译文(3) > 行级+译文(2) > 逐字无译文(1) > 行级无译文(0)），彻底阻断后续同级或低级源的无条件顶替<br/>• **华语 Strict 门禁（D4）**：华语曲目必须达成 strict（标题严格、艺人交集、版本互斥、时长吻合）才覆盖酷狗；loose 华语自动落酷狗<br/>• **外语译文优先（D5）**：外语 Apple 逐字无译文时允许被后续带精修官方译文的网易/LRCSHARE 整包替换，禁止跨源挂载<br/>• **时长证据修正**：`<body dur>` 为歌词轴长非曲长，以 E1 `trackTimeMillis`（us/cn 递进）为第一判据，E3b_floor (≥0.50) 拦截假截断，长篇 Outro 尾奏自然放行<br/>• **轻量百行诊断 CLI**：新增 `scripts/ttml2lyrics.py`，支持音频/TTML/Apple ID/歌名检索，原生输出 3 位毫秒 Enhanced LRC<br/>• **工程化与测试**：新增 43 条全量离线单元测试（121/121 全绿），CI 集成测试阶梯 | 生产级高精调度 |
 | [**v1.2.8**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.8) | `2026-10-23` | **精度自适应 · 署名声部修复 · 五源统一时长门禁** | • **精度自适应**：源时间戳是 3 位毫秒就输出 3 位（`[mm:ss.xxx]`），源只有 1–2 位才退回 2 位；粒度在解析层探测（`detect_time_precision`，TTML/KRC 固定 3），经 `data["time_precision"]` 透传；GPU 路径去掉秒级 `round(,2)`，避免 3 位退化成 `x.x0`<br/>• **标题行压缩（P0）**：`to_spl` 改为用 enrich **之前**的首条正文行算首唱时间，修复「有署名时标题行被 `min(5500, 6000//2)` 压到 3.0s、每字 117ms」；标题去重改用 enrich 前快照，消除首句即「歌名-歌手」时的重复标题<br/>• **署名判定统一**：`converter` 改调 `lyric_validator.is_credit_line()`，窗口统一 12 行；修掉「鼓楼」「键盘上的泪」「作词人」被误判为署名行的假阳性<br/>• **同行双署名**：`extract_lyricist_composer` 改分段式解析，`作词 : 张三 作曲 : 李四` 不再把「作曲」吞进作词人名<br/>• **逐字补齐早退**：条件由 `any(len(words)>=2)` 改为「所有非署名正文行都已有逐字」，部分逐字源不再产出逐字/纯文本混排<br/>• **五源统一时长门禁**：`parsed_duration_reject_reason` 下沉到 `aggregator._probe`；LRCSHARE 删掉 `abs(末行-曲长)>5s` 对称拒（原会丢完整尾奏歌词）；`parse_ttml` 解析 `<body dur>` 供离线兜底<br/>• **TTML 解析**：按 `begin` 稳定排序（对唱分 `<div>` 不再被 validator 压平）；span 间排版换行不再被当词边界插空格；缺 `end` 取下一 span 或行尾；纯 `x-bg` 段不再留幽灵行；属性兼容单引号<br/>• **校验副作用**：`validate_and_fix_lyrics` 改深拷贝、词时长与下一词钳制防重叠、兜底下限 100ms 与 80ms 告警错开<br/>• **工程化**：离线测试 **78** 条（含 `test_converter_prelude.py`），`baseline.json` 已重跑 | 生产级稳定 |
 | [**v1.2.7**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.7) | `2026-10-23` | **尾奏不误拒 · 单帧歌词 · 补年份 · 酷狗丢弃日志** | • **铁律 1/17**：末行早于曲终 = 尾奏，不得拒绝；酷狗搜歌元数据 ±10s；解析末行只拒预览（曲 >90s 且末行 <45s）与冲轴（末行超过曲终 +8s）<br/>• **铁律 9**：KRCS 标题无 Live、专辑为空时，时长与本地 Live ±10s 视为同版本<br/>• **年份**：空或等于当年日历年时从专辑名四位数字、再网易 `publishTime` 补；禁止把「今天」写成发行年<br/>• **单帧歌词**：写入 Enhanced LRC 时删除全部 `USLT*`/`SYLT*`，只留一帧<br/>• **丢弃日志**：酷狗有候选被门禁丢掉时打印原因，禁止谎称「酷狗没有」；numpy 合成标明非酷狗逐字<br/>• **工程化**：`UA_DEFAULT` 1.2.7；离线测补尾奏/预览/冲轴/Live 时长贴齐 | 生产级稳定 |
 | [**v1.2.6**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.6) | `2026-10-22` | **元数据修补 · Live 全局互斥 · 含 v1.2.5 热修补** | • **文件名兜底**：缺标题/歌手按「歌名-歌手」（` - ` 或末段 `-`）补全；标题 `(Live)` 保留<br/>• **作词/作曲**：仅空时从内嵌或新抓歌词署名行提取；已有不覆盖；`--lyrics-only` 不写这两项<br/>• **抓词失败仍洗标签**：默认模式仍写回 title/artist/year/作词作曲，不写歌词帧<br/>• **Live 全局**：五源 API + 全球纯文本 + 自动同目录 txt 双向互斥；`--lyrics-file` 不拦；白名单不再剥歌手栏 Live 后缀<br/>• **文档**：Skill 专辑/作词行与实现对齐（专辑原样回写）<br/>• **收录 v1.2.5 热修补**：调度酷狗→AMLL→网易→LRCSHARE→LRCLIB→GPU；外语同一源整包译文；有行无字先问 GPU（`line_timing_hints`），拒绝/非交互才 numpy；无 `lines` 时 GitHub/raw 优先全球搜文本，无文本红线阻断；ELRC 只给原文写逐字<br/>• **工程化**：`UA_DEFAULT` 1.2.6；离线 CI | 生产级稳定 |
@@ -204,6 +205,7 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 项目 / 规范 | 官方仓库 / 地址 | 开源许可证 | 说明与致敬 |
 | :--- | :--- | :--- | :--- |
+| **iTunes Search / Lookup API** | [`developer.apple.com`](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/index.html) | 开放服务 | 感谢 Apple 提供的 iTunes 开放检索服务，用于毫秒级曲目时长验证与精准版本消歧。 |
 | **AMLL (Apple Music Like Lyrics)** | [`amll-dev/amll-ttml-db`](https://github.com/amll-dev/amll-ttml-db) | **CC0-1.0** | 感谢 AMLL 社区构建并无私开放的高质量 Apple Music 官方 TTML 歌词数据库。 |
 | **LRCSHARE** | [`https://api.lrcshare.com`](https://api.lrcshare.com) | 开放规范 | 感谢 LRCSHARE 社区及 Lyrico 插件团队提供的高品质多语言歌词、逐词打点与 TTML 社区开放服务。 |
 | **LRCLIB** | [`https://lrclib.net`](https://lrclib.net) | **MIT** | 感谢 Tran Xuan Thang 创建的全球最大开放同步歌词数据库与免认证 API 服务。 |
