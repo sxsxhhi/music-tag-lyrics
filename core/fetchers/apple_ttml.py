@@ -8,7 +8,6 @@ from typing import Optional, Dict, Any, Tuple, List, Set, NamedTuple
 
 from ..parsers.ttml_parser import parse_ttml
 from ..utils import http
-http_get_text_ex = http.http_get_text_ex
 from ..utils.http import HttpResult
 from ..utils.text_utils import is_foreign_track, is_instrumental_placeholder
 from ..utils.text_match import (
@@ -171,27 +170,47 @@ class AppleTTMLFetcher:
     """Apple Music TTML 抓取与调度适配器。"""
 
     @classmethod
-    def fetch_by_apple_id(
+    def fetch_by_apple_id_ex(
         cls,
         apple_id: str,
         timeout: float = SONG_DEADLINE_S
-    ) -> Optional[Dict[str, Any]]:
-        """直给 Apple ID 抓取 TTML 并解析为增强歌词结构。"""
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """直给 Apple ID 抓取，返回 (歌词数据或 None, verdict)。
+
+        verdict: OK / NOT_FOUND(AMLL 未收录) / UNREACHABLE / SUSPECT_MISSING(不可达类)
+                 / PARSE_EMPTY / NO_VERBATIM(内容不合格) / INVALID(空 ID)。
+        """
         if not apple_id:
-            return None
+            return None, "INVALID"
         verdict, text, meta = fetch_ttml_raw(str(apple_id).strip(), deadline_s=timeout)
         if verdict != "OK" or not text:
-            return None
+            return None, verdict
 
         data = parse_ttml(text)
         if not data or not data.get("lines"):
-            return None
+            return None, "PARSE_EMPTY"
+        has_verbatim = any(
+            w.get("start") is not None and not w.get("synthetic")
+            for l in data["lines"] for w in (l.get("words") or [])
+        )
+        if not has_verbatim:
+            return None, "NO_VERBATIM"
 
         data["source"] = "apple-ttml"
         data["lyric_type"] = "word"
         data["time_precision"] = 3
         data["apple_music_id"] = str(apple_id).strip()
         data["meta_fetch"] = meta
+        return data, "OK"
+
+    @classmethod
+    def fetch_by_apple_id(
+        cls,
+        apple_id: str,
+        timeout: float = SONG_DEADLINE_S
+    ) -> Optional[Dict[str, Any]]:
+        """兼容旧签名：只要数据，丢弃 verdict。"""
+        data, _ = cls.fetch_by_apple_id_ex(apple_id, timeout=timeout)
         return data
 
     @classmethod
@@ -239,15 +258,22 @@ class AppleTTMLFetcher:
                             ttml_text = txt
                             resolved_mirror = meta.get("mirror", "")
                         elif len(chosen_entry.ids) > 1:
-                            # 其余最多 3 个 id 各打 1 次，不计票，直接尝试首个镜像
-                            gbcl = MIRRORS[0]
+                            # 其余最多 3 个 id；403/timeout 视为未知，最多换 2 个镜像；404 才换下一个 id
                             for alt_id in chosen_entry.ids[1:4]:
-                                alt_url = f"{gbcl.base}{TTML_PATH.format(apple_id=alt_id)}"
-                                alt_res = http.http_get_text_ex(alt_url, timeout=2.5)
-                                if alt_res.status == 200 and "<tt" in (alt_res.text[:2000] if alt_res.text else "").lower():
-                                    target_apple_id = alt_id
-                                    ttml_text = alt_res.text
-                                    resolved_mirror = gbcl.name
+                                found_alt = False
+                                for m in MIRRORS[:2]:
+                                    alt_url = f"{m.base}{TTML_PATH.format(apple_id=alt_id)}"
+                                    alt_res = http.http_get_text_ex(alt_url, timeout=2.5)
+                                    if alt_res.status == 200 and "<tt" in (alt_res.text[:2000] if alt_res.text else "").lower():
+                                        target_apple_id = alt_id
+                                        ttml_text = alt_res.text
+                                        resolved_mirror = m.name
+                                        found_alt = True
+                                        break
+                                    if alt_res.status == 403 or alt_res.status == 0:
+                                        continue
+                                    break
+                                if found_alt:
                                     break
 
         # -------------------------------------------------------------
@@ -279,9 +305,12 @@ class AppleTTMLFetcher:
         # -------------------------------------------------------------
         # 4. 门禁验证 (Gate)
         # -------------------------------------------------------------
-        # 结构门：只拒逐字行 0 行与占位词
-        has_any_words = any(l.get("words") for l in lines)
-        if not has_any_words:
+        # 结构门：只认真 span 词，整句兜底的 synthetic word 不算逐字
+        has_verbatim = any(
+            w.get("start") is not None and not w.get("synthetic")
+            for l in lines for w in (l.get("words") or [])
+        )
+        if not has_verbatim:
             logger.info("   ℹ️ [apple-ttml] 门禁丢弃：0 行逐字")
             return None
 

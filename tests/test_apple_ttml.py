@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (43 条全量测试)。"""
+"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (55 条全量测试)。"""
 
 import os
 import sys
@@ -22,9 +22,46 @@ from core.fetchers.amll_index import AmllIndex, Entry, Variant
 from core.fetchers.itunes_client import ITunesClient
 from core.parsers.ttml_parser import parse_ttml
 import core.aggregator as agg
-from scripts.ttml2lyrics import main as ttml2lyrics_main
+from scripts.ttml2lyrics import main as ttml2lyrics_main, extract_apple_id
+from core.utils.text_match import primary_artist, artist_token_list
+from core.utils.cache_paths import set_cache_dir_override
 
 FIXTURES_DIR = Path(REPO_ROOT) / "tests" / "fixtures"
+
+
+# =====================================================================
+# 公共缓存沙盒（R1）：临时缓存目录 + 单例复位。
+# 任何用例绝不读写真实 %LOCALAPPDATA%\music-tag-lyrics\ 缓存。
+# =====================================================================
+
+import functools
+import shutil
+import tempfile as _tempfile_mod
+from contextlib import contextmanager
+
+
+@contextmanager
+def _cache_sandbox():
+    td = Path(_tempfile_mod.mkdtemp(prefix="mtl-test-"))
+    set_cache_dir_override(td)
+    ITunesClient.reset_instance()
+    AmllIndex.reset_instance()
+    try:
+        yield
+    finally:
+        ITunesClient.reset_instance()
+        AmllIndex.reset_instance()
+        set_cache_dir_override(None)
+        shutil.rmtree(td, ignore_errors=True)
+
+
+def sandboxed(fn):
+    """整用例包进缓存沙盒：真实用户缓存零读写零污染。"""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _cache_sandbox():
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 # =====================================================================
@@ -181,7 +218,6 @@ def test_a8_deadline_timeout_caps_to_suspect():
     orig_http = http_mod.http_get_text_ex
     orig_perf = time.perf_counter
     http_mod.http_get_text_ex = fake_http
-    atm.http_get_text_ex = fake_http
     time.perf_counter = lambda: fake_clock[0]
     try:
         verdict, text, meta = atm.fetch_ttml_raw("12345", deadline_s=6.0)
@@ -334,6 +370,7 @@ def _make_ttml_body(music_name="测试曲", artist="测试歌手", album="测试
 </tt>"""
 
 
+@sandboxed
 def test_c1_duration_uses_itunes_not_body_dur():
     """C1: local=423533 / itunes=423533 / body=367136 -> PASS（不因 body 尾差误拒）。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -359,6 +396,7 @@ def test_c1_duration_uses_itunes_not_body_dur():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c2_e1_long_outro_still_pass():
     """C2: E1 合格 + 尾差 120s（比例 0.72 ≥ 0.50）仍 PASS。"""
     # local=420000, itunes=420000, axis=300000 -> ratio=0.714 >= 0.50
@@ -381,6 +419,7 @@ def test_c2_e1_long_outro_still_pass():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c3_truncated_body_rejected():
     """C3: 末行 200000 / 音频 423533 (比例 0.47 < 0.50) 即使 body dur 写成满曲也拒。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:07:03.533", last_end=200000)
@@ -401,6 +440,7 @@ def test_c3_truncated_body_rejected():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c4_missing_body_dur_falls_back_to_last_line_end():
     """C4: 缺 body dur 时 axis 自动回退到末行 end，不抛异常。"""
     ttml_txt = """<?xml version="1.0" encoding="utf-8"?>
@@ -434,6 +474,7 @@ def test_c4_missing_body_dur_falls_back_to_last_line_end():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c5_zero_local_duration_degrades_without_crash():
     """C5: 本地音频时长为 0 时华语安全返回 None，不抛异常。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店")
@@ -453,6 +494,7 @@ def test_c5_zero_local_duration_degrades_without_crash():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c6_no_e1_e3b_strict_fail_chinese_none_foreign_loose():
     """C6: 无 E1 时 E3b_strict 失败：华语返回 None，外语给 loose。"""
     # axis=200000, duration=300000 (ratio=0.666): floor 0.50 passed, strict 0.70 failed
@@ -477,7 +519,7 @@ def test_c6_no_e1_e3b_strict_fail_chinese_none_foreign_loose():
 
         # 外语 -> loose
         fake_cand = {"apple_id": "9999999999", "title": "Hello", "artist": "Adele", "album": "25", "duration_ms": 300000}
-        ITunesClient.get_instance().cache["track:hello|adele|[]"] = {"data": fake_cand, "ts": int(time.time())}
+        ITunesClient.get_instance().cache["track:hello|adele|[]|300000"] = {"data": fake_cand, "ts": int(time.time())}
         res_en = AppleTTMLFetcher.fetch("Hello", "Adele", duration_ms=300000, album="25")
         assert res_en is not None
         assert res_en["match"]["confidence"] == "loose"
@@ -486,6 +528,7 @@ def test_c6_no_e1_e3b_strict_fail_chinese_none_foreign_loose():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c7_body_dur_overrun_rejected():
     """C7: axis > audio + 8000 冲轴被硬拒。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:05:00.000", last_end=300000)
@@ -505,6 +548,7 @@ def test_c7_body_dur_overrun_rejected():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c8_preview_rejected():
     """C8: 曲长 > 90s 但 axis < 45s（预览截断）被拒。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:00:30.000", last_end=30000)
@@ -524,6 +568,7 @@ def test_c8_preview_rejected():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c9_zero_verbatim_lines_rejected():
     """C9: 逐字行 0 行（结构门）硬拒。"""
     ttml_txt = """<?xml version="1.0" encoding="utf-8"?>
@@ -534,7 +579,7 @@ def test_c9_zero_verbatim_lines_rejected():
   </head>
   <body dur="00:06:07.136">
     <div>
-      <p begin="00:00.000" end="00:05.000">没有逐字只有整句</p>
+      <p begin="00:00.000" end="00:06:07.136">没有逐字只有整句</p>
     </div>
   </body>
 </tt>"""
@@ -553,6 +598,7 @@ def test_c9_zero_verbatim_lines_rejected():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c10_chinese_loose_returns_none():
     """C10: 华语若未能达成 strict（仅 loose），返回 None 落酷狗。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口 (Live)", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -573,6 +619,7 @@ def test_c10_chinese_loose_returns_none():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c11_e1_mismatch_never_falls_back_to_e2():
     """C11: E1 有值但不合格时（时差 > 5s），硬规则 1 禁止回落 E2，直接硬拒。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -595,6 +642,7 @@ def test_c11_e1_mismatch_never_falls_back_to_e2():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c12_us_rc0_cn_rc1_strict():
     """C12: US 店面 rc=0，但 CN 店面查询成功且 Δ≤5s -> 判定 strict。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -624,6 +672,7 @@ def test_c12_us_rc0_cn_rc1_strict():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c13_both_rc0_e2_and_e3b_strict_pass():
     """C13: US/CN 两区都 rc=0，但 E2 专辑匹配 + E3b_strict 达标 -> strict。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -650,6 +699,7 @@ def test_c13_both_rc0_e2_and_e3b_strict_pass():
         AmllIndex.reset_instance()
 
 
+@sandboxed
 def test_c14_itunes_429_falls_back_to_e2_e3b_strict():
     """C14: iTunes 遭遇 429 冷却，退到 E2 + E3b_strict 不直接放弃。"""
     ttml_txt = _make_ttml_body(music_name="大石碎胸口", artist="万能青年旅店", album="万能青年旅店", body_dur="00:06:07.136", last_end=367136)
@@ -674,6 +724,7 @@ def test_c14_itunes_429_falls_back_to_e2_e3b_strict():
         ITunesClient.get_instance().cooldown_until = 0.0
 
 
+@sandboxed
 def test_c15_search_url_never_contains_country_cn():
     """C15: 断言 search URL 永不含 country=cn，lookup 允许 cn。"""
     calls = []
@@ -818,6 +869,7 @@ def test_e3_apple_verbatim_no_trans_amll_no_trans_keeps_apple():
 
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
@@ -829,6 +881,7 @@ def test_e3_apple_verbatim_no_trans_amll_no_trans_keeps_apple():
             return None
 
     agg.AppleTTMLFetcher = FakeApple
+    agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeAMLL
     agg.NetEaseFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
@@ -862,11 +915,18 @@ def test_e4_apple_verbatim_no_trans_amll_with_trans_replaces():
                 "lines": [{"start": 1000, "end": 4000, "text": "Hello", "translation": "你好", "words": [{"text": "Hello"}]}]
             }
 
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
     }
     agg.AppleTTMLFetcher = FakeApple
+    agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeAMLLWithTrans
     try:
         cand = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=0)
@@ -981,11 +1041,13 @@ def test_e7_lrcshare_with_trans_replaces_apple_verbatim_no_trans():
 
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
     }
     agg.AppleTTMLFetcher = FakeApple
+    agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNone
     agg.LrcShareFetcher = FakeLrcShare
@@ -995,6 +1057,250 @@ def test_e7_lrcshare_with_trans_replaces_apple_verbatim_no_trans():
     finally:
         for k, v in reals.items():
             setattr(agg, k, v)
+
+
+def test_e8_foreign_apple_no_trans_kugou_with_trans_replaces():
+    """外语 Apple 逐字无译文遇酷狗逐字+译文 -> 整包换成酷狗。"""
+    class FakeApple:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {
+                "source": "apple-ttml",
+                "lyric_type": "word",
+                "lines": [{"start": 1000, "end": 4000, "text": "Hello", "words": [{"text": "Hello"}]}],
+            }
+
+    class FakeKugou:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return {
+                "source": "kugou",
+                "lyric_type": "word",
+                "has_embedded_translation": True,
+                "lines": [{
+                    "start": 1000, "end": 4000, "text": "Hello", "translation": "你好",
+                    "words": [{"text": "Hello"}],
+                }],
+            }
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+    agg.AppleTTMLFetcher = FakeApple
+    agg.KugouFetcher = FakeKugou
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = FakeNone
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        cand = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=0)
+        assert cand["source"] == "kugou"
+    finally:
+        for k, v in reals.items():
+            setattr(agg, k, v)
+
+
+@sandboxed
+def test_f1_itunes_cache_key_includes_duration():
+    """先 180s 命中再 295s 不得返回同一 apple_id。"""
+    calls = []
+
+    def fake_http(url, **k):
+        calls.append(url)
+        if "search?" not in url:
+            return HttpResult(200, '{"results":[]}', 10, 10, "")
+        body = json.dumps({"results": [
+            {"trackId": 111, "trackName": "Hello", "artistName": "Adele",
+             "trackTimeMillis": 180000, "collectionName": "25"},
+            {"trackId": 222, "trackName": "Hello", "artistName": "Adele",
+             "trackTimeMillis": 295000, "collectionName": "25"},
+        ]})
+        return HttpResult(200, body, len(body), 10, "")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        c = ITunesClient.get_instance()
+        r1 = c.search_track("Hello", "Adele", duration_ms=180000)
+        r2 = c.search_track("Hello", "Adele", duration_ms=295000)
+        assert r1["apple_id"] == "111"
+        assert r2["apple_id"] == "222"
+        assert r1["apple_id"] != r2["apple_id"]
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+@sandboxed
+def test_f2_itunes_timeout_does_not_write_negative_cache():
+    """超时不得写 data: None 负缓存。"""
+    def fake_http(url, **k):
+        return HttpResult(0, "", 0, 10, "timeout")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        c = ITunesClient.get_instance()
+        r = c.search_track("NeverExistsXYZ", "Nobody", duration_ms=120000)
+        assert r is None
+        neg = [v for k, v in c.cache.items() if k.startswith("track:") and (v or {}).get("data") is None]
+        assert neg == [], c.cache
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+def test_f3_primary_artist_insertion_order():
+    """主艺人取名单第一位，不是 frozenset 哈希序。"""
+    assert primary_artist("Adele / Beyonce") == "adele"
+    assert primary_artist("Beyonce / Adele") == "beyonce"
+    long_name = "测试多艺人1 / 测试多艺人2 / 艺人3 / 艺人4 / 艺人5 / 艺人6 / 艺人7"
+    toks = artist_token_list(long_name)
+    assert toks[0] == "测试多艺人1"
+    assert "测试多艺人1" in toks[:3]
+
+
+def test_f4_index_l1_keeps_first_artist():
+    """长名单 L1 的前 3 token 含第一艺人，能命中索引。"""
+    idx = _load_sample_index()
+    q = "测试多艺人1 / 测试多艺人2 / 艺人3 / 艺人4 / 艺人5 / 艺人6"
+    res = idx.lookup("歧义曲目", q)
+    assert len(res) >= 1
+    assert artist_token_list(q)[:3][0] == "测试多艺人1"
+
+
+@sandboxed
+def test_f5_itunes_explicit_not_version_conflict():
+    """Hello vs iTunes Hello (Explicit) 版本预筛通过。"""
+    def fake_http(url, **k):
+        if "search?" not in url:
+            return HttpResult(200, '{"results":[]}', 10, 10, "")
+        body = json.dumps({"results": [{
+            "trackId": 42, "trackName": "Hello (Explicit)", "artistName": "Adele",
+            "trackTimeMillis": 295000, "collectionName": "25",
+        }]})
+        return HttpResult(200, body, len(body), 10, "")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        c = ITunesClient.get_instance()
+        r = c.search_track("Hello", "Adele", duration_ms=295000)
+        assert r is not None
+        assert r["apple_id"] == "42"
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+def test_f6_extract_apple_id_from_real_urls():
+    """三条真实 Apple URL 都能抽出数字 ID。"""
+    assert extract_apple_id("https://music.apple.com/us/song/hello/1440873187") == "1440873187"
+    assert extract_apple_id("https://music.apple.com/us/album/25/1051394208?i=1051394215") == "1051394215"
+    assert extract_apple_id("https://music.apple.com/cn/album/foo/id1538548882") == "1538548882"
+    assert extract_apple_id("1538548882") == "1538548882"
+    assert extract_apple_id("https://music.apple.com/us/album/foo/123") is None
+
+
+def test_f7_index_skips_bad_json_line():
+    """jsonl 单行坏 JSON 不让整表作废。"""
+    sample = (FIXTURES_DIR / "apple_index_sample.jsonl").read_text(encoding="utf-8").splitlines()
+    mixed = ["{not json", sample[0], ""]
+    idx = AmllIndex.parse_jsonl_content(mixed)
+    assert len(idx.entries) >= 1
+
+
+# =====================================================================
+# Group G: v1.3.2 修复回归（R3 退出码 / R6 索引宽限 / R7 外语店面）
+# =====================================================================
+
+def test_g1_cli_not_found_exit_1_two_requests():
+    """G1/R3: 不存在的 ID -> 双 origin 攒票即停（2 次请求）且退出码 1。"""
+    calls = []
+
+    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+        calls.append(url)
+        return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        code = ttml2lyrics_main(["--apple-id", "1234567890", "--stdout"])
+        assert code == 1, code
+        assert len(calls) == 2, calls
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+def test_g2_cli_unreachable_exit_3():
+    """G2/R3: 全镜像超时 -> UNREACHABLE -> 退出码 3（与未收录严格区分）。"""
+    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+        return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        code = ttml2lyrics_main(["--apple-id", "1234567890", "--stdout"])
+        assert code == 3, code
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+def test_g3_index_min_lines_2000_accepts_2400():
+    """G3/R6: 2400 行合法索引可通过校验（上游合法缩减不再被 2600 卡死）。"""
+    fake_lines = ['{"appleMusicId":["1"],"id":"1","rawLyricFile":"am-lyrics/1.ttml"}'] * 2400
+
+    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+        return HttpResult(status=200, text="\n".join(fake_lines), bytes_len=50000, elapsed_ms=100, error="")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        downloaded = AmllIndex._download_index(prev_line_count=0)
+        assert downloaded is not None, "2400 行合法索引应被接受"
+        assert len(downloaded) == 2400
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
+@sandboxed
+def test_g4_foreign_lookup_uses_jp_second_storefront():
+    """G4/R7: 外语 lookup 第二批用 jp 而非 cn；jp 命中取到时长。"""
+    calls = []
+
+    def fake_http(url, **k):
+        calls.append(url)
+        if "lookup" in url and "country=us" in url:
+            return HttpResult(200, '{"results":[]}', 14, 10, "")
+        if "lookup" in url and "country=jp" in url:
+            body = '{"results":[{"trackId":777,"trackTimeMillis":200000}]}'
+            return HttpResult(200, body, len(body), 10, "")
+        return HttpResult(404, "", 0, 10, "")
+
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake_http
+    try:
+        c = ITunesClient.get_instance()
+        r = c.lookup_durations(["777"], is_zh=False)
+        assert r.get("777") == 200000
+        assert any("country=jp" in u for u in calls), calls
+        assert not any("country=cn" in u for u in calls), calls
+    finally:
+        http_mod.http_get_text_ex = orig
 
 
 # =====================================================================

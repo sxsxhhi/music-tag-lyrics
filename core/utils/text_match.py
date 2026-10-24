@@ -93,10 +93,10 @@ def norm_title(s: str, keep_version: bool = True) -> str:
     return _WHITESPACE_RE.sub(" ", cur).strip()
 
 
-def artist_tokens(s: str) -> FrozenSet[str]:
-    """切分多艺人、去通用词并截取前 6 个有效 token。"""
+def artist_token_list(s: str) -> List[str]:
+    """切分多艺人、去通用词并截取前 6 个有效 token，保持出现顺序。"""
     if not s:
-        return frozenset()
+        return []
     cleaned = nfkc(s)
     raw_tokens = _ARTIST_SPLIT_RE.split(cleaned)
     tokens: List[str] = []
@@ -107,12 +107,17 @@ def artist_tokens(s: str) -> FrozenSet[str]:
             continue
         if t not in tokens:
             tokens.append(t)
-    return frozenset(tokens[:6])
+    return tokens[:6]
+
+
+def artist_tokens(s: str) -> FrozenSet[str]:
+    """切分多艺人、去通用词并截取前 6 个有效 token。"""
+    return frozenset(artist_token_list(s))
 
 
 def primary_artist(s: str) -> str:
-    """提取第一主艺人。"""
-    toks = list(artist_tokens(s))
+    """提取第一主艺人（名单出现顺序的第一位，不是 frozenset 哈希序）。"""
+    toks = artist_token_list(s)
     return toks[0] if toks else ""
 
 

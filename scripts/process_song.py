@@ -22,9 +22,10 @@ from datetime import date
 from scripts.tag_editor import (
     read_audio_tags, update_audio_tags, normalize_artist_string,
     clean_title_string, clean_year_string, infer_title_artist_from_basename,
-    extract_year_from_album,
+    extract_year_from_album, has_embedded_cover,
 )
 from core.fetchers.netease import NetEaseFetcher
+from core.fetchers.cover_art import CoverFetcher
 from scripts.lyric_validator import (
     validate_and_fix_lyrics, pair_plain_bilingual_lyrics, extract_lyricist_composer,
     is_credit_line,
@@ -107,7 +108,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.2.8)]")
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.3.2)]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -273,7 +274,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.2.8)]")
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.3.2)]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -290,15 +291,29 @@ def prompt_demucs_fallback(
         aligned["lyric_type"] = aligned.get("lyric_type") or "word"
     return aligned
 
+def _resolve_apple_artwork_url(lyric_data: Optional[Dict[str, Any]]) -> str:
+    """从 iTunes 缓存取该曲 artworkUrl100（顺风车：lookup 响应天然自带，零额外请求）。"""
+    aid = str((lyric_data or {}).get("apple_music_id") or "").strip()
+    if not aid:
+        return ""
+    try:
+        from core.fetchers.itunes_client import ITunesClient
+        entry = ITunesClient.get_instance().cache.get(f"appleid:{aid}") or {}
+        return str(entry.get("artwork_url") or "")
+    except Exception:
+        return ""
+
+
 def process_single_song(
-    filepath: str, 
-    update_tags: bool = True, 
+    filepath: str,
+    update_tags: bool = True,
     output_dir: Optional[str] = None,
     lyrics_only: bool = False,
     force_gpu: bool = False,
     lyrics_file: Optional[str] = None,
     non_interactive: bool = False,
     enable_apple: bool = True,
+    no_cover: bool = False,
 ) -> bool:
     """
     Processes a single audio file:
@@ -412,6 +427,25 @@ def process_single_song(
                 duration_ms=duration_ms,
             )
 
+    # 3.5 专辑封面补全（R9）：默认写标签路径生效；已有封面绝不覆盖；OGG 本轮跳过。
+    # 在所有早退分支之前完成取图，抓词失败仍可只补元数据+封面的路径同样受益。
+    cover_bytes: Optional[bytes] = None
+    cover_mime: Optional[str] = None
+    if update_tags and not lyrics_only and not no_cover:
+        if ext == ".ogg":
+            print("   ℹ️ [cover] OGG 封面补全暂不支持，跳过")
+        elif has_embedded_cover(filepath):
+            print("   🖼️ [cover] 已有内嵌封面，跳过（绝不覆盖）")
+        else:
+            got = CoverFetcher.get_instance().fetch_cover(
+                cleaned_title, normalized_artist, duration_ms,
+                apple_artwork_url=_resolve_apple_artwork_url(lyric_data),
+            )
+            if got:
+                cover_bytes, cover_mime = got
+            else:
+                print("   ℹ️ [cover] 三级源均无可用封面，保持为空")
+
     if not lyric_data or not lyric_data.get("lines"):
         from core.fetchers.kugou import last_kugou_status
         if last_kugou_status() == "gated":
@@ -423,6 +457,7 @@ def process_single_song(
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,
                 cleaned_year, composer, lyricist,
+                cover_data=cover_bytes, cover_mime=cover_mime,
             )
         return False
 
@@ -451,6 +486,7 @@ def process_single_song(
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,
                 cleaned_year, composer, lyricist,
+                cover_data=cover_bytes, cover_mime=cover_mime,
             )
         return False
 
@@ -506,7 +542,9 @@ def process_single_song(
                 year=cleaned_year,
                 composer=composer,
                 lyricist=lyricist,
-                lyrics=spl_content
+                lyrics=spl_content,
+                cover_data=cover_bytes,
+                cover_mime=cover_mime
             )
             if success:
                 print("✅ Embedded tags updated (Artist with '/', 4-digit Year, In-place Lyrics)")
@@ -525,8 +563,10 @@ def _write_cleaned_metadata(
     year: str,
     composer: str,
     lyricist: str,
+    cover_data: Optional[bytes] = None,
+    cover_mime: Optional[str] = None,
 ) -> None:
-    """抓词失败时仍写回已清洗/新补的标签，不写歌词帧。"""
+    """抓词失败时仍写回已清洗/新补的标签，不写歌词帧。封面并入同一次落盘。"""
     success = update_audio_tags(
         filepath,
         title=title,
@@ -535,6 +575,8 @@ def _write_cleaned_metadata(
         year=year,
         composer=composer,
         lyricist=lyricist,
+        cover_data=cover_data,
+        cover_mime=cover_mime
     )
     if success:
         print("✅ Embedded tags updated (lyrics unchanged; fetch/validate failed)")
@@ -543,7 +585,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.0)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.2)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
@@ -554,6 +596,8 @@ def main():
                         help="不弹 GPU 授权：有行级歌词则 numpy 合成，无行级则本首失败")
     parser.add_argument("--no-apple-ttml", action="store_true",
                         help="禁用 Apple Music TTML 引擎")
+    parser.add_argument("--no-cover", action="store_true",
+                        help="跳过专辑封面补全（已有封面本来也绝不覆盖）")
     args = parser.parse_args()
 
     target = args.path
@@ -561,14 +605,15 @@ def main():
         # P1-10: 单文件模式也返回真实退出码，脚本化调用才能判成败
         enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
         ok = process_single_song(
-            target, 
-            update_tags=not args.no_tags, 
+            target,
+            update_tags=not args.no_tags,
             output_dir=args.out_dir,
             lyrics_only=args.lyrics_only,
             force_gpu=args.force_gpu,
             lyrics_file=args.lyrics_file,
             non_interactive=args.non_interactive,
-            enable_apple=enable_apple
+            enable_apple=enable_apple,
+            no_cover=args.no_cover
         )
         return 0 if ok else 1
     elif os.path.isdir(target):
@@ -584,14 +629,15 @@ def main():
                     try:
                         enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
                         ok = process_single_song(
-                            fp, 
-                            update_tags=not args.no_tags, 
+                            fp,
+                            update_tags=not args.no_tags,
                             output_dir=args.out_dir,
                             lyrics_only=args.lyrics_only,
                             force_gpu=args.force_gpu,
                             lyrics_file=args.lyrics_file,
                             non_interactive=args.non_interactive,
-                            enable_apple=enable_apple
+                            enable_apple=enable_apple,
+                            no_cover=args.no_cover
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")

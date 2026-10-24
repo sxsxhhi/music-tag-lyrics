@@ -6,7 +6,7 @@ import json
 import urllib.parse
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 
 from ..utils.cache_paths import get_cache_path
 from ..utils import http
@@ -16,13 +16,16 @@ from ..utils.text_match import norm_title, artist_tokens, version_tokens, nfkc
 logger = logging.getLogger(__name__)
 
 SEARCH_REGIONS = ("hk", "tw", "us", "jp")
-LOOKUP_REGIONS = ("us", "cn")
+# Lookup 第二批店面按语言分派：华语补 cn（大陆独家），外语补 jp（日韩独家常见）
+LOOKUP_SECOND_STOREFRONT = {"zh": "cn", "foreign": "jp"}
 LOOKUP_BATCH = 10
-RATE_CAPACITY = 8.0
-RATE_PER_SEC = 0.5
+RATE_CAPACITY = 24.0
+RATE_PER_SEC = 1.6
 COOLDOWN_SEC = 90.0
 CACHE_TTL_DAYS = 180
+MISS_TTL_DAYS = 7
 MAX_CACHE_ENTRIES = 20000
+RELEASE_MARKERS = frozenset({"explicit", "clean"})
 
 
 class TokenBucket:
@@ -49,6 +52,7 @@ class ITunesClient:
     def __init__(self):
         self.bucket = TokenBucket()
         self.cooldown_until: float = 0.0
+        self._bucket_warn_at: float = -1000.0
         self.cache: Dict[str, Any] = {}
         self._load_cache()
 
@@ -96,7 +100,12 @@ class ITunesClient:
             return None
 
         if not self.bucket.consume():
-            # 令牌耗尽时不阻塞整条流水线，返回 None 落入后续源
+            # 令牌耗尽时不阻塞整条流水线，返回 None 落入后续源。
+            # 同一耗尽期（20s 窗口）只可见打印一次，避免批量刷屏。
+            now_pc = time.perf_counter()
+            if now_pc - self._bucket_warn_at >= 20.0:
+                self._bucket_warn_at = now_pc
+                print("⚠️ [apple-ttml] iTunes 令牌耗尽，E1 本轮不可用 (剩余请求将降级)")
             logger.debug("iTunes 请求超限流速，本次放弃")
             return None
 
@@ -120,17 +129,23 @@ class ITunesClient:
         missing_ids = []
 
         now_ts = int(time.time())
-        ttl_sec = CACHE_TTL_DAYS * 86400
+        hit_ttl = CACHE_TTL_DAYS * 86400
+        miss_ttl = MISS_TTL_DAYS * 86400
 
-        # 1. 查本地缓存
+        # 1. 查本地缓存。命中用 180 天；duration=0 真 miss 用 7 天；过期或传输失败留下的空值重查。
         for aid in apple_ids:
             s_aid = str(aid).strip()
             cache_key = f"appleid:{s_aid}"
             c_val = self.cache.get(cache_key)
-            if c_val and (now_ts - c_val.get("ts", 0) < ttl_sec):
-                dur = c_val.get("duration_ms")
-                if dur is not None and dur > 0:
-                    result[s_aid] = dur
+            if not c_val:
+                missing_ids.append(s_aid)
+                continue
+            age = now_ts - c_val.get("ts", 0)
+            dur = c_val.get("duration_ms")
+            if dur and dur > 0 and age < hit_ttl:
+                result[s_aid] = dur
+            elif (dur == 0 or dur is None) and age < miss_ttl:
+                continue  # 真 miss，E1 本轮视为不可用
             else:
                 missing_ids.append(s_aid)
 
@@ -138,41 +153,58 @@ class ITunesClient:
             return result
 
         # 2. 第一批：向 US 店面批量查询
-        still_missing = self._batch_lookup_storefront(missing_ids, "us", result)
+        _us_missing, us_fail = self._batch_lookup_storefront(missing_ids, "us", result)
 
-        # 3. 第二批：对仍缺失且为华语的 ID 向 CN 店面查询（局部两区递进，优化 3）
-        if still_missing and is_zh:
-            self._batch_lookup_storefront(still_missing, "cn", result)
+        # 3. 第二批：按语言分派店面（华语 us→cn，外语 us→jp），对仍缺失的 ID 查询
+        still_need = [i for i in missing_ids if i not in result]
+        second_country = LOOKUP_SECOND_STOREFRONT["zh" if is_zh else "foreign"]
+        second_fail: List[str] = []
+        if still_need:
+            _second_missing, second_fail = self._batch_lookup_storefront(still_need, second_country, result)
 
-        # 记录空结果防止重复查询
-        for aid in apple_ids:
-            s_aid = str(aid).strip()
-            if s_aid not in result:
+        us_fail_set = set(us_fail)
+        second_fail_set = set(second_fail)
+        # 仅两批店面都 200 且 rc=0 时写 duration=0；429/超时不得写负缓存
+        for s_aid in missing_ids:
+            if s_aid in result:
+                continue
+            if s_aid not in us_fail_set and s_aid not in second_fail_set:
                 self.cache[f"appleid:{s_aid}"] = {"duration_ms": 0, "ts": int(time.time())}
         self._save_cache()
 
         return result
 
-    def _batch_lookup_storefront(self, ids: List[str], country: str, result: Dict[str, int]) -> List[str]:
-        missing = []
+    def _batch_lookup_storefront(
+        self, ids: List[str], country: str, result: Dict[str, int]
+    ) -> Tuple[List[str], List[str]]:
+        """返回 (本店面未找到, 传输失败)。传输失败 = _request None（429/超时/空桶）。"""
+        not_found: List[str] = []
+        transport_failed: List[str] = []
         for i in range(0, len(ids), LOOKUP_BATCH):
             batch = ids[i:i + LOOKUP_BATCH]
             ids_str = ",".join(batch)
             url = f"https://itunes.apple.com/lookup?id={ids_str}&country={country}"
             data = self._request(url)
+            if data is None:
+                transport_failed.extend(batch)
+                continue
             found_ids = set()
-            if data and "results" in data:
-                for item in data["results"]:
-                    track_id = str(item.get("trackId") or "")
-                    dur = item.get("trackTimeMillis")
-                    if track_id and dur and dur > 0:
-                        result[track_id] = int(dur)
-                        found_ids.add(track_id)
-                        self.cache[f"appleid:{track_id}"] = {"duration_ms": int(dur), "ts": int(time.time())}
+            for item in data.get("results") or []:
+                track_id = str(item.get("trackId") or "")
+                dur = item.get("trackTimeMillis")
+                if track_id and dur and dur > 0:
+                    result[track_id] = int(dur)
+                    found_ids.add(track_id)
+                    # R9 顺风车：lookup 响应天然自带 artworkUrl100，缓存时长时顺手留存，取封面零额外请求
+                    self.cache[f"appleid:{track_id}"] = {
+                        "duration_ms": int(dur),
+                        "artwork_url": str(item.get("artworkUrl100") or ""),
+                        "ts": int(time.time()),
+                    }
             for b_id in batch:
                 if b_id not in found_ids:
-                    missing.append(b_id)
-        return missing
+                    not_found.append(b_id)
+        return not_found, transport_failed
 
     def search_track(
         self,
@@ -186,21 +218,34 @@ class ITunesClient:
         q_ver = version_tokens(title)
         q_art = artist_tokens(artist)
 
-        cache_key = f"track:{t_strict}|{nfkc(artist)}|{sorted(q_ver)}"
+        cache_key = f"track:{t_strict}|{nfkc(artist)}|{sorted(q_ver)}|{int(duration_ms or 0)}"
         now_ts = int(time.time())
-        if cache_key in self.cache:
-            entry = self.cache[cache_key]
-            if now_ts - entry.get("ts", 0) < CACHE_TTL_DAYS * 86400:
-                return entry.get("data")
+        cached = self.cache.get(cache_key)
+        if cached:
+            age = now_ts - cached.get("ts", 0)
+            data = cached.get("data")
+            if data is None:
+                if age < MISS_TTL_DAYS * 86400:
+                    return None
+            elif age < CACHE_TTL_DAYS * 86400:
+                cached_dur = int((data or {}).get("duration_ms") or 0)
+                if duration_ms > 0 and cached_dur > 0 and abs(cached_dur - duration_ms) > 5000:
+                    pass  # 时长对不上，作废重搜
+                else:
+                    return data
 
         # 检索各区
         query = f"{title} {artist}".strip()
         encoded_query = urllib.parse.quote(query)
+        regions_ok = 0
 
         for region in SEARCH_REGIONS:
             url = f"https://itunes.apple.com/search?term={encoded_query}&country={region}&media=music&entity=song&limit=10"
             data = self._request(url)
-            if not data or not data.get("results"):
+            if data is None:
+                continue
+            regions_ok += 1
+            if not data.get("results"):
                 continue
 
             for item in data["results"]:
@@ -215,7 +260,9 @@ class ITunesClient:
                     continue
 
                 itunes_ver = version_tokens(track_title)
-                if (q_ver - itunes_ver) or (itunes_ver - q_ver):
+                q_cmp = q_ver - RELEASE_MARKERS
+                i_cmp = itunes_ver - RELEASE_MARKERS
+                if (q_cmp - i_cmp) or (i_cmp - q_cmp):
                     continue
 
                 if q_art:
@@ -234,14 +281,17 @@ class ITunesClient:
                     "artist": track_artist,
                     "album": item.get("collectionName") or "",
                     "duration_ms": track_dur,
+                    "artwork_url": item.get("artworkUrl100") or "",
                     "region": region,
                 }
                 self.cache[cache_key] = {"data": candidate, "ts": now_ts}
                 self._save_cache()
                 return candidate
 
-        self.cache[cache_key] = {"data": None, "ts": now_ts}
-        self._save_cache()
+        # 真 miss：四个店面都 HTTP 200 且无合格曲。传输失败（429/超时）不写负缓存。
+        if regions_ok == len(SEARCH_REGIONS):
+            self.cache[cache_key] = {"data": None, "ts": now_ts}
+            self._save_cache()
         return None
 
 

@@ -2,10 +2,13 @@
 """Apple Music TTML 独立转换与单曲诊断 CLI。百行轻量管道，直接对接 to_spl 与 atomic_write_many。"""
 
 import os
+import re
 import sys
 import json
 import argparse
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -18,9 +21,33 @@ from core.utils.io_safe import atomic_write_many
 from scripts.tag_editor import read_audio_tags
 from scripts.process_song import SUPPORTED_EXTS
 
+_APPLE_I_RE = re.compile(r"[?&]i=(\d+)")
+_APPLE_SONG_RE = re.compile(r"/song/[^/]+/(\d+)")
+_APPLE_ID_RE = re.compile(r"(?:[?&]id=|/id)(\d+)")
+_APPLE_DIGITS_RE = re.compile(r"^\d+$")
+
+
+def extract_apple_id(value: str) -> Optional[str]:
+    """从纯数字、music.apple.com 链接或 id= 参数抽出 Apple 曲目 ID。抽不到返回 None。"""
+    if not value:
+        return None
+    s = value.strip()
+    if _APPLE_DIGITS_RE.match(s):
+        return s
+    m = _APPLE_I_RE.search(s)
+    if m:
+        return m.group(1)
+    m = _APPLE_SONG_RE.search(s)
+    if m:
+        return m.group(1)
+    m = _APPLE_ID_RE.search(s)
+    if m:
+        return m.group(1)
+    return None
+
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.0)")
+    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.1)")
     parser.add_argument("input", nargs="?", default=None, help="Audio file or .ttml file")
     parser.add_argument("--apple-id", default=None, help="Apple Music ID or music.apple.com URL")
     parser.add_argument("--title", default="", help="Song title")
@@ -32,6 +59,16 @@ def main(argv=None):
     parser.add_argument("--no-cache", action="store_true", help="Bypass local cache")
 
     args = parser.parse_args(argv)
+
+    if args.no_cache:
+        from core.fetchers.amll_index import AmllIndex
+        from core.fetchers.itunes_client import ITunesClient
+        from core.utils.cache_paths import set_cache_dir_override
+        tmp = Path(tempfile.mkdtemp(prefix="mtl-nocache-"))
+        os.environ["MTL_CACHE_DIR"] = str(tmp)
+        set_cache_dir_override(tmp)
+        AmllIndex.reset_instance()
+        ITunesClient.reset_instance()
 
     inp = args.input
     apple_id = args.apple_id
@@ -46,17 +83,28 @@ def main(argv=None):
 
     # 1. 输入判定
     if apple_id:
-        # 支持从 URL 提取 ID
-        if "music.apple.com" in apple_id:
-            import re
-            m = re.search(r"id(?:=|\/)(\d+)", apple_id)
-            if m:
-                apple_id = m.group(1)
-        data = AppleTTMLFetcher.fetch_by_apple_id(apple_id)
+        extracted = extract_apple_id(apple_id)
+        looks_like_url = "music.apple.com" in apple_id or apple_id.startswith("http")
+        if looks_like_url and not extracted:
+            print(f"❌ [apple-ttml] 无法从链接提取 Apple ID: {apple_id}")
+            return 2
+        if extracted:
+            apple_id = extracted
+        elif not _APPLE_DIGITS_RE.match(str(apple_id).strip()):
+            print(f"❌ [apple-ttml] 无效的 Apple ID: {apple_id}")
+            return 2
+        data, verdict = AppleTTMLFetcher.fetch_by_apple_id_ex(apple_id)
         if not data:
+            # 退出码语义：1=AMLL 未收录；3=镜像不可达（与未收录严格区分）；4=内容不合格
+            if verdict in ("UNREACHABLE", "SUSPECT_MISSING"):
+                code, msg = 3, f"镜像不可达 (verdict={verdict})"
+            elif verdict == "NOT_FOUND":
+                code, msg = 1, "AMLL 未收录"
+            else:
+                code, msg = 4, f"抓取失败 (verdict={verdict})"
             if not args.stdout and not args.json:
-                print(f"❌ [apple-ttml] 未收录或网络不可达: {apple_id}")
-            return 1
+                print(f"❌ [apple-ttml] {msg}: {apple_id}")
+            return code
         stem = f"apple_{apple_id}"
         title = data.get("tags", {}).get("ti") or title
         artist = data.get("tags", {}).get("ar") or artist

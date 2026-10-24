@@ -13,7 +13,7 @@ from ..utils.cache_paths import get_cache_path
 from ..utils import http
 from ..utils.http import HttpResult
 from ..utils.text_match import (
-    nfkc, strip_punct, norm_title, artist_tokens, primary_artist,
+    nfkc, strip_punct, norm_title, artist_tokens, artist_token_list, primary_artist,
     version_tokens, norm_album, GENERIC_ALBUMS
 )
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 INDEX_MIRRORS = ("gbclstudio", "gcore", "testingcf", "bikonoo", "dimeta")
 INDEX_PATH = "/am-lyrics/index.jsonl"
-INDEX_MIN_LINES = 2600
+INDEX_MIN_LINES = 2000
 INDEX_SHRINK_RATIO = 0.97
 INDEX_TTL_DAYS = 7
 INDEX_DOWNLOAD_TIMEOUT = 12.0
@@ -151,7 +151,11 @@ class AmllIndex:
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except Exception:
+                logger.warning("amll-index 跳过坏 JSON 行")
+                continue
             raw_file = (row.get("rawLyricFile") or "").strip()
             if not raw_file:
                 continue
@@ -321,7 +325,7 @@ class AmllIndex:
                 continue
             if not lines[-1].strip().endswith("}"):
                 continue
-            if "appleMusicId" not in lines[0]:
+            if not any("appleMusicId" in ln for ln in lines):
                 continue
 
             return lines
@@ -341,7 +345,7 @@ class AmllIndex:
 
         t_strict = norm_title(title, keep_version=True)
         t_loose = norm_title(title, keep_version=False)
-        a_tokens = list(artist_tokens(artist))[:3]
+        a_tokens = artist_token_list(artist)[:3]
 
         pool_indices: List[int] = []
 

@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 [![Standard](https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange)](#)
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索与 Demucs v4 GPU 兜底引擎 (v1.3.0)。**  
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索、专辑封面三级梯级补全与 Demucs v4 GPU 兜底引擎 (v1.3.2)。**  
 > 调度顺序：Apple TTML(am-lyrics) → 酷狗 (KRC) → AMLL (ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（最后一档）。恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【18 大避坑铁律】**（全文见 `SKILL.md`）。外语原文与译文必须同一源整包；逐字只打原文，译文为 ELRC 行级副行。
 
 ---
@@ -67,7 +67,7 @@ flowchart TD
   subgraph host [音频原地改签]
     Audio[flac mp3 wav m4a ogg dsf]
   end
-  subgraph skill [music-tag-lyrics v1.2.8]
+  subgraph skill [music-tag-lyrics v1.3.2]
     Tags[tag_editor 洗标签]
     subgraph agg [aggregator 五源梯子]
       Kugou[1酷狗KRC]
@@ -183,6 +183,8 @@ python scripts/process_song.py "path/to/music_folder/"
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| [**v1.3.2**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.2) | `2026-10-24` | **全量工程加固 · 专辑封面自动补全** | • **测试缓存沙盒（R1）**：C/F 组 18 条用例全部包进 `_cache_sandbox`，真实 `%LOCALAPPDATA%` 缓存零读写（此前测试会清空并污染真实缓存，已实测修复）<br/>• **iTunes 令牌桶扩容（R2-A）**：8/0.5 → 24/1.6，批量场景华语不再静默降级酷狗；令牌耗尽打可见日志（20s 窗口限频）<br/>• **ttml2lyrics 退出码 3（R3）**：`fetch_by_apple_id_ex` 透传 verdict，网络不可达与未收录严格区分<br/>• **索引校验宽限（R6）**：`INDEX_MIN_LINES` 2600→2000 + `appleMusicId` 全行扫描，上游合法缩减不再卡死刷新<br/>• **外语 lookup 补 jp 店面（R7）**：华语 us→cn、外语 us→jp 分派，负缓存须两店面都 200 才写<br/>• **专辑封面补全（R9）**：缺失时三级梯级（iTunes 顺风车 `1000x1000bb` 原图 → 网易 `song/detail` → 酷狗 `album/info`），JPEG/PNG 魔数+1KB 硬校验，已有封面 100% 不覆盖，与标签同一次落盘，`--no-cover` 可关；OGG 暂跳过<br/>• **工程清理**：死别名删除、v1.2.8 残留字样统一；离线测试 141 条（apple 55 + cover 8 + 既有 78）全绿，9 首 A/B 回归产物逐字节一致 | 生产级稳定 |
+| [**v1.3.1**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.1) | `2026-10-24` | **Apple 渠道缺陷修复** | • iTunes 检索缓存键含时长，传输失败不写 180 天负缓存<br/>• 外语 Apple 无译文时按 need_more 探酷狗，允许 rank 提升整包替换<br/>• 主艺人与索引 L1 改用插入序，禁止 list(frozenset)<br/>• 行级 TTML 合成词标 synthetic，结构门只认真 span<br/>• ttml2lyrics 能从真实 Apple URL 抽 ID，`--no-cache` 生效 | 生产级稳定 |
 | [**v1.3.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.0) | `2026-10-24` | **Apple TTML 升为第 1 档 · 多镜像 Origin 攒票 · 索引反查与单调等级调度** | • **Apple TTML 升为第 1 档**：所有歌曲优先尝试 Apple Music TTML（`am-lyrics/{appleId}.ttml`）；多镜像按 origin 攒票回退（gbclstudio / jsdelivr / bikonoo / dimeta），单次 404 不终局，≥2 个不同 origin 404 才判定 NOT_FOUND<br/>• **本地索引反查 + iTunes 实时兜底**：`am-lyrics/index.jsonl` 2,745 行聚合折叠为 1,773 组（唯一 rawLyricFile），支持 strict/loose/title 反查；33 个同名多文件歧义键通过全量专辑展开与批量 Lookup 精准消歧<br/>• **单调等级调度（D6）**：严格定义四级 Rank（逐字+译文(3) > 行级+译文(2) > 逐字无译文(1) > 行级无译文(0)），彻底阻断后续同级或低级源的无条件顶替<br/>• **华语 Strict 门禁（D4）**：华语曲目必须达成 strict（标题严格、艺人交集、版本互斥、时长吻合）才覆盖酷狗；loose 华语自动落酷狗<br/>• **外语译文优先（D5）**：外语 Apple 逐字无译文时允许被后续带精修官方译文的网易/LRCSHARE 整包替换，禁止跨源挂载<br/>• **时长证据修正**：`<body dur>` 为歌词轴长非曲长，以 E1 `trackTimeMillis`（us/cn 递进）为第一判据，E3b_floor (≥0.50) 拦截假截断，长篇 Outro 尾奏自然放行<br/>• **轻量百行诊断 CLI**：新增 `scripts/ttml2lyrics.py`，支持音频/TTML/Apple ID/歌名检索，原生输出 3 位毫秒 Enhanced LRC<br/>• **工程化与测试**：新增 43 条全量离线单元测试（121/121 全绿），CI 集成测试阶梯 | 生产级高精调度 |
 | [**v1.2.8**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.8) | `2026-10-23` | **精度自适应 · 署名声部修复 · 五源统一时长门禁** | • **精度自适应**：源时间戳是 3 位毫秒就输出 3 位（`[mm:ss.xxx]`），源只有 1–2 位才退回 2 位；粒度在解析层探测（`detect_time_precision`，TTML/KRC 固定 3），经 `data["time_precision"]` 透传；GPU 路径去掉秒级 `round(,2)`，避免 3 位退化成 `x.x0`<br/>• **标题行压缩（P0）**：`to_spl` 改为用 enrich **之前**的首条正文行算首唱时间，修复「有署名时标题行被 `min(5500, 6000//2)` 压到 3.0s、每字 117ms」；标题去重改用 enrich 前快照，消除首句即「歌名-歌手」时的重复标题<br/>• **署名判定统一**：`converter` 改调 `lyric_validator.is_credit_line()`，窗口统一 12 行；修掉「鼓楼」「键盘上的泪」「作词人」被误判为署名行的假阳性<br/>• **同行双署名**：`extract_lyricist_composer` 改分段式解析，`作词 : 张三 作曲 : 李四` 不再把「作曲」吞进作词人名<br/>• **逐字补齐早退**：条件由 `any(len(words)>=2)` 改为「所有非署名正文行都已有逐字」，部分逐字源不再产出逐字/纯文本混排<br/>• **五源统一时长门禁**：`parsed_duration_reject_reason` 下沉到 `aggregator._probe`；LRCSHARE 删掉 `abs(末行-曲长)>5s` 对称拒（原会丢完整尾奏歌词）；`parse_ttml` 解析 `<body dur>` 供离线兜底<br/>• **TTML 解析**：按 `begin` 稳定排序（对唱分 `<div>` 不再被 validator 压平）；span 间排版换行不再被当词边界插空格；缺 `end` 取下一 span 或行尾；纯 `x-bg` 段不再留幽灵行；属性兼容单引号<br/>• **校验副作用**：`validate_and_fix_lyrics` 改深拷贝、词时长与下一词钳制防重叠、兜底下限 100ms 与 80ms 告警错开<br/>• **工程化**：离线测试 **78** 条（含 `test_converter_prelude.py`），`baseline.json` 已重跑 | 生产级稳定 |
 | [**v1.2.7**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.2.7) | `2026-10-23` | **尾奏不误拒 · 单帧歌词 · 补年份 · 酷狗丢弃日志** | • **铁律 1/17**：末行早于曲终 = 尾奏，不得拒绝；酷狗搜歌元数据 ±10s；解析末行只拒预览（曲 >90s 且末行 <45s）与冲轴（末行超过曲终 +8s）<br/>• **铁律 9**：KRCS 标题无 Live、专辑为空时，时长与本地 Live ±10s 视为同版本<br/>• **年份**：空或等于当年日历年时从专辑名四位数字、再网易 `publishTime` 补；禁止把「今天」写成发行年<br/>• **单帧歌词**：写入 Enhanced LRC 时删除全部 `USLT*`/`SYLT*`，只留一帧<br/>• **丢弃日志**：酷狗有候选被门禁丢掉时打印原因，禁止谎称「酷狗没有」；numpy 合成标明非酷狗逐字<br/>• **工程化**：`UA_DEFAULT` 1.2.7；离线测补尾奏/预览/冲轴/Live 时长贴齐 | 生产级稳定 |

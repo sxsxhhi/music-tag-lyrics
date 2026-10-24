@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional, Tuple
 
 import mutagen
-from mutagen.flac import FLAC
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT
+from mutagen.flac import FLAC, Picture as FlacPicture
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT, APIC
 from mutagen.wave import WAVE
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
@@ -158,6 +158,34 @@ def infer_title_artist_from_basename(base_name: str) -> Tuple[str, str]:
         if title and artist:
             return title, artist
     return name, ""
+
+def has_embedded_cover(filepath: str) -> bool:
+    """检测内嵌封面（FLAC pictures / ID3 APIC / MP4 covr / OGG metadata_block_picture）。
+
+    解析失败一律返回 False（视为无封面，走补全梯级；补全写入自身有安全校验兜底）。
+    """
+    if not filepath or not os.path.exists(filepath):
+        return False
+    try:
+        audio = mutagen.File(filepath)
+    except Exception:
+        return False
+    if audio is None:
+        return False
+    try:
+        if isinstance(audio, FLAC):
+            return bool(audio.pictures)
+        if isinstance(audio, OggVorbis):
+            return bool(audio.get("metadata_block_picture"))
+        if isinstance(audio, MP4):
+            return bool(audio.get("covr"))
+        tags = getattr(audio, "tags", None)
+        if tags is not None:
+            return any(str(k).startswith("APIC") for k in tags.keys())
+    except Exception:
+        return False
+    return False
+
 
 def _txt(value: Optional[str]) -> Optional[str]:
     """空串/纯空白视为「未提供」，返回 None —— 避免把原有标签清空。"""
@@ -403,7 +431,9 @@ def update_audio_tags(
     composer: Optional[str] = None,
     lyricist: Optional[str] = None,
     lyrics: Optional[str] = None,
-    albumartist: Optional[str] = None
+    albumartist: Optional[str] = None,
+    cover_data: Optional[bytes] = None,
+    cover_mime: Optional[str] = None
 ) -> bool:
     """
     Updates audio file metadata tags in-place.
@@ -411,6 +441,10 @@ def update_audio_tags(
     所有格式统一走「副本改写 -> 原子替换」（core.utils.io_safe.safe_save_audio_tags）。
     mutagen 的 save() 是截断后重写，直接作用在原文件上时进程中断就会留下损坏音频；
     现在只改副本，写成功且副本非空才 os.replace 回原路径。
+
+    cover_data/cover_mime：R9 封面补全——字节挂在本函数的同一次 mutagen 对象上，
+    与标签/歌词合并为**一次 save()**（单次落盘原则），FLAC 等大文件不被整文件重写两次。
+    调用方必须先用 has_embedded_cover() 确认原本无封面（已有绝不覆盖）。
 
     Never moves or deletes the file.
     """
@@ -423,9 +457,24 @@ def update_audio_tags(
         composer=composer, lyricist=lyricist, lyrics=lyrics, albumartist=albumartist,
     ).normalized()
 
+    def _attach_id3_cover(id3_or_tags: Any) -> None:
+        if cover_data:
+            id3_or_tags["APIC:Cover"] = APIC(
+                encoding=3, mime=cover_mime or "image/jpeg",
+                type=3, desc="Cover", data=cover_data,
+            )
+
     def _write_vorbis(tmp: str) -> bool:
         audio = FLAC(tmp) if ext == ".flac" else OggVorbis(tmp)
         _apply_vorbis_tags(audio, tags)
+        if cover_data and ext == ".flac":
+            pic = FlacPicture()
+            pic.type = 3  # Front Cover
+            pic.mime = cover_mime or "image/jpeg"
+            pic.desc = ""
+            pic.data = cover_data
+            audio.clear_pictures()
+            audio.add_picture(pic)
         audio.save()
         return True
 
@@ -436,6 +485,7 @@ def update_audio_tags(
         id3 = ID3(tmp)
         orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
         _apply_id3_tags(id3, tags)
+        _attach_id3_cover(id3)
         # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
         id3.save(tmp, v2_version=orig_v2)
         return True
@@ -445,6 +495,7 @@ def update_audio_tags(
         if audio.tags is None:
             audio.add_tags()
         _apply_id3_tags(audio.tags, tags)
+        _attach_id3_cover(audio.tags)
         audio.save()
         return True
 
@@ -482,6 +533,10 @@ def update_audio_tags(
             audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(tags.lyricist.strip().encode("utf-8"))]
         if tags.lyrics is not None:
             audio["\xa9lyr"] = [tags.lyrics]
+        if cover_data:
+            from mutagen.mp4 import MP4Cover
+            imageformat = MP4Cover.FORMAT_PNG if cover_mime == "image/png" else MP4Cover.FORMAT_JPEG
+            audio["covr"] = [MP4Cover(bytes(cover_data), imageformat=imageformat)]
         audio.save()
         return True
 

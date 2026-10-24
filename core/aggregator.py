@@ -203,8 +203,8 @@ class LyricAggregator:
                 title, artist=artist, duration_ms=duration_ms, album=album), "apple-ttml")
             candidate = _adopt(candidate, apple_cand, is_foreign, trace)
 
-        # T2 酷狗 —— 仅 T1 为空时尝试
-        if not candidate:
+        # T2 酷狗 —— 无候选，或外语缺译文时探（华语 Apple 已命中则 need_more 为假）
+        if need_more(candidate):
             kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms), "kugou")
             candidate = _adopt(candidate, kg_cand, is_foreign, trace)
 

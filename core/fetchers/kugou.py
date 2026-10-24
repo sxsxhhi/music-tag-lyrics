@@ -180,6 +180,8 @@ class KugouFetcher:
                             "title": s.get("songname", ""),
                             "artist": s.get("singername", ""),
                             "album": s.get("album_name", ""),
+                            "album_id": s.get("album_id", ""),
+                            "img": s.get("img", "") or s.get("imgurl", "") or "",
                             "duration": int(s.get("duration", 0)) * 1000,
                             "hash": h
                         })

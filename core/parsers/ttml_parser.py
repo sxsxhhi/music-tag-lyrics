@@ -218,6 +218,7 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
                 "end": p_end,
                 "text": line_text,
                 "join": "none",
+                "synthetic": True,
             })
 
         # P1-4: 纯 x-bg 段被抽空后会剩下 text="" 与 words=[] 的幽灵行，
