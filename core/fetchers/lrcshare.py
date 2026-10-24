@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_get_json
+from ..utils.lyric_attach import attach_translations_by_nearest
 from ..utils.version_guard import (
     is_live_version,
     matches_version_policy
@@ -282,29 +283,15 @@ class LrcShareFetcher:
             lines = [l for l in lines if not is_source_or_credit_line(l.get("text", ""))]
 
         # Attach translations by nearest timestamp matching
+        # （B1：算法与 aggregator 共用 utils/lyric_attach；容差 2000ms，译文过 strip_word_tags）
         if translation_rows and lines:
-            sorted_trans = sorted(
-                [r for r in translation_rows if r.get("time_ms") is not None],
-                key=lambda x: x["time_ms"]
+            entries = [
+                {"start": int(r.get("time_ms", 0)), "text": str(r.get("text", "")).strip()}
+                for r in translation_rows if r.get("time_ms") is not None
+            ]
+            attach_translations_by_nearest(
+                lines, entries, tolerance_ms=2000, text_cleaner=strip_word_tags
             )
-            used_trans = set()
-            for line in lines:
-                l_start = line["start"]
-                best_diff = 2000  # 2.0s window
-                best_idx = -1
-                best_text = ""
-                for t_idx, tr in enumerate(sorted_trans):
-                    if t_idx in used_trans:
-                        continue
-                    t_time = int(tr.get("time_ms", 0))
-                    diff = abs(t_time - l_start)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = t_idx
-                        best_text = strip_word_tags(str(tr.get("text", "")).strip())
-                if best_idx >= 0 and has_hanzi(best_text):
-                    line["translation"] = best_text
-                    used_trans.add(best_idx)
 
         has_trans = any(bool(l.get("translation")) for l in lines)
         return {

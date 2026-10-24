@@ -108,7 +108,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.3.2)]")
+    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.3.3)]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -274,7 +274,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.3.2)]")
+        print("🛑 [Demucs v4 绝对红线阻断 (v1.3.3)]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -585,7 +585,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.2)")
+    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.3)")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
@@ -600,10 +600,12 @@ def main():
                         help="跳过专辑封面补全（已有封面本来也绝不覆盖）")
     args = parser.parse_args()
 
+    # Apple 档总开关只在此处计算一次（A4 去重，原先单文件/目录两分支各算一遍）
+    enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
+
     target = args.path
     if os.path.isfile(target):
         # P1-10: 单文件模式也返回真实退出码，脚本化调用才能判成败
-        enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
         ok = process_single_song(
             target,
             update_tags=not args.no_tags,
@@ -627,7 +629,6 @@ def main():
                     fp = os.path.join(root, f)
                     # P1-10: 单曲异常不能中断整批
                     try:
-                        enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
                         ok = process_single_song(
                             fp,
                             update_tags=not args.no_tags,

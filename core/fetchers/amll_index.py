@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Set, Optional, FrozenSet, Any
 
 from ..utils.cache_paths import get_cache_path
+from ..utils.io_safe import atomic_write_bytes
 from ..utils import http
 from ..utils.http import HttpResult
 from ..utils.text_match import (
     nfkc, strip_punct, norm_title, artist_tokens, artist_token_list, primary_artist,
-    version_tokens, norm_album, GENERIC_ALBUMS
+    version_tokens, norm_album, GENERIC_ALBUMS, VERSION_EXCLUSION_TOKENS
 )
 
 logger = logging.getLogger(__name__)
@@ -275,15 +276,19 @@ class AmllIndex:
         new_lines = cls._download_index(prev_line_count=cached_meta.get("lines_count", 0))
         if new_lines:
             try:
-                # 原子写盘
-                temp_file = cache_path.with_suffix(".tmp")
-                temp_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                temp_file.replace(cache_path)
-                meta_path.write_text(json.dumps({
-                    "updated_at": int(time.time()),
-                    "lines_count": len(new_lines)
-                }), encoding="utf-8")
-                return cls.parse_jsonl_content(new_lines)
+                # 原子写盘（B3：统一走 io_safe.atomic_write_bytes，meta.json 同样原子化）
+                ok = atomic_write_bytes(
+                    str(cache_path), ("\n".join(new_lines) + "\n").encode("utf-8")
+                ) and atomic_write_bytes(
+                    str(meta_path),
+                    json.dumps({
+                        "updated_at": int(time.time()),
+                        "lines_count": len(new_lines),
+                    }).encode("utf-8"),
+                )
+                if ok:
+                    return cls.parse_jsonl_content(new_lines)
+                logger.warning("写盘索引失败: atomic_write_bytes 返回 False")
             except Exception as exc:
                 logger.warning("写盘索引失败: %s", exc)
 
@@ -400,7 +405,7 @@ class AmllIndex:
             for v in e.variants:
                 # 若查询无版本特征，而候选带版本特征 -> 冲突
                 diff = v.version_tokens - q_version_tokens
-                if diff and any(k in diff for k in ("live", "现场", "演唱会", "remix", "混音", "demo")):
+                if diff and any(k in diff for k in VERSION_EXCLUSION_TOKENS):
                     has_version_conflict = True
                     break
             if has_version_conflict:

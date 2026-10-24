@@ -11,6 +11,7 @@ from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .parsers.lrc_parser import parse_lrc
+from .utils.lyric_attach import attach_translations_by_nearest
 from .utils.text_utils import (
     is_foreign_track, has_hanzi, is_instrumental_placeholder,
     INSTRUMENTAL_KEYWORDS,
@@ -35,36 +36,11 @@ def align_translation_to_baseline(
 ) -> int:
     """
     同一源内：按最近邻把译文挂到主行。tolerance 默认 1500ms。
-    主行 start/end/words 不可变。
+    主行 start/end/words 不可变。（B1：算法下沉 utils/lyric_attach，本函数是薄包装。）
     """
-    if not candidate_lines or not translation_entries:
-        return 0
-
-    used_indices = set()
-    matched_count = 0
-
-    for line in candidate_lines:
-        k_time = line.get("start", 0)
-        best_diff = tolerance_ms + 1
-        best_idx = -1
-        best_text = ""
-
-        for idx, entry in enumerate(translation_entries):
-            if idx in used_indices:
-                continue
-            e_time = entry.get("start", 0)
-            diff = abs(e_time - k_time)
-            if diff < best_diff:
-                best_diff = diff
-                best_idx = idx
-                best_text = entry.get("text", "").strip()
-
-        if best_idx >= 0 and best_diff <= tolerance_ms and has_hanzi(best_text):
-            line["translation"] = best_text
-            used_indices.add(best_idx)
-            matched_count += 1
-
-    return matched_count
+    return attach_translations_by_nearest(
+        candidate_lines, translation_entries, tolerance_ms=tolerance_ms
+    )
 
 
 def _hanzi_tlyric_entries(tlyric_text: str) -> List[Dict[str, Any]]:

@@ -80,6 +80,25 @@ def atomic_write_many(files: dict, encoding: str = "utf-8", newline: str = "\n")
             _silent_remove(tmp)
 
 
+def atomic_write_bytes(filepath: str, data: bytes) -> bool:
+    """原子写入字节内容（temp + fsync + os.replace）。失败返回 False，原文件保持原样。
+
+    B3 去重：itunes-cache / amll-index 的缓存落盘原先各自手写 temp+replace。
+    """
+    tmp = _tmp_path_for(filepath, prefix=".tmp_bin", keep_ext=False)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, filepath)
+        return True
+    except Exception:
+        return False
+    finally:
+        _silent_remove(tmp)
+
+
 def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) -> bool:
     """
     在副本上执行标签写入，成功后才替换原文件。

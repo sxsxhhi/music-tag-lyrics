@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, Union, NamedTuple
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
-UA_DEFAULT = "music-tag-lyrics/1.3.2"
+UA_DEFAULT = "music-tag-lyrics/1.3.3"
 
 def http_get_text(
     url: str,
@@ -65,6 +65,30 @@ def http_post_json(
             return json.loads(raw_text)
     except Exception:
         return None
+
+
+def http_get_bytes(
+    url: str,
+    timeout: float = 10.0,
+    max_bytes: int = 0,
+    user_agent: str = UA_DEFAULT
+) -> Optional[bytes]:
+    """下载二进制内容。非 2xx、传输失败、超过 max_bytes 上限（>0 时）一律返回 None。
+
+    A3 去重：全仓库唯一的二进制下载出口（原先 cover_art 自写 urllib 直连）。
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", getattr(resp, "code", 200))
+            if status != 200:
+                return None
+            data = resp.read(max_bytes + 1) if max_bytes > 0 else resp.read()
+    except Exception:
+        return None
+    if max_bytes > 0 and len(data) > max_bytes:
+        return None
+    return data
 
 
 class HttpResult(NamedTuple):

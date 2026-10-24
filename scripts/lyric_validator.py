@@ -5,7 +5,7 @@ import copy
 import re
 from typing import Dict, Any, Tuple, List, Optional
 
-from core.utils.text_utils import is_translation_line
+from core.utils.text_utils import is_translation_line, LRC_META_LINE_RE
 from core.utils.time_utils import strip_timing_tags
 
 # Preamble credit keywords for whitelist protection
@@ -84,7 +84,7 @@ def strip_translation_lines_from_parsed(data: Dict[str, Any]) -> Dict[str, Any]:
     return {**data, "lines": cleaned_lines}
 
 
-_META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
+# 元数据行正则统一走 text_utils.LRC_META_LINE_RE（A2 去重，与 plain_lyric_search 共用）
 # P0-4: 分段式切分。旧版 ^…(.+)$ 的 (.+) 贪婪吃到行尾，导致
 #   "作词 : 张三 作曲 : 李四" -> ('张三 作曲 : 李四', '')、作曲整体丢失，
 #   垃圾串还会写进 TCOM 标签。改为先定位每个「关键词:」标记，再取到下一个标记之前。
@@ -127,7 +127,7 @@ def extract_lyricist_composer(text: str) -> Tuple[str, str]:
     seen = 0
     for raw in (text or "").splitlines():
         line = raw.strip()
-        if not line or _META_LINE_RE.match(line):
+        if not line or LRC_META_LINE_RE.match(line):
             continue
         clean = strip_timing_tags(line).strip()
         if not clean:
@@ -167,7 +167,7 @@ def pair_plain_bilingual_lyrics(text: str) -> Tuple[str, List[Optional[str]]]:
     translations: List[Optional[str]] = []
     for raw in (text or "").splitlines():
         line = raw.strip()
-        if not line or _META_LINE_RE.match(line):
+        if not line or LRC_META_LINE_RE.match(line):
             continue
         clean = strip_timing_tags(line).strip() or line
         if is_credit_line(clean):

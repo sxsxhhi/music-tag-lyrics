@@ -3,6 +3,7 @@
 
 import os
 import sys
+from contextlib import contextmanager
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -25,10 +26,17 @@ HTML_SHELL = b"<!DOCTYPE html><html>404</html>" + b"x" * 2048
 TINY_JPEG = MAGIC_JPEG + b"\xff" * 100  # <1KB 必拒
 
 
-def _patch_download(fn):
+@contextmanager
+def _image_stub(fake_dl):
+    """B2 去重：patch _download_image + CoverFetcher 单例复位，yield 沙盒实例，退出自动还原。"""
     orig = ca._download_image
-    ca._download_image = fn
-    return orig
+    ca._download_image = fake_dl
+    CoverFetcher.reset_instance()
+    try:
+        yield CoverFetcher.get_instance()
+    finally:
+        ca._download_image = orig
+        CoverFetcher.reset_instance()
 
 
 def test_c1_sniff_image_magic():
@@ -57,10 +65,7 @@ def test_c3_tier1_apple_free_ride():
         calls.append(url)
         return JPEG_OK
 
-    CoverFetcher.reset_instance()
-    orig = _patch_download(fake_dl)
-    try:
-        cf = CoverFetcher.get_instance()
+    with _image_stub(fake_dl) as cf:
         got = cf.fetch_cover("测试曲", "测试歌手", 200000,
                              apple_artwork_url="https://is1-ssl.mzstatic.com/a/100x100bb.jpg")
         assert got is not None
@@ -68,9 +73,6 @@ def test_c3_tier1_apple_free_ride():
         assert mime == "image/jpeg"
         assert calls and "1000x1000bb.jpg" in calls[0], calls
         assert len(calls) == 1
-    finally:
-        ca._download_image = orig
-        CoverFetcher.reset_instance()
 
 
 def test_c4_tier1_bad_falls_to_tier2():
@@ -84,19 +86,13 @@ def test_c4_tier1_bad_falls_to_tier2():
             return PNG_OK
         return None
 
-    CoverFetcher.reset_instance()
-    orig = _patch_download(fake_dl)
-    try:
-        cf = CoverFetcher.get_instance()
+    with _image_stub(fake_dl) as cf:
         cf._netease_album_art = lambda *a, **k: "https://p1.music.126.net/xx.jpg"
         cf._kugou_album_art = lambda *a, **k: ""
         got = cf.fetch_cover("测试曲", "测试歌手", 200000,
                              apple_artwork_url="https://mzstatic-thumb/100x100bb.jpg")
         assert got is not None
         assert got[1] == "image/png"
-    finally:
-        ca._download_image = orig
-        CoverFetcher.reset_instance()
 
 
 def test_c5_in_process_dedup():
@@ -107,10 +103,7 @@ def test_c5_in_process_dedup():
         calls.append(url)
         return None
 
-    CoverFetcher.reset_instance()
-    orig = _patch_download(fake_dl)
-    try:
-        cf = CoverFetcher.get_instance()
+    with _image_stub(fake_dl) as cf:
         cf._netease_album_art = lambda *a, **k: "https://p1.music.126.net/yy.jpg"
         cf._kugou_album_art = lambda *a, **k: "https://imge.kugou.com/zz.jpg"
         assert cf.fetch_cover("去重曲", "甲", 100000) is None
@@ -118,24 +111,15 @@ def test_c5_in_process_dedup():
         assert n_after_first >= 1
         assert cf.fetch_cover("去重曲", "甲", 100000) is None
         assert len(calls) == n_after_first, "同曲第二轮不得再发起下载"
-    finally:
-        ca._download_image = orig
-        CoverFetcher.reset_instance()
 
 
 def test_c6_all_tiers_empty_returns_none():
     """三级全空：返回 None，不抛异常。"""
-    CoverFetcher.reset_instance()
-    orig = _patch_download(lambda url, timeout=10.0: None)
-    try:
-        cf = CoverFetcher.get_instance()
+    with _image_stub(lambda url, timeout=10.0: None) as cf:
         cf._netease_album_art = lambda *a, **k: ""
         cf._kugou_album_art = lambda *a, **k: ""
         assert cf.fetch_cover("无图曲", "乙", 100000) is None
         assert cf.fetch_cover("", "谁", 100000) is None  # 空标题直接 None
-    finally:
-        ca._download_image = orig
-        CoverFetcher.reset_instance()
 
 
 def test_c7_has_embedded_cover_missing_file():

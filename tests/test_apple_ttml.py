@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (55 条全量测试)。"""
+"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (56 条全量测试)。"""
 
 import os
 import sys
@@ -64,6 +64,18 @@ def sandboxed(fn):
     return wrapper
 
 
+@contextmanager
+def _http_stub(fake):
+    """B2 去重：替换「patch http_get_text_ex → try → finally 还原」三行样板，退出自动还原。"""
+    import core.utils.http as http_mod
+    orig = http_mod.http_get_text_ex
+    http_mod.http_get_text_ex = fake
+    try:
+        yield fake
+    finally:
+        http_mod.http_get_text_ex = orig
+
+
 # =====================================================================
 # Group A: 镜像回退与 origin 攒票机制 (8 条离线测试)
 # =====================================================================
@@ -76,18 +88,13 @@ def test_a1_gbcl_200_direct_success():
         calls.append(url)
         return HttpResult(status=200, text='<tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="0" end="1000"><span>test</span></p></body></tt>', bytes_len=100, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "OK", verdict
         assert "<tt" in text
         assert len(calls) == 1
         assert "gbclstudio" in calls[0]
         assert meta["origin"] == "gbcl"
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a2_gbcl_404_testingcf_200_ok():
@@ -102,16 +109,11 @@ def test_a2_gbcl_404_testingcf_200_ok():
             return HttpResult(status=200, text='<tt><body><p begin="0"><span>hi</span></p></body></tt>', bytes_len=50, elapsed_ms=10, error="")
         return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "OK", verdict
         assert len(calls) == 2
         assert meta["origin"] == "jsdelivr"
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a3_gbcl_404_testingcf_404_not_found():
@@ -122,16 +124,11 @@ def test_a3_gbcl_404_testingcf_404_not_found():
         calls.append(url)
         return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "NOT_FOUND", verdict
         assert len(calls) == 2
         assert set(meta["origins_404"]) == {"gbcl", "jsdelivr"}
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a4_gbcl_404_dimeta_404_suspect_missing():
@@ -143,15 +140,10 @@ def test_a4_gbcl_404_dimeta_404_suspect_missing():
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "SUSPECT_MISSING", verdict
         assert meta["origins_404"] == ["gbcl"]
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a5_three_jsdelivr_404_counts_as_one_origin():
@@ -161,15 +153,10 @@ def test_a5_three_jsdelivr_404_counts_as_one_origin():
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "SUSPECT_MISSING", verdict
         assert meta["origins_404"] == ["jsdelivr"]
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a6_all_403_unreachable():
@@ -177,15 +164,10 @@ def test_a6_all_403_unreachable():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=403, text="Forbidden", bytes_len=9, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "UNREACHABLE", verdict
         assert len(meta["origins_404"]) == 0
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a7_three_html_shells_unreachable():
@@ -193,15 +175,10 @@ def test_a7_three_html_shells_unreachable():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=200, text="<!DOCTYPE html><html><body>Error 404 CDN</body></html>", bytes_len=50, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         verdict, text, meta = atm.fetch_ttml_raw("12345")
         assert verdict == "UNREACHABLE", verdict
         assert meta.get("reason") == "html_shell_exceeded"
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_a8_deadline_timeout_caps_to_suspect():
@@ -315,14 +292,9 @@ def test_b9_index_download_timeout_degrades():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=12000, error="timeout")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         idx = AmllIndex._download_index(prev_line_count=0)
         assert idx is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 def test_b10_shrink_097_protection():
@@ -334,14 +306,9 @@ def test_b10_shrink_097_protection():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=200, text="\n".join(fake_lines), bytes_len=50000, elapsed_ms=100, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         downloaded = AmllIndex._download_index(prev_line_count=2745)
         assert downloaded is None, "滞后的行数应该被 0.97 保护拦截"
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 # =====================================================================
@@ -380,20 +347,14 @@ def test_c1_duration_uses_itunes_not_body_dur():
             return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
         return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 423533, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 423533, "ts": int(time.time())}
         # 手工绑定 index 实例
         sample_idx = _load_sample_index()
         AmllIndex._instance = sample_idx
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=423533, album="万能青年旅店")
         assert res is not None, "大石碎胸口应顺利通过"
         assert res["match"]["confidence"] == "strict"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -405,18 +366,12 @@ def test_c2_e1_long_outro_still_pass():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 420000, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 420000, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=420000, album="万能青年旅店")
         assert res is not None
         assert res["match"]["confidence"] == "strict"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -427,17 +382,11 @@ def test_c3_truncated_body_rejected():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 423533, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 423533, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=423533, album="万能青年旅店")
         assert res is None, "截断地板未过应被硬拒"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -461,17 +410,11 @@ def test_c4_missing_body_dur_falls_back_to_last_line_end():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 367136, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 367136, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=367136, album="万能青年旅店")
         assert res is not None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -482,16 +425,10 @@ def test_c5_zero_local_duration_degrades_without_crash():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=0, album="万能青年旅店")
         assert res is None, "华语时长未知必须安全落酷狗"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -505,13 +442,10 @@ def test_c6_no_e1_e3b_strict_fail_chinese_none_foreign_loose():
         txt = ttml_zh if "1538548882" in url else ttml_en
         return HttpResult(status=200, text=txt, bytes_len=len(txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    # 清空两首的 E1 缓存
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 0, "ts": int(time.time())}
-    ITunesClient.get_instance().cache["appleid:9999999999"] = {"duration_ms": 0, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        # 清空两首的 E1 缓存
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 0, "ts": int(time.time())}
+        ITunesClient.get_instance().cache["appleid:9999999999"] = {"duration_ms": 0, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         # 华语 -> None
         res_zh = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=300000, album="不同专辑")
@@ -523,9 +457,6 @@ def test_c6_no_e1_e3b_strict_fail_chinese_none_foreign_loose():
         res_en = AppleTTMLFetcher.fetch("Hello", "Adele", duration_ms=300000, album="25")
         assert res_en is not None
         assert res_en["match"]["confidence"] == "loose"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -536,16 +467,10 @@ def test_c7_body_dur_overrun_rejected():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=280000, album="万能青年旅店")
         assert res is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -556,16 +481,10 @@ def test_c8_preview_rejected():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=120000, album="万能青年旅店")
         assert res is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -586,16 +505,10 @@ def test_c9_zero_verbatim_lines_rejected():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=367136)
         assert res is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -606,17 +519,11 @@ def test_c10_chinese_loose_returns_none():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         AmllIndex._instance = _load_sample_index()
         # 查询带 Live 版本的歌曲但门禁未达 strict
         res = AppleTTMLFetcher.fetch("大石碎胸口 (Live)", "万能青年旅店", duration_ms=367136, album="不一致专辑")
         assert res is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -627,19 +534,13 @@ def test_c11_e1_mismatch_never_falls_back_to_e2():
     def fake_http(url, **k):
         return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    # itunes 时长 210000 对不上 local 367136
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 210000, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        # itunes 时长 210000 对不上 local 367136
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 210000, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         # 即使 album="万能青年旅店" 精确匹配，E1 错也必须拒
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=367136, album="万能青年旅店")
         assert res is None
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -657,19 +558,13 @@ def test_c12_us_rc0_cn_rc1_strict():
                 return HttpResult(status=200, text='{"results":[{"trackId":1538548882,"trackTimeMillis":367136}]}', bytes_len=60, elapsed_ms=10, error="")
         return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    # 清空缓存
-    ITunesClient.get_instance().cache.clear()
-    try:
+    with _http_stub(fake_http):
+        # 清空缓存
+        ITunesClient.get_instance().cache.clear()
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=367136, album="万能青年旅店")
         assert res is not None
         assert res["match"]["confidence"] == "strict"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -684,19 +579,13 @@ def test_c13_both_rc0_e2_and_e3b_strict_pass():
             return HttpResult(status=200, text='{"results":[]}', bytes_len=14, elapsed_ms=10, error="")
         return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 0, "ts": int(time.time())}
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cache["appleid:1538548882"] = {"duration_ms": 0, "ts": int(time.time())}
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=400000, album="万能青年旅店")
         # axis=367136, duration=400000 -> ratio=0.917 >= 0.70, diff=32864 <= 90000 -> e3b_strict pass
         assert res is not None
         assert res["match"]["confidence"] == "strict"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
 
 
 @sandboxed
@@ -709,19 +598,12 @@ def test_c14_itunes_429_falls_back_to_e2_e3b_strict():
             return HttpResult(status=200, text=ttml_txt, bytes_len=len(ttml_txt), elapsed_ms=10, error="")
         return HttpResult(status=429, text="Too Many Requests", bytes_len=17, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    ITunesClient.get_instance().cooldown_until = time.perf_counter() + 90.0
-    try:
+    with _http_stub(fake_http):
+        ITunesClient.get_instance().cooldown_until = time.perf_counter() + 90.0
         AmllIndex._instance = _load_sample_index()
         res = AppleTTMLFetcher.fetch("大石碎胸口", "万能青年旅店", duration_ms=400000, album="万能青年旅店")
         assert res is not None
         assert res["match"]["confidence"] == "strict"
-    finally:
-        http_mod.http_get_text_ex = orig_http
-        AmllIndex.reset_instance()
-        ITunesClient.get_instance().cooldown_until = 0.0
 
 
 @sandboxed
@@ -733,10 +615,7 @@ def test_c15_search_url_never_contains_country_cn():
         calls.append(url)
         return HttpResult(status=200, text='{"results":[]}', bytes_len=14, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig_http = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         client = ITunesClient()
         client.cache.clear()
         client.search_track("测试歌名", "测试歌手", duration_ms=100000)
@@ -747,8 +626,6 @@ def test_c15_search_url_never_contains_country_cn():
                 assert "country=cn" not in u, f"Search 接口禁止使用 cn: {u}"
         has_lookup_cn = any("lookup?" in u and "country=cn" in u for u in calls)
         assert has_lookup_cn, "Lookup 第二批应包含 cn"
-    finally:
-        http_mod.http_get_text_ex = orig_http
 
 
 # =====================================================================
@@ -1127,18 +1004,13 @@ def test_f1_itunes_cache_key_includes_duration():
         ]})
         return HttpResult(200, body, len(body), 10, "")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         c = ITunesClient.get_instance()
         r1 = c.search_track("Hello", "Adele", duration_ms=180000)
         r2 = c.search_track("Hello", "Adele", duration_ms=295000)
         assert r1["apple_id"] == "111"
         assert r2["apple_id"] == "222"
         assert r1["apple_id"] != r2["apple_id"]
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 @sandboxed
@@ -1147,17 +1019,12 @@ def test_f2_itunes_timeout_does_not_write_negative_cache():
     def fake_http(url, **k):
         return HttpResult(0, "", 0, 10, "timeout")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         c = ITunesClient.get_instance()
         r = c.search_track("NeverExistsXYZ", "Nobody", duration_ms=120000)
         assert r is None
         neg = [v for k, v in c.cache.items() if k.startswith("track:") and (v or {}).get("data") is None]
         assert neg == [], c.cache
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 def test_f3_primary_artist_insertion_order():
@@ -1191,16 +1058,11 @@ def test_f5_itunes_explicit_not_version_conflict():
         }]})
         return HttpResult(200, body, len(body), 10, "")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         c = ITunesClient.get_instance()
         r = c.search_track("Hello", "Adele", duration_ms=295000)
         assert r is not None
         assert r["apple_id"] == "42"
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 def test_f6_extract_apple_id_from_real_urls():
@@ -1232,15 +1094,10 @@ def test_g1_cli_not_found_exit_1_two_requests():
         calls.append(url)
         return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         code = ttml2lyrics_main(["--apple-id", "1234567890", "--stdout"])
         assert code == 1, code
         assert len(calls) == 2, calls
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 def test_g2_cli_unreachable_exit_3():
@@ -1248,14 +1105,9 @@ def test_g2_cli_unreachable_exit_3():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         code = ttml2lyrics_main(["--apple-id", "1234567890", "--stdout"])
         assert code == 3, code
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 def test_g3_index_min_lines_2000_accepts_2400():
@@ -1265,15 +1117,10 @@ def test_g3_index_min_lines_2000_accepts_2400():
     def fake_http(url, headers=None, timeout=3.0, user_agent=""):
         return HttpResult(status=200, text="\n".join(fake_lines), bytes_len=50000, elapsed_ms=100, error="")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         downloaded = AmllIndex._download_index(prev_line_count=0)
         assert downloaded is not None, "2400 行合法索引应被接受"
         assert len(downloaded) == 2400
-    finally:
-        http_mod.http_get_text_ex = orig
 
 
 @sandboxed
@@ -1290,17 +1137,52 @@ def test_g4_foreign_lookup_uses_jp_second_storefront():
             return HttpResult(200, body, len(body), 10, "")
         return HttpResult(404, "", 0, 10, "")
 
-    import core.utils.http as http_mod
-    orig = http_mod.http_get_text_ex
-    http_mod.http_get_text_ex = fake_http
-    try:
+    with _http_stub(fake_http):
         c = ITunesClient.get_instance()
         r = c.lookup_durations(["777"], is_zh=False)
         assert r.get("777") == 200000
         assert any("country=jp" in u for u in calls), calls
         assert not any("country=cn" in u for u in calls), calls
-    finally:
-        http_mod.http_get_text_ex = orig
+
+
+def test_g5_translation_attach_shared_algo():
+    """G5/B1: 译文最近邻挂载算法合并到 utils/lyric_attach 后，双路径行为正确。"""
+    from core.utils.lyric_attach import attach_translations_by_nearest
+    from core.aggregator import align_translation_to_baseline
+    from core.fetchers.lrcshare import strip_word_tags
+
+    def mk_lines():
+        return [
+            {"start": 10000, "text": "hello", "translation": ""},
+            {"start": 20000, "text": "world", "translation": ""},
+            {"start": 60000, "text": "far away", "translation": ""},
+        ]
+
+    entries = [
+        {"start": 10100, "text": "你好"},
+        {"start": 19900, "text": "世界"},
+        {"start": 30000, "text": "两秒外不该挂上"},
+    ]
+    # aggregator 薄包装（1500ms 窗）
+    lines = mk_lines()
+    n = align_translation_to_baseline(lines, entries)
+    assert n == 2, n
+    assert lines[0]["translation"] == "你好"
+    assert lines[1]["translation"] == "世界"
+    assert lines[2]["translation"] == ""  # 30s 的译文离 60s 行太远
+
+    # lrcshare 路径（2000ms 窗 + strip_word_tags 清洗；其标签是整数型 <offset:dur>）
+    lines2 = mk_lines()
+    entries2 = [
+        {"start": 10000, "text": "<1234>你好"},
+        {"start": 21000, "text": "世界"},
+    ]
+    n2 = attach_translations_by_nearest(
+        lines2, entries2, tolerance_ms=2000, text_cleaner=strip_word_tags
+    )
+    assert n2 == 2, n2
+    assert lines2[0]["translation"] == "你好"  # 词级标签被清洗
+    assert lines2[1]["translation"] == "世界"
 
 
 # =====================================================================

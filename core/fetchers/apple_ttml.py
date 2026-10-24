@@ -11,7 +11,8 @@ from ..utils import http
 from ..utils.http import HttpResult
 from ..utils.text_utils import is_foreign_track, is_instrumental_placeholder
 from ..utils.text_match import (
-    norm_title, artist_tokens, version_tokens, norm_album, GENERIC_ALBUMS
+    norm_title, artist_tokens, version_tokens, norm_album, GENERIC_ALBUMS,
+    VERSION_EXCLUSION_TOKENS,
 )
 from .amll_index import AmllIndex, Entry
 from .itunes_client import ITunesClient, itunes_durations
@@ -38,6 +39,14 @@ MIRRORS: List[MirrorConfig] = [
 TTML_PATH = "/am-lyrics/{apple_id}.ttml"
 QUORUM = 2             # 不同 origin 数
 SONG_DEADLINE_S = 6.0  # 单曲 TTML 抓取硬顶
+
+
+def _has_verbatim_words(lines: List[Dict[str, Any]]) -> bool:
+    """是否存在真 span 逐字词（整句兜底的 synthetic word 不算）。A5 去重：原先两处内联。"""
+    return any(
+        w.get("start") is not None and not w.get("synthetic")
+        for l in lines for w in (l.get("words") or [])
+    )
 
 
 def fetch_ttml_raw(
@@ -189,11 +198,7 @@ class AppleTTMLFetcher:
         data = parse_ttml(text)
         if not data or not data.get("lines"):
             return None, "PARSE_EMPTY"
-        has_verbatim = any(
-            w.get("start") is not None and not w.get("synthetic")
-            for l in data["lines"] for w in (l.get("words") or [])
-        )
-        if not has_verbatim:
+        if not _has_verbatim_words(data["lines"]):
             return None, "NO_VERBATIM"
 
         data["source"] = "apple-ttml"
@@ -306,11 +311,7 @@ class AppleTTMLFetcher:
         # 4. 门禁验证 (Gate)
         # -------------------------------------------------------------
         # 结构门：只认真 span 词，整句兜底的 synthetic word 不算逐字
-        has_verbatim = any(
-            w.get("start") is not None and not w.get("synthetic")
-            for l in lines for w in (l.get("words") or [])
-        )
-        if not has_verbatim:
+        if not _has_verbatim_words(lines):
             logger.info("   ℹ️ [apple-ttml] 门禁丢弃：0 行逐字")
             return None
 
@@ -346,7 +347,7 @@ class AppleTTMLFetcher:
         q_ver = version_tokens(title)
         ttml_ver = version_tokens(ttml_title)
         ver_diff = (q_ver - ttml_ver) | (ttml_ver - q_ver)
-        if ver_diff and any(k in ver_diff for k in ("live", "现场", "演唱会", "remix", "混音", "demo")):
+        if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
             logger.info("   ℹ️ [apple-ttml] 门禁丢弃：版本互斥冲突")
             return None
 

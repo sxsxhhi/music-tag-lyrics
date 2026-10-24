@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""歌词标题、艺人与版本特征的归一化与文本相似度打分。"""
+"""歌词标题、艺人与版本特征的归一化与文本相似度打分。
+
+双轨分工（勿合并）：本模块是**严格派**——NFKC 归一化键全等匹配，服务
+Apple TTML/AMLL 索引/iTunes 高精链路防串歌；
+模糊派见 core/utils/version_guard.py（子串/互串，服务酷狗/网易等噪声接口）。
+"""
 
 import re
 import unicodedata
@@ -10,6 +15,10 @@ VERSION_KEYWORDS = {
     "acoustic", "不插电", "instrumental", "cover", "翻唱", "ver", "deluxe",
     "mono", "explicit", "clean"
 }
+
+# 版本互斥硬拒 token（A1 去重）：apple_ttml 版本门与 amll_index 硬拒 3 共用，
+# 与 VERSION_KEYWORDS 是子集关系——这里只列「录音室/Live/Demo 互斥必须拒」的词。
+VERSION_EXCLUSION_TOKENS = frozenset({"live", "现场", "演唱会", "remix", "混音", "demo"})
 
 GENERIC_ARTISTS = {
     "various artists", "群星", "合辑", "未知", "unknown", "va"

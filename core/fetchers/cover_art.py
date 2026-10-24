@@ -7,10 +7,9 @@
 
 import re
 import logging
-import urllib.request
 from typing import Optional, Set, Tuple
 
-from ..utils.http import UA_DESKTOP
+from ..utils.http import UA_DESKTOP, http_get_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +44,13 @@ def apple_original_url(url: str) -> str:
 
 
 def _download_image(url: str, timeout: float = 10.0) -> Optional[bytes]:
-    """下载图片二进制。非 http(s)、超时、超 15MB 一律返回 None。"""
+    """下载图片二进制。非 http(s)、超时、超 15MB 一律返回 None。
+
+    A3 去重：薄包装统一 HTTP 出口 http_get_bytes；保留本名作为测试桩挂点。
+    """
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA_DESKTOP})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read(MAX_IMAGE_BYTES + 1)
-    except Exception:
-        return None
-    if len(data) > MAX_IMAGE_BYTES:
-        return None
-    return data
+    return http_get_bytes(url, timeout=timeout, max_bytes=MAX_IMAGE_BYTES)
 
 
 class CoverFetcher:

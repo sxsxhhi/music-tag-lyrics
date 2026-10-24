@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Live/Studio 互斥、标题括号清洗、时长容差、标题模糊匹配。"""
+"""Live/Studio 互斥、标题括号清洗、时长容差、标题模糊匹配。
+
+双轨分工（勿合并）：本模块是**模糊派**——子串/去括号/互串的宽松匹配，服务
+酷狗/网易/LRCSHARE/LRCLIB/全球搜词/封面酷狗档等噪声大的商业接口；
+严格派见 core/utils/text_match.py（NFKC 归一化键全等，服务 Apple 三件套防串歌）。
+"""
 
 import re
 

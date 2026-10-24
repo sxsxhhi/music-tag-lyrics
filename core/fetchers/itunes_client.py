@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, Tuple
 
 from ..utils.cache_paths import get_cache_path
+from ..utils.io_safe import atomic_write_bytes
 from ..utils import http
 from ..utils.http import HttpResult
 from ..utils.text_match import norm_title, artist_tokens, version_tokens, nfkc
@@ -86,9 +87,9 @@ class ITunesClient:
                 to_keep = dict(sorted_items[int(len(sorted_items) * 0.1):])
                 self.cache = to_keep
 
-            temp_f = cache_file.with_suffix(".tmp")
-            temp_f.write_text(json.dumps(self.cache, ensure_ascii=False), encoding="utf-8")
-            temp_f.replace(cache_file)
+            temp_payload = json.dumps(self.cache, ensure_ascii=False).encode("utf-8")
+            if not atomic_write_bytes(str(cache_file), temp_payload):
+                logger.warning("保存 itunes-cache 失败: atomic_write_bytes 返回 False")
         except Exception as exc:
             logger.warning("保存 itunes-cache 失败: %s", exc)
 

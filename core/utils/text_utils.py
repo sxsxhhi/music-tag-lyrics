@@ -4,6 +4,10 @@
 import re
 
 CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+
+# LRC 元数据行（[ti:] [ar:] [al:] [by:] [offset:]）——lyric_validator 与
+# plain_lyric_search 共用同一份（A2 去重，两处正则曾逐字重复）。
+LRC_META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
 # 汉字判定统一到 CJK 统一表意区（旧代码这里用 \u9fa5，会把 \u9fa6~\u9fff 的字漏掉）
 HANZI_RE = re.compile(r"[\u4e00-\u9fff]")
 KANA_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
