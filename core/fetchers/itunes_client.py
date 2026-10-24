@@ -5,13 +5,11 @@ import time
 import json
 import urllib.parse
 import logging
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
 from ..utils.cache_paths import get_cache_path
 from ..utils.io_safe import atomic_write_bytes
 from ..utils import http
-from ..utils.http import HttpResult
 from ..utils.text_match import norm_title, artist_tokens, version_tokens, nfkc
 
 logger = logging.getLogger(__name__)

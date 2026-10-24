@@ -8,7 +8,7 @@ Apple TTML/AMLL 索引/iTunes 高精链路防串歌；
 
 import re
 import unicodedata
-from typing import Set, List, Optional, FrozenSet
+from typing import Set, List, FrozenSet
 
 VERSION_KEYWORDS = {
     "live", "现场", "演唱会", "remaster", "重制", "demo", "remix", "混音",

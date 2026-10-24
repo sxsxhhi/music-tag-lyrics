@@ -3,6 +3,7 @@
 
 import os
 import sys
+import urllib.request
 from contextlib import contextmanager
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -135,6 +136,64 @@ def test_c8_update_audio_tags_cover_params_safe():
         "Z:/definitely/not/exist.mp3",
         title="t", cover_data=JPEG_OK, cover_mime="image/jpeg",
     ) is False
+
+
+def test_c9_http_get_bytes_mechanism():
+    """F2/F1：http_get_bytes 状态码门禁、max_bytes 截断与 UA 传递（离线 stub urlopen）。"""
+    from core.utils.http import http_get_bytes, UA_DESKTOP
+
+    captured = {}
+
+    class _FakeResp:
+        def __init__(self, status, body):
+            self.status = status
+            self._body = body
+
+        def read(self, n=-1):
+            if n is None or n < 0 or n > len(self._body):
+                return self._body
+            return self._body[:n]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured["ua"] = req.get_header("User-agent")
+        scenario = captured["scenario"]
+        if scenario == "403":
+            return _FakeResp(403, b"forbidden")
+        if scenario == "404":
+            return _FakeResp(404, b"not found")
+        if scenario == "oversize":
+            return _FakeResp(200, b"a" * 2048)
+        return _FakeResp(200, JPEG_OK)
+
+    orig_urlopen = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        # 正常下载 + 显式 UA
+        captured["scenario"] = "ok"
+        got = http_get_bytes("https://example.com/a.jpg", max_bytes=8192,
+                             user_agent=UA_DESKTOP)
+        assert got == JPEG_OK
+        assert captured["ua"] == UA_DESKTOP, captured["ua"]
+        # F1 双保险：缺省 UA 也必须是桌面浏览器 UA
+        got2 = http_get_bytes("https://example.com/a.jpg", max_bytes=8192)
+        assert got2 == JPEG_OK
+        assert captured["ua"] == UA_DESKTOP, captured["ua"]
+        # 403 / 404 → None
+        captured["scenario"] = "403"
+        assert http_get_bytes("https://example.com/a.jpg") is None
+        captured["scenario"] = "404"
+        assert http_get_bytes("https://example.com/a.jpg") is None
+        # 超过 max_bytes → None
+        captured["scenario"] = "oversize"
+        assert http_get_bytes("https://example.com/a.jpg", max_bytes=1024) is None
+    finally:
+        urllib.request.urlopen = orig_urlopen
 
 
 def main():

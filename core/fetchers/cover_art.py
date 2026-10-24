@@ -47,10 +47,13 @@ def _download_image(url: str, timeout: float = 10.0) -> Optional[bytes]:
     """下载图片二进制。非 http(s)、超时、超 15MB 一律返回 None。
 
     A3 去重：薄包装统一 HTTP 出口 http_get_bytes；保留本名作为测试桩挂点。
+    F1：显式传桌面浏览器 UA——商用图片 CDN（mzstatic/126.net/kugou）对脚本 UA 直接 403。
     """
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
-    return http_get_bytes(url, timeout=timeout, max_bytes=MAX_IMAGE_BYTES)
+    return http_get_bytes(
+        url, timeout=timeout, max_bytes=MAX_IMAGE_BYTES, user_agent=UA_DESKTOP
+    )
 
 
 class CoverFetcher:

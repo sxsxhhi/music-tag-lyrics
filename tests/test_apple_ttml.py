@@ -17,8 +17,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from core.utils.http import HttpResult
 import core.fetchers.apple_ttml as atm
-from core.fetchers.apple_ttml import AppleTTMLFetcher, fetch_ttml_raw, disambiguate_entry
-from core.fetchers.amll_index import AmllIndex, Entry, Variant
+from core.fetchers.apple_ttml import AppleTTMLFetcher, disambiguate_entry
+from core.fetchers.amll_index import AmllIndex
 from core.fetchers.itunes_client import ITunesClient
 from core.parsers.ttml_parser import parse_ttml
 import core.aggregator as agg

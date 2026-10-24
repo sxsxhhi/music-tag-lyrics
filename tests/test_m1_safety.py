@@ -19,7 +19,7 @@ from scripts.tag_editor import (
 )
 from scripts.lyric_validator import extract_lyricist_composer, is_credit_line
 from core.fetchers.lrcshare import is_source_or_credit_line
-from core.utils.io_safe import atomic_write_text
+from core.utils.io_safe import atomic_write_text, atomic_write_bytes
 
 
 def test_year_normalisation():
@@ -136,6 +136,26 @@ def test_atomic_write_text():
         atomic_write_text(p, "[00:02.00]第二版\n")
         assert open(p, encoding="utf-8").read() == "[00:02.00]第二版\n"
         assert [f for f in os.listdir(work) if f.startswith(".tmp")] == []
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def test_atomic_write_bytes():
+    """F2：字节级原子写——二进制完整性、原子替换、失败不损原文件、临时文件干净。"""
+    work = tempfile.mkdtemp(prefix="mtl_io_")
+    try:
+        p = os.path.join(work, "cover.bin")
+        payload = b"hello\x00\xffbinary" * 10
+        assert atomic_write_bytes(p, payload) is True
+        assert open(p, "rb").read() == payload
+        # 覆盖写 + 不留临时文件
+        payload2 = b"second\x01\x02version"
+        assert atomic_write_bytes(p, payload2) is True
+        assert open(p, "rb").read() == payload2
+        assert [f for f in os.listdir(work) if f.startswith(".tmp")] == []
+        # 目标是目录（replace 必失败）→ 返回 False，原文件无损
+        assert atomic_write_bytes(work, b"x") is False
+        assert open(p, "rb").read() == payload2
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

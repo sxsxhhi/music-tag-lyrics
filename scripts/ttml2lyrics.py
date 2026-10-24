@@ -15,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.parsers.ttml_parser import parse_ttml
-from core.fetchers.apple_ttml import AppleTTMLFetcher, fetch_ttml_raw
+from core.fetchers.apple_ttml import AppleTTMLFetcher
 from core.converter import to_spl
 from core.utils.io_safe import atomic_write_many
 from scripts.tag_editor import read_audio_tags
@@ -47,7 +47,7 @@ def extract_apple_id(value: str) -> Optional[str]:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.3)")
+    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.4)")
     parser.add_argument("input", nargs="?", default=None, help="Audio file or .ttml file")
     parser.add_argument("--apple-id", default=None, help="Apple Music ID or music.apple.com URL")
     parser.add_argument("--title", default="", help="Song title")

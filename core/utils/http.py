@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, Union, NamedTuple
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
-UA_DEFAULT = "music-tag-lyrics/1.3.3"
+UA_DEFAULT = "music-tag-lyrics/1.3.4"
 
 def http_get_text(
     url: str,
@@ -71,11 +71,12 @@ def http_get_bytes(
     url: str,
     timeout: float = 10.0,
     max_bytes: int = 0,
-    user_agent: str = UA_DEFAULT
+    user_agent: str = UA_DESKTOP
 ) -> Optional[bytes]:
     """下载二进制内容。非 2xx、传输失败、超过 max_bytes 上限（>0 时）一律返回 None。
 
     A3 去重：全仓库唯一的二进制下载出口（原先 cover_art 自写 urllib 直连）。
+    F1：缺省 UA 用桌面浏览器——二进制/资源下载面向商用 CDN，脚本 UA 极易 403。
     """
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
     try:

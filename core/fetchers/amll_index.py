@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
 """AMLL 本地索引反查：以 rawLyricFile 分组，内存建立反查表与歧义消歧。"""
 
-import os
 import json
 import time
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Dict, Tuple, Set, Optional, FrozenSet, Any
 
 from ..utils.cache_paths import get_cache_path
 from ..utils.io_safe import atomic_write_bytes
 from ..utils import http
-from ..utils.http import HttpResult
 from ..utils.text_match import (
-    nfkc, strip_punct, norm_title, artist_tokens, artist_token_list, primary_artist,
+    norm_title, artist_tokens, artist_token_list, primary_artist,
     version_tokens, norm_album, GENERIC_ALBUMS, VERSION_EXCLUSION_TOKENS
 )
 

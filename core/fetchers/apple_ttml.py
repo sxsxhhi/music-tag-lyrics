@@ -8,7 +8,6 @@ from typing import Optional, Dict, Any, Tuple, List, Set, NamedTuple
 
 from ..parsers.ttml_parser import parse_ttml
 from ..utils import http
-from ..utils.http import HttpResult
 from ..utils.text_utils import is_foreign_track, is_instrumental_placeholder
 from ..utils.text_match import (
     norm_title, artist_tokens, version_tokens, norm_album, GENERIC_ALBUMS,
