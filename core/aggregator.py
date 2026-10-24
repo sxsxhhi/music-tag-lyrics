@@ -181,7 +181,7 @@ class LyricAggregator:
 
         # T2 酷狗 —— 无候选，或外语缺译文时探（华语 Apple 已命中则 need_more 为假）
         if need_more(candidate):
-            kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms), "kugou")
+            kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms, album=album), "kugou")
             candidate = _adopt(candidate, kg_cand, is_foreign, trace)
 
         # T3 AMLL(ncm) —— need_more 时进；仅 rank 提升才采纳

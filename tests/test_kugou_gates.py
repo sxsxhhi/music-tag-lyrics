@@ -122,6 +122,105 @@ def test_lrcshare_parse_lyric_lines_keeps_precision():
     assert fallback2.get("time_precision") == 2, fallback2
 
 
+def test_remix_exclusion_and_policy():
+    """验证混音/Remix 识别与版本互斥策略。"""
+    from core.utils.version_guard import is_remix_version, matches_version_policy
+
+    # 正例：括号混音、各种 Mix、Remix
+    assert is_remix_version("Boom, Boom, Boom, Boom!! (Snowtek Mix)") is True
+    assert is_remix_version("Boom, Boom, Boom, Boom!! (Airplay Mix)") is True
+    assert is_remix_version("Boom, Boom, Boom, Boom!! (Club Mix)") is True
+    assert is_remix_version("Song (Radio Edit)") is True
+    assert is_remix_version("Song [XX Remix]") is True
+    assert is_remix_version("Song 混音版") is True
+    assert is_remix_version("Track - Extended Mix") is True
+
+    # 负例：普通录音室原版、普通专辑
+    assert is_remix_version("Boom, Boom, Boom, Boom!!") is False
+    assert is_remix_version("The Party Album!") is False
+    assert is_remix_version("晴天") is False
+
+    # 策略互斥：目标非混音，候选为混音 -> 必须拦截
+    assert matches_version_policy(
+        target_is_live=False,
+        cand_title="Boom, Boom, Boom, Boom!! (Snowtek Mix)",
+        cand_album="The Party Album!",
+        target_is_remix=False
+    ) is False
+
+    # 策略放行：目标非混音，候选非混音 -> 放行
+    assert matches_version_policy(
+        target_is_live=False,
+        cand_title="Boom, Boom, Boom, Boom!!",
+        cand_album="The Party Album!",
+        target_is_remix=False
+    ) is True
+
+    # 策略互斥：目标为混音，候选非混音 -> 必须拦截
+    assert matches_version_policy(
+        target_is_live=False,
+        cand_title="Boom, Boom, Boom, Boom!!",
+        cand_album="The Party Album!",
+        target_is_remix=True
+    ) is False
+
+
+def test_kugou_album_weighting_and_rank():
+    """验证酷狗候选排序中同名专辑权重大于微小时长抖动。"""
+    from core.fetchers.kugou import KugouFetcher
+    from core.utils.version_guard import strip_subtitle_brackets
+
+    target_title = "Boom, Boom, Boom, Boom!!"
+    target_artist = "Vengaboys"
+    target_album = "The Party Album!"
+    target_dur_ms = 202570
+
+    cand_album_match = {
+        "title": "Boom, Boom, Boom, Boom!!",
+        "artist": "Vengaboys",
+        "album": "The Party Album!",
+        "duration": 202000,
+        "hash": "hash_album_match",
+    }
+    cand_other_album = {
+        "title": "Boom, Boom, Boom, Boom!!",
+        "artist": "Vengaboys",
+        "album": "Some Compilation",
+        "duration": 202470,
+        "hash": "hash_other_album",
+    }
+
+    def rank_fn(song):
+        s_t = song.get("title", "").strip().lower()
+        t_c = target_title.strip().lower()
+        if s_t == t_c or strip_subtitle_brackets(s_t) == strip_subtitle_brackets(t_c):
+            t_score = 100
+        elif t_c in s_t or s_t in t_c:
+            t_score = 50
+        else:
+            t_score = 0
+            
+        s_alb = song.get("album", "").strip().lower()
+        alb_c = target_album.strip().lower()
+        alb_score = 0
+        if alb_c and s_alb:
+            if alb_c == s_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(s_alb):
+                alb_score = 60
+            elif alb_c in s_alb or s_alb in alb_c:
+                alb_score = 30
+
+        s_a = song.get("artist", "").strip().lower()
+        a_c = target_artist.strip().lower()
+        a_score = 20 if (a_c and (a_c in s_a or s_a in a_c)) else 0
+        
+        d_diff = abs(song.get("duration", 0) - target_dur_ms) if target_dur_ms > 0 else 0
+        return (-t_score, -alb_score, -a_score, d_diff)
+
+    cands = [cand_other_album, cand_album_match]
+    cands.sort(key=rank_fn)
+    assert cands[0]["hash"] == "hash_album_match", f"Expected matching album first, got: {cands[0]}"
+
+
 def main():
     cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = []
