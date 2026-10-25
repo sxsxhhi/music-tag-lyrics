@@ -31,3 +31,5 @@ jobs:
         run: python tests/test_apple_ttml.py
       - name: Cover art ladder
         run: python tests/test_cover_art.py
+      - name: Acoustic pipeline v1.4.0
+        run: python tests/test_acoustic_pipeline.py

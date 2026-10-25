@@ -70,9 +70,14 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
     _first = _first_sing_line(lines)
     first_sing_start = _first.get("start", 0) if _first else 0
     if first_sing_start >= 12000 and (lyricist or composer):
+        # B3 链式前奏时序调度器（v1.4.0）：标题行 -> 作词 -> 作曲 -> 首唱，
+        # 各段严格留 ≥100ms 间距，消除标题行（≤5.5s）与署名行（旧算法 4.84s）的数学重叠。
+        title_end_ms = min(5500, first_sing_start // 2) if first_sing_start >= 6000 else 0
+        curr_cursor = max(1000, title_end_ms + 100)
+
         new_credits = []
         if lyricist:
-            st = min(6000, first_sing_start // 3)
+            st = max(curr_cursor, min(6000, first_sing_start // 3))
             et = st + 3000
             text = f"词 : {lyricist}"
             new_credits.append({
@@ -82,8 +87,9 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
                 "text": text,
                 "words": make_char_words(text, st, et)
             })
+            curr_cursor = et + 100
         if composer:
-            st = min(9500, (first_sing_start * 2) // 3)
+            st = max(curr_cursor, min(9500, (first_sing_start * 2) // 3))
             et = st + 3000
             text = f"曲 : {composer}"
             new_credits.append({
@@ -93,6 +99,9 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
                 "text": text,
                 "words": make_char_words(text, st, et)
             })
+            curr_cursor = et + 100
+        # 链条不得压迫首唱（数学上在 enrich 定义域 first_sing≥12000 恒成立，保底断言）
+        assert curr_cursor <= first_sing_start - 100, "Prelude credits exceed first singing start!"
         if new_credits:
             return {**data, "lines": new_credits + lines}
 

@@ -201,16 +201,36 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
         return False, data, ["Empty lyrics track"]
 
     last_line_start = -1
+    last_line_end = -1
     first_sing_start = None
 
     for i, line in enumerate(lines):
         line_start = line.get("start", 0)
         line_text = line.get("text", "").strip()
-        
+
         # Track first sung lyric start (ignoring credit preamble)
         if first_sing_start is None and not is_credit_line(line_text):
             first_sing_start = line_start
-        
+
+        # 0. 行间零重叠防御（铁律 19，B2/R2）：优先保后句准时开嗓，向后安全缩拢前句
+        if i > 0 and last_line_end > 0 and line_start < last_line_end + 50:
+            overlap_ms = (last_line_end + 50) - line_start
+            warnings.append(f"Line {i} overlap ({overlap_ms}ms). Auto-trimming previous line.")
+            # 铁律 4：行长下限 500ms
+            trimmed_prev_end = max(last_line_start + 500, line_start - 50)
+            lines[i - 1]["end"] = trimmed_prev_end
+            prev_words = lines[i - 1].get("words") or []
+            if prev_words:
+                last_w = prev_words[-1]
+                w_start = last_w.get("start", 0)
+                # R2：末字起点距收拢点不足 100ms 时，连字起点一并回移，
+                # 杜绝 max() 反向抬高再次越界——单字 ≥100ms 与行间 ≥50ms 双约束恒成立
+                if trimmed_prev_end - w_start < 100:
+                    last_w["start"] = max(last_line_start, trimmed_prev_end - 100)
+                last_w["end"] = trimmed_prev_end
+                last_w["duration"] = max(100, last_w["end"] - last_w["start"])
+            last_line_end = trimmed_prev_end
+
         # 1. Check line monotonic progression
         if line_start < last_line_start:
             warnings.append(f"Line {i} timestamp inversion: {line_start}ms < previous {last_line_start}ms. Auto-correcting.")
@@ -265,6 +285,7 @@ def validate_and_fix_lyrics(data: Dict[str, Any], audio_duration_ms: int = 0, is
             line["end"] = max(line_start + 500, words[-1]["end"])
         else:
             line["end"] = line_start + line.get("duration", 3000)
+        last_line_end = line["end"]
 
     # 3. Intro Gate: Check unusually delayed singing start
     if audio_duration_ms > 90000 and first_sing_start is not None:

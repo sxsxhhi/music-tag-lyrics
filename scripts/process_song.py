@@ -26,6 +26,7 @@ from scripts.tag_editor import (
 )
 from core.fetchers.netease import NetEaseFetcher
 from core.fetchers.cover_art import CoverFetcher
+from core.version import __version__
 from scripts.lyric_validator import (
     validate_and_fix_lyrics, pair_plain_bilingual_lyrics, extract_lyricist_composer,
     is_credit_line,
@@ -108,7 +109,7 @@ def prompt_gpu_authorization(kind: str, n_lines: int, non_interactive: bool) -> 
         return False
 
     print("\n" + "=" * 65)
-    print("🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v1.3.5)]")
+    print(f"🔔 [Demucs v4 GPU 音频剥离与声学打轴授权提示 (v{__version__})]")
     if kind == "line":
         print(f"已有逐行权威歌词（共 {n_lines} 行），但缺少逐字时间戳。")
         print("是否授权用本地 GPU 在行时间窗内声学咬合打轴？（精度优先；拒绝则降级为按行时长合成）")
@@ -169,7 +170,7 @@ def run_acoustic_align(
     existing_lines: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
-        from core.acoustic_aligner import AcousticAligner
+        from core.acoustic_aligner import AcousticAligner, AcousticEnvironmentError
         align_text, trans_by_idx, hints = _prepare_align_payload(
             title, artist, lyrics_text, existing_lines
         )
@@ -187,6 +188,9 @@ def run_acoustic_align(
                 if i < len(trans_by_idx) and trans_by_idx[i]:
                     line["translation"] = trans_by_idx[i]
         return aligned_data
+    except AcousticEnvironmentError as e:
+        print(f"🛑 声学环境不达标，GPU 打轴已被铁律 20 阻断（拒绝生成伪逐字）：{e}")
+        return None
     except ImportError as e:
         print(f"⚠️ 本地 Python 环境未安装 PyTorch/Demucs/Whisper: {e}")
         return None
@@ -274,7 +278,7 @@ def prompt_demucs_fallback(
 
     if not plain_text_lyrics or not plain_text_lyrics.strip():
         print("\n" + "=" * 65)
-        print("🛑 [Demucs v4 绝对红线阻断 (v1.3.5)]")
+        print(f"🛑 [Demucs v4 绝对红线阻断 (v{__version__})]")
         print(f"未能从商业曲库、全球检索与本地文件得到《{title} - {artist}》的权威歌词文本。")
         print("⚠️ 核心铁律：【绝不语音听写】！必须先有正确歌词，再声学打轴。")
         print("👉 可在歌曲目录放置《标题 - 歌手.txt》，或使用 --lyrics-file。")
@@ -585,7 +589,7 @@ def _write_cleaned_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="music-tag-lyrics Processor (v1.3.5)")
+    parser = argparse.ArgumentParser(description=f"music-tag-lyrics Processor (v{__version__})")
     parser.add_argument("path", help="Path to an audio file or directory")
     parser.add_argument("--no-tags", action="store_true", help="Do not modify audio tags")
     parser.add_argument("--lyrics-only", action="store_true", help="Only update embedded lyrics (USLT), leaving all other metadata tags untouched")
