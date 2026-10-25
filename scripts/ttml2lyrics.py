@@ -47,7 +47,7 @@ def extract_apple_id(value: str) -> Optional[str]:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.4)")
+    parser = argparse.ArgumentParser(description="Apple Music TTML to Enhanced LRC / SPL Converter (v1.3.5)")
     parser.add_argument("input", nargs="?", default=None, help="Audio file or .ttml file")
     parser.add_argument("--apple-id", default=None, help="Apple Music ID or music.apple.com URL")
     parser.add_argument("--title", default="", help="Song title")

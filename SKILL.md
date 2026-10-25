@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补与专辑封面补全（v1.3.4）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补与专辑封面补全（v1.3.5）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.3.4)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.3.5)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -85,6 +85,8 @@ flowchart TD
   4. 版本括号参与匹配，营销垃圾括号清除；
   5. 互斥覆盖六源 API、全球纯文本、自动同目录 txt；`--lyrics-file` 用户明示则不拦。
   6. KRCS 标题无 Live、专辑为空时：候选时长与本地 Live **±10s** 视为同版本，放行。
+  7. **Remix/混音双向互斥（v1.3.5 固化）**：`REMIX_PATTERN` 识别 remix / re-mix / 混音 / 括号内 club·extended·radio edit /「xxx mix」；本地混音版必须命中混音候选，本地原版拦截混音候选。当前在酷狗链路启用（`matches_version_policy` 的 `target_is_remix` 可选参，向后兼容），其余源沿用旧签名。
+  8. **酷狗同名专辑加权（v1.3.5 固化）**：候选排序中同名专辑（去括号精确相等 +60 / 互为子串 +30，`album_match_score` 单一出处）优先于时长抖动；**调度层必须向酷狗透传 album**（漏传曾致错配混音版专辑，e9 回归测试锁定）。
 
 ### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律
 - **铁律准则**：
@@ -158,7 +160,7 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.3.4)]
+🛑 [Demucs v4 绝对红线阻断 (v1.3.5)]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```

@@ -987,6 +987,52 @@ def test_e8_foreign_apple_no_trans_kugou_with_trans_replaces():
             setattr(agg, k, v)
 
 
+def test_e9_kugou_receives_album_from_aggregator():
+    """E9/v1.3.5 固化：调度层必须把 album 透传给酷狗（6348fe2 前漏传曾致错配混音版专辑）。"""
+    captured = {}
+
+    class FakeAppleNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    class FakeKugouCapture:
+        @classmethod
+        def fetch(cls, title="", artist="", duration_ms=0, album=""):
+            captured.update({"title": title, "artist": artist, "album": album})
+            return None
+
+    reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    agg.AppleTTMLFetcher = FakeAppleNone
+    agg.KugouFetcher = FakeKugouCapture
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = FakeNone
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        agg.LyricAggregator.fetch_best_lyrics(
+            "测试曲", "测试歌手", album="同名专辑", duration_ms=200000
+        )
+        assert captured.get("album") == "同名专辑", f"album 未透传给酷狗: {captured}"
+        assert captured.get("title") == "测试曲"
+    finally:
+        for k, v in reals.items():
+            setattr(agg, k, v)
+
+
 @sandboxed
 def test_f1_itunes_cache_key_includes_duration():
     """先 180s 命中再 295s 不得返回同一 apple_id。"""

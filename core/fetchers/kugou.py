@@ -52,6 +52,22 @@ def _reject_parsed_duration(last_end_ms: int, target_duration_ms: int) -> bool:
     return parsed_duration_reject_reason(last_end_ms, target_duration_ms) is not None
 
 
+def album_match_score(target_album: str, cand_album: str) -> int:
+    """同名专辑加权（v1.3.5 收敛）：去括号精确相等 60 / 互为子串 30 / 其余 0。
+
+    原先 candidate_rank 与 _krc_cand_rank 各写一份（语义相同），合并为单一出处。
+    """
+    alb_c = (target_album or "").strip().lower()
+    c_alb = (cand_album or "").strip().lower()
+    if not alb_c or not c_alb:
+        return 0
+    if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
+        return 60
+    if alb_c in c_alb or c_alb in alb_c:
+        return 30
+    return 0
+
+
 def krcs_version_ok(
     target_is_live: bool,
     cand_title: str,
@@ -256,14 +272,7 @@ class KugouFetcher:
             )
 
         def _krc_cand_rank(c):
-            c_alb = (c.get("album", "") or "").strip().lower()
-            alb_c = (album or "").strip().lower()
-            alb_score = 0
-            if alb_c and c_alb:
-                if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
-                    alb_score = 60
-                elif alb_c in c_alb or c_alb in alb_c:
-                    alb_score = 30
+            alb_score = album_match_score(album, c.get("album", "") or "")
             c_dur = get_cand_dur_sec(c)
             diff = abs(c_dur - duration_sec) if duration_sec > 0 else 0
             return (-alb_score, diff)
@@ -386,14 +395,7 @@ class KugouFetcher:
             else:
                 t_score = 0
                 
-            s_alb = song.get("album", "").strip().lower()
-            alb_c = album.strip().lower()
-            alb_score = 0
-            if alb_c and s_alb:
-                if alb_c == s_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(s_alb):
-                    alb_score = 60
-                elif alb_c in s_alb or s_alb in alb_c:
-                    alb_score = 30
+            alb_score = album_match_score(album, song.get("album", ""))
 
             s_a = song.get("artist", "").strip().lower()
             a_c = artist.strip().lower()
