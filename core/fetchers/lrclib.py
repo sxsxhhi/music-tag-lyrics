@@ -6,7 +6,12 @@ from typing import Dict, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_get_json, UA_DEFAULT
-from ..utils.version_guard import is_live_version, matches_version_policy
+from ..utils.version_guard import (
+    is_live_version,
+    is_remix_version,
+    matches_version_policy,
+    album_match_score,
+)
 
 
 def _stamp_lrclib(parsed: Dict[str, Any], title: str, artist: str,
@@ -85,16 +90,17 @@ class LRCLIBFetcher:
                     fill_missing_only=True,
                 )
 
-        return cls.search_and_fetch(title, artist, duration_ms)
+        return cls.search_and_fetch(title, artist, duration_ms, album=album)
 
     @classmethod
-    def search_and_fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+    def search_and_fetch(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, Any]]:
         target_is_live = is_live_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
         valid_items = []
         for item in cls._search_list(title, artist):
             track_name = item.get("trackName", "")
             album_name = item.get("albumName", "")
-            if not matches_version_policy(target_is_live, track_name, album_name):
+            if not matches_version_policy(target_is_live, track_name, album_name, target_is_remix=target_is_remix):
                 continue
             if not item.get("syncedLyrics"):
                 continue
@@ -109,7 +115,8 @@ class LRCLIBFetcher:
                 valid_items.append((0, item))
 
         if valid_items:
-            valid_items.sort(key=lambda x: x[0])
+            # v1.3.5 O1：与酷狗/网易对称——同名专辑加权优先于时长抖动
+            valid_items.sort(key=lambda x: (-album_match_score(album, x[1].get("albumName", "")), x[0]))
             for _, item in valid_items:
                 synced = item.get("syncedLyrics", "")
                 if synced:

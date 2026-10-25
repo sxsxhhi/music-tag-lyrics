@@ -221,6 +221,24 @@ def test_kugou_album_weighting_and_rank():
     assert cands[0]["hash"] == "hash_album_match", f"Expected matching album first, got: {cands[0]}"
 
 
+def test_album_match_score_short_name_guard():
+    """O2 防穿透：极短专辑名（<3 字符）禁止模糊子串加权，只允许精确/去括号相等。"""
+    from core.utils.version_guard import album_match_score
+
+    # 数字短专辑不得穿透到无关长专辑
+    assert album_match_score("1", "100 Hits") == 0
+    assert album_match_score("21", "1989") == 0
+    # 精确与去括号精确仍然满分
+    assert album_match_score("21", "21") == 60
+    assert album_match_score("21", "21 (Deluxe)") == 60
+    assert album_match_score("The Party Album!", "The Party Album! (Deluxe)") == 60
+    # 正常长度的子串加权不受影响
+    assert album_match_score("Greatest", "Greatest Hits") == 30
+    # 空值安全
+    assert album_match_score("", "任意") == 0
+    assert album_match_score("任意", "") == 0
+
+
 def main():
     cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = []

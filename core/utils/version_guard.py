@@ -112,3 +112,21 @@ def is_duration_acceptable(
     c_sec = cand_dur_ms // 1000 if cand_dur_ms > 1000 else cand_dur_ms
     t_sec = target_dur_ms // 1000 if target_dur_ms > 1000 else target_dur_ms
     return abs(c_sec - t_sec) <= tolerance_sec
+
+
+def album_match_score(target_album: str, cand_album: str) -> int:
+    """同名专辑加权：去括号精确相等 60 / 互为子串 30 / 其余 0。
+
+    供酷狗 / 网易 / LRCLIB 三源共用的单一出处（原先是 kugou 内部函数）。
+    O2 防穿透：极短专辑名（< 3 字符，如 "1"、"21"、"Red" 的数字/单字位）
+    只允许去括号精确相等，禁止模糊子串加权——"21" 不再命中 "1989"、"100 Hits"。
+    """
+    alb_c = (target_album or "").strip().lower()
+    c_alb = (cand_album or "").strip().lower()
+    if not alb_c or not c_alb:
+        return 0
+    if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
+        return 60
+    if min(len(alb_c), len(c_alb)) >= 3 and (alb_c in c_alb or c_alb in alb_c):
+        return 30
+    return 0

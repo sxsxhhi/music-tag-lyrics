@@ -8,17 +8,28 @@ from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_post_json, http_get_json, UA_DESKTOP
 from ..utils.version_guard import (
     is_live_version,
+    is_remix_version,
     matches_version_policy,
     is_duration_acceptable,
     is_title_fuzzy_match,
+    album_match_score,
 )
 
 class NetEaseFetcher:
     """Fetcher for NetEase Cloud Music lyrics with Version Guard."""
 
     @classmethod
-    def search_best_song(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
-        """检索网易曲目，返回最匹配的一首（含 album.publishTime）。"""
+    def search_best_song(
+        cls,
+        title: str,
+        artist: str = "",
+        duration_ms: int = 0,
+        album: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """检索网易曲目，返回最匹配的一首（含 album.publishTime）。
+
+        v1.3.5 O1：与酷狗对称——Remix 双向互斥 + 同名专辑加权优先于时长抖动。
+        """
         keyword = f"{title} {artist}".strip()
         search_url = "https://music.163.com/api/search/get/web?csrf_token="
         post_data = {
@@ -38,6 +49,7 @@ class NetEaseFetcher:
             return None
 
         target_is_live = is_live_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
         valid_candidates = []
         for s in songs:
             s_name = s.get("name", "")
@@ -46,7 +58,7 @@ class NetEaseFetcher:
 
             if not is_title_fuzzy_match(s_name, title):
                 continue
-            if not matches_version_policy(target_is_live, s_name, s_album):
+            if not matches_version_policy(target_is_live, s_name, s_album, target_is_remix=target_is_remix):
                 continue
             if not is_duration_acceptable(s_dur, duration_ms, tolerance_sec=35):
                 continue
@@ -55,16 +67,18 @@ class NetEaseFetcher:
 
         if not valid_candidates:
             return None
-        valid_candidates.sort(key=lambda x: x[0])
+        valid_candidates.sort(
+            key=lambda x: (-album_match_score(album, x[1].get("album", {}).get("name", "")), x[0])
+        )
         return valid_candidates[0][1]
 
     @classmethod
-    def search_song_id(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[int]:
+    def search_song_id(cls, title: str = "", artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[int]:
         """
         Searches NetEase song catalog and returns the best matching song ID.
         Applies version mutual exclusion (Live vs Studio) and duration filtering.
         """
-        song = cls.search_best_song(title, artist, duration_ms)
+        song = cls.search_best_song(title, artist, duration_ms, album=album)
         if not song:
             return None
         return song.get("id")
@@ -90,9 +104,9 @@ class NetEaseFetcher:
         return ""
 
     @classmethod
-    def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, str]]:
+    def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, str]]:
         """同一首歌的 lrc / tlyric 原文（可无时间戳）。供同步解析与 GPU 纯文本共用。"""
-        song_id = cls.search_song_id(title, artist, duration_ms)
+        song_id = cls.search_song_id(title, artist, duration_ms, album=album)
         if not song_id:
             return None
 
@@ -108,9 +122,9 @@ class NetEaseFetcher:
         return {"lrc": lrc_text, "tlyric": tlyric_text}
 
     @classmethod
-    def fetch(cls, title: str, artist: str = "", duration_ms: int = 0) -> Optional[Dict[str, Any]]:
+    def fetch(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, Any]]:
         """Retrieves and parses LRC lyrics for the specified song."""
-        raw = cls.fetch_raw_lyrics(title, artist, duration_ms)
+        raw = cls.fetch_raw_lyrics(title, artist, duration_ms, album=album)
         if not raw or not raw.get("lrc"):
             return None
 

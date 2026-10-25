@@ -15,6 +15,7 @@ from ..utils.version_guard import (
     strip_subtitle_brackets,
     matches_version_policy,
     is_title_fuzzy_match,
+    album_match_score,
 )
 
 # 铁律 17：搜歌元数据 ±10s；解析末行只拒预览与冲轴。
@@ -256,14 +257,7 @@ class KugouFetcher:
             )
 
         def _krc_cand_rank(c):
-            c_alb = (c.get("album", "") or "").strip().lower()
-            alb_c = (album or "").strip().lower()
-            alb_score = 0
-            if alb_c and c_alb:
-                if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
-                    alb_score = 60
-                elif alb_c in c_alb or c_alb in alb_c:
-                    alb_score = 30
+            alb_score = album_match_score(album, c.get("album", "") or "")
             c_dur = get_cand_dur_sec(c)
             diff = abs(c_dur - duration_sec) if duration_sec > 0 else 0
             return (-alb_score, diff)
@@ -386,14 +380,7 @@ class KugouFetcher:
             else:
                 t_score = 0
                 
-            s_alb = song.get("album", "").strip().lower()
-            alb_c = album.strip().lower()
-            alb_score = 0
-            if alb_c and s_alb:
-                if alb_c == s_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(s_alb):
-                    alb_score = 60
-                elif alb_c in s_alb or s_alb in alb_c:
-                    alb_score = 30
+            alb_score = album_match_score(album, song.get("album", ""))
 
             s_a = song.get("artist", "").strip().lower()
             a_c = artist.strip().lower()

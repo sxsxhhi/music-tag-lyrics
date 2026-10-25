@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, Union, NamedTuple
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
-UA_DEFAULT = "music-tag-lyrics/1.3.4"
+UA_DEFAULT = "music-tag-lyrics/1.3.5"
 
 def http_get_text(
     url: str,

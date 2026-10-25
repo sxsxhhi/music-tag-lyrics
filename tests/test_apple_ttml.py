@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (56 条全量测试)。"""
+"""Apple Music TTML 单元测试：镜像攒票、索引消歧、门禁判定与等级单调 (58 条全量测试)。"""
 
 import os
 import sys
@@ -982,6 +982,101 @@ def test_e8_foreign_apple_no_trans_kugou_with_trans_replaces():
     try:
         cand = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=0)
         assert cand["source"] == "kugou"
+    finally:
+        for k, v in reals.items():
+            setattr(agg, k, v)
+
+
+def test_e9_kugou_receives_album_from_aggregator():
+    """E9/v1.3.5 固化：调度层必须把 album 透传给酷狗（6348fe2 前漏传曾致错配混音版专辑）。"""
+    captured = {}
+
+    class FakeAppleNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    class FakeKugouCapture:
+        @classmethod
+        def fetch(cls, title="", artist="", duration_ms=0, album=""):
+            captured.update({"title": title, "artist": artist, "album": album})
+            return None
+
+    reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    agg.AppleTTMLFetcher = FakeAppleNone
+    agg.KugouFetcher = FakeKugouCapture
+    agg.AMLLFetcher = FakeNone
+    agg.NetEaseFetcher = FakeNone
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        agg.LyricAggregator.fetch_best_lyrics(
+            "测试曲", "测试歌手", album="同名专辑", duration_ms=200000
+        )
+        assert captured.get("album") == "同名专辑", f"album 未透传给酷狗: {captured}"
+        assert captured.get("title") == "测试曲"
+    finally:
+        for k, v in reals.items():
+            setattr(agg, k, v)
+
+
+def test_e10_netease_receives_album_from_aggregator():
+    """E10/v1.3.5 O1：调度层必须把 album 透传给网易（与酷狗 e9 对称的架构锁）。"""
+    captured = {}
+
+    class FakeAppleNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    class FakeKugouNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    class FakeNeteaseCapture:
+        @classmethod
+        def fetch(cls, title="", artist="", duration_ms=0, album=""):
+            captured.update({"title": title, "artist": artist, "album": album})
+            return None
+
+    reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
+
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
+    agg.AppleTTMLFetcher = FakeAppleNone
+    agg.KugouFetcher = FakeKugouNone
+    agg.NetEaseFetcher = FakeNeteaseCapture
+    agg.LrcShareFetcher = FakeNone
+    agg.LRCLIBFetcher = FakeNone
+    try:
+        agg.LyricAggregator.fetch_best_lyrics(
+            "测试曲", "测试歌手", album="网易专辑", duration_ms=200000
+        )
+        assert captured.get("album") == "网易专辑", f"album 未透传给网易: {captured}"
+        assert captured.get("title") == "测试曲"
     finally:
         for k, v in reals.items():
             setattr(agg, k, v)
