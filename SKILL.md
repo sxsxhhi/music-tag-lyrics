@@ -85,8 +85,8 @@ flowchart TD
   4. 版本括号参与匹配，营销垃圾括号清除；
   5. 互斥覆盖六源 API、全球纯文本、自动同目录 txt；`--lyrics-file` 用户明示则不拦。
   6. KRCS 标题无 Live、专辑为空时：候选时长与本地 Live **±10s** 视为同版本，放行。
-  7. **Remix/混音双向互斥（v1.3.5 固化）**：`REMIX_PATTERN` 识别 remix / re-mix / 混音 / 括号内 club·extended·radio edit /「xxx mix」；本地混音版必须命中混音候选，本地原版拦截混音候选。当前在酷狗链路启用（`matches_version_policy` 的 `target_is_remix` 可选参，向后兼容），其余源沿用旧签名。
-  8. **酷狗同名专辑加权（v1.3.5 固化）**：候选排序中同名专辑（去括号精确相等 +60 / 互为子串 +30，`album_match_score` 单一出处）优先于时长抖动；**调度层必须向酷狗透传 album**（漏传曾致错配混音版专辑，e9 回归测试锁定）。
+  7. **Remix/混音双向互斥（v1.3.5 固化）**：`REMIX_PATTERN` 识别 remix / re-mix / 混音 / 括号内 club·extended·radio edit /「xxx mix」；本地混音版必须命中混音候选，本地原版拦截混音候选。已在**酷狗、网易、LRCLIB 三链路**启用（`matches_version_policy` 的 `target_is_remix` 可选参，向后兼容），LRCSHARE 沿用旧签名。
+  8. **同名专辑加权（v1.3.5 固化，三源共用）**：候选排序中同名专辑（去括号精确相等 +60 / 互为子串 +30，`version_guard.album_match_score` 单一出处；**极短专辑名 <3 字符只允许精确相等防数字穿透**）优先于时长抖动；**调度层必须向酷狗/网易透传 album**（漏传曾致错配混音版专辑，e9/e10 回归测试锁定）。
 
 ### 10. 全链路 [offset] / adjust 叠加与前奏异常门禁铁律
 - **铁律准则**：

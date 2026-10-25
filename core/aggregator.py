@@ -192,7 +192,7 @@ class LyricAggregator:
 
         # T4 网易 —— 整包替换必须自带可用 tlyric，且 rank 严格提升
         if need_more(candidate):
-            ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms), "netease")
+            ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms, album=album), "netease")
             if ne_res:
                 entries = _hanzi_tlyric_entries(ne_res.get("tlyric", ""))
                 attached = False

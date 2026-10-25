@@ -15,6 +15,7 @@ from ..utils.version_guard import (
     strip_subtitle_brackets,
     matches_version_policy,
     is_title_fuzzy_match,
+    album_match_score,
 )
 
 # 铁律 17：搜歌元数据 ±10s；解析末行只拒预览与冲轴。
@@ -50,22 +51,6 @@ def parsed_duration_reject_reason(last_end_ms: int, target_duration_ms: int) -> 
 def _reject_parsed_duration(last_end_ms: int, target_duration_ms: int) -> bool:
     """只拦预览截断和末字冲过曲长；尾奏导致末行早于曲终不拒（铁律 1 / F-03）。"""
     return parsed_duration_reject_reason(last_end_ms, target_duration_ms) is not None
-
-
-def album_match_score(target_album: str, cand_album: str) -> int:
-    """同名专辑加权（v1.3.5 收敛）：去括号精确相等 60 / 互为子串 30 / 其余 0。
-
-    原先 candidate_rank 与 _krc_cand_rank 各写一份（语义相同），合并为单一出处。
-    """
-    alb_c = (target_album or "").strip().lower()
-    c_alb = (cand_album or "").strip().lower()
-    if not alb_c or not c_alb:
-        return 0
-    if alb_c == c_alb or strip_subtitle_brackets(alb_c) == strip_subtitle_brackets(c_alb):
-        return 60
-    if alb_c in c_alb or c_alb in alb_c:
-        return 30
-    return 0
 
 
 def krcs_version_ok(
