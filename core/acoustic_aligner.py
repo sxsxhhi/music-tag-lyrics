@@ -446,7 +446,12 @@ class AcousticAligner:
                 all_line_words.append((line_txt, line_w))
             finally:
                 if os.path.exists(tmp_p):
-                    os.remove(tmp_p)
+                    try:
+                        os.remove(tmp_p)
+                    except OSError:
+                        # Windows 下 stable-whisper/杀软可能延迟释放句柄（WinError 32）。
+                        # 残留 temp 交给系统清理，绝不能让删除失败打断已完成的打轴。
+                        pass
 
         # 4. Dual-ended energy calibration and pause gap tagging
         output_lines = []
