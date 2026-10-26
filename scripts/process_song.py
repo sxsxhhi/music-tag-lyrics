@@ -144,7 +144,7 @@ def _prepare_align_payload(
         hints: List[Tuple[float, str]] = []
         for line in existing_lines:
             text = (line.get("text") or "").strip()
-            if not text:
+            if not text or is_credit_line(text):
                 continue
             orig_lines.append(text)
             trans_by_idx.append((line.get("translation") or "").strip() or None)
@@ -297,6 +297,18 @@ def prompt_demucs_fallback(
     n_lines = _singing_line_count(plain_text_lyrics)
     if not prompt_gpu_authorization("plain", n_lines, non_interactive):
         return None
+    if lang == "auto" or (lang == "zh" and plain_text_lyrics):
+        from core.utils.lang_detect import detect_language
+        det = detect_language(
+            lyrics_text=plain_text_lyrics,
+            title=title,
+            artist=artist,
+            audio_path=filepath,
+            interactive=False,
+        )
+        if det.get("lang") == "yue":
+            lang = "yue"
+            print(f"🌐 [lang_detect] 基于已获取权威文本判定为粤语 (置信得分 {det.get('confidence', 0.0):.2f})，启用粤语声学打轴。")
     aligned = run_acoustic_align(filepath, title, artist, plain_text_lyrics, lang=lang)
     if aligned:
         aligned["gpu_aligned"] = True
@@ -408,11 +420,13 @@ def process_single_song(
             print(f"📖 Loaded external lyrics file: {lyrics_file}")
 
     # 2.5 语种路由检测 (v1.5.0 §四)
+    initial_lyrics_text = explicit_lyrics_text or (tags.get("lyrics") or "").strip()
     resolved_lang = (lang or "auto").lower().strip()
-    if resolved_lang == "auto":
+    lang_auto = (resolved_lang == "auto")
+    if lang_auto:
         from core.utils.lang_detect import detect_language
         det = detect_language(
-            lyrics_text=explicit_lyrics_text or "",
+            lyrics_text=initial_lyrics_text,
             title=cleaned_title,
             artist=normalized_artist,
             audio_path=filepath,
@@ -523,6 +537,20 @@ def process_single_song(
 
     # P0-2: 逐字必须在校验之后。先让 validator 用「没有 words」完成双语配对，
     # 再处理仍然没有逐字的行：精度优先问 GPU（带行窗），拒绝/非交互才 numpy。
+    if lang_auto and resolved_lang != "yue":
+        from core.utils.lang_detect import detect_language
+        full_lyric_str = "\n".join((l.get("text") or "") for l in validated_data.get("lines") or [])
+        det_recheck = detect_language(
+            lyrics_text=full_lyric_str,
+            title=cleaned_title,
+            artist=normalized_artist,
+            audio_path=filepath,
+            interactive=False,
+        )
+        if det_recheck.get("lang") == "yue":
+            resolved_lang = "yue"
+            print(f"🌐 [lang_detect] 基于已匹配歌词复检判定为粤语 (置信得分 {det_recheck.get('confidence', 0.0):.2f})，声学打轴启用粤语分支。")
+
     validated_data = enrich_missing_words(
         validated_data,
         filepath=filepath,

@@ -77,6 +77,31 @@ def test_low_confidence_fallback():
     assert res_ambiguous["lang"] == "zh", f"Expected 'zh', got: {res_ambiguous}"
 
 
+def test_audio_probe_triggers_without_metadata():
+    """测试元数据完全缺失时，音频探针仍能触发并作为终裁。"""
+    import unittest.mock as mock
+    with mock.patch("core.utils.lang_detect.probe_audio_cantonese_confidence", return_value=0.55) as mock_probe:
+        with mock.patch("os.path.isfile", return_value=True):
+            res = detect_language(
+                lyrics_text="",
+                title="未知曲目",
+                artist="未知歌手",
+                audio_path="/fake/path/song.flac",
+                interactive=False,
+            )
+            mock_probe.assert_called_once()
+            assert res["lang"] == "yue", f"Expected 'yue', got: {res}"
+            assert res["confidence"] >= 0.50
+
+
+def test_embedded_lyrics_detection():
+    """测试包含方言词的歌词能正确被识别为 yue。"""
+    slang_lyrics = "寻日睇见佢，真系好搞笑！"
+    res = detect_language(lyrics_text=slang_lyrics, title="小曲", artist="佚名", interactive=False)
+    assert res["lang"] == "yue"
+    assert res["confidence"] >= 0.50
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0
@@ -100,3 +125,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
