@@ -168,6 +168,7 @@ def run_acoustic_align(
     artist: str,
     lyrics_text: str,
     existing_lines: Optional[List[Dict[str, Any]]] = None,
+    lang: str = "auto",
 ) -> Optional[Dict[str, Any]]:
     try:
         from core.acoustic_aligner import AcousticAligner, AcousticEnvironmentError
@@ -177,12 +178,18 @@ def run_acoustic_align(
         if not align_text.strip():
             print("❌ 权威文本剥离后为空，红线阻断，不听写。")
             return None
-        aligned_data = AcousticAligner.align_lyrics(
-            audio_path=filepath,
-            lyrics_text=align_text,
-            line_timing_hints=hints,
-            device="cuda",
-        )
+        import inspect
+        sig = inspect.signature(AcousticAligner.align_lyrics)
+        align_kwargs = {
+            "audio_path": filepath,
+            "lyrics_text": align_text,
+            "line_timing_hints": hints,
+            "device": "cuda",
+        }
+        if "lang" in sig.parameters:
+            align_kwargs["lang"] = lang
+
+        aligned_data = AcousticAligner.align_lyrics(**align_kwargs)
         if aligned_data and trans_by_idx:
             for i, line in enumerate(aligned_data.get("lines") or []):
                 if i < len(trans_by_idx) and trans_by_idx[i]:
@@ -214,6 +221,7 @@ def enrich_missing_words(
     title: str,
     artist: str,
     non_interactive: bool = False,
+    lang: str = "auto",
 ) -> Dict[str, Any]:
     """有逐字则不动；无逐字先问 GPU（带行窗）；拒绝/非交互/失败才 numpy。"""
     lines = validated_data.get("lines") or []
@@ -237,7 +245,7 @@ def enrich_missing_words(
     n_lines = len([l for l in lines if (l.get("text") or "").strip()])
     if prompt_gpu_authorization("line", n_lines, non_interactive):
         aligned = run_acoustic_align(
-            filepath, title, artist, "", existing_lines=lines
+            filepath, title, artist, "", existing_lines=lines, lang=lang
         )
         if aligned and aligned.get("lines"):
             aligned["gpu_aligned"] = True
@@ -263,6 +271,7 @@ def prompt_demucs_fallback(
     non_interactive: bool = False,
     album: str = "",
     duration_ms: int = 0,
+    lang: str = "auto",
 ) -> Optional[Dict[str, Any]]:
     """
     无同步 lines 时的 GPU 兜底。先搜集权威文本，再征求授权。
@@ -288,7 +297,7 @@ def prompt_demucs_fallback(
     n_lines = _singing_line_count(plain_text_lyrics)
     if not prompt_gpu_authorization("plain", n_lines, non_interactive):
         return None
-    aligned = run_acoustic_align(filepath, title, artist, plain_text_lyrics)
+    aligned = run_acoustic_align(filepath, title, artist, plain_text_lyrics, lang=lang)
     if aligned:
         aligned["gpu_aligned"] = True
         aligned.setdefault("source", "acoustic")
@@ -318,6 +327,7 @@ def process_single_song(
     non_interactive: bool = False,
     enable_apple: bool = True,
     no_cover: bool = False,
+    lang: str = "auto",
 ) -> bool:
     """
     Processes a single audio file:
@@ -397,6 +407,21 @@ def process_single_song(
         if explicit_lyrics_text:
             print(f"📖 Loaded external lyrics file: {lyrics_file}")
 
+    # 2.5 语种路由检测 (v1.5.0 §四)
+    resolved_lang = (lang or "auto").lower().strip()
+    if resolved_lang == "auto":
+        from core.utils.lang_detect import detect_language
+        det = detect_language(
+            lyrics_text=explicit_lyrics_text or "",
+            title=cleaned_title,
+            artist=normalized_artist,
+            audio_path=filepath,
+            interactive=not non_interactive,
+        )
+        resolved_lang = det.get("lang", "zh")
+        if resolved_lang == "yue":
+            print(f"🌐 [lang_detect] 判定曲目为粤语 (置信得分 {det.get('confidence', 0.0):.2f})，声学打轴将启用粤语分支。")
+
     # 3. Lyric retrieval or Demucs fallback
     lyric_data = None
     if force_gpu:
@@ -409,6 +434,7 @@ def process_single_song(
             non_interactive=non_interactive,
             album=album,
             duration_ms=duration_ms,
+            lang=resolved_lang,
         )
     else:
         print("🔍 Fetching lyrics across multi-engines (AppleTTML/Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
@@ -429,6 +455,7 @@ def process_single_song(
                 non_interactive=non_interactive,
                 album=album,
                 duration_ms=duration_ms,
+                lang=resolved_lang,
             )
 
     # 3.5 专辑封面补全（R9）：默认写标签路径生效；已有封面绝不覆盖；OGG 本轮跳过。
@@ -502,6 +529,7 @@ def process_single_song(
         title=cleaned_title,
         artist=normalized_artist,
         non_interactive=non_interactive,
+        lang=resolved_lang,
     )
 
     if not lyricist or not composer:
@@ -602,6 +630,8 @@ def main():
                         help="禁用 Apple Music TTML 引擎")
     parser.add_argument("--no-cover", action="store_true",
                         help="跳过专辑封面补全（已有封面本来也绝不覆盖）")
+    parser.add_argument("--lang", default="auto", choices=["auto", "zh", "yue"],
+                        help="声学打轴语种分支：auto (自动检测) / zh (普通话) / yue (粤语)")
     args = parser.parse_args()
 
     # Apple 档总开关只在此处计算一次（A4 去重，原先单文件/目录两分支各算一遍）
@@ -619,7 +649,8 @@ def main():
             lyrics_file=args.lyrics_file,
             non_interactive=args.non_interactive,
             enable_apple=enable_apple,
-            no_cover=args.no_cover
+            no_cover=args.no_cover,
+            lang=args.lang,
         )
         return 0 if ok else 1
     elif os.path.isdir(target):
@@ -642,7 +673,8 @@ def main():
                             lyrics_file=args.lyrics_file,
                             non_interactive=args.non_interactive,
                             enable_apple=enable_apple,
-                            no_cover=args.no_cover
+                            no_cover=args.no_cover,
+                            lang=args.lang,
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")

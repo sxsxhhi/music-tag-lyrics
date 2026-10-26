@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补与专辑封面补全（v1.4.0）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.5.0）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.4.0)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.5.0)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -157,9 +157,9 @@ flowchart TD
 
 ---
 
-## 四、Demucs v4 GPU 兜底
+## 四、Demucs v4 GPU 兜底与双引擎声学对齐 (v1.5.0)
 
-技能包不内置 4GB 模型。两条入口：
+技能包不内置重型模型权重。两条入口：
 
 1. **有行无字**：征求 GPU；Y 用已有行轴做短窗；N / 非交互 / 失败 → numpy 合成。
 2. **无 lines**：先全球搜文本（GitHub 优先），再征求 GPU；无文本红线阻断；N / 非交互 → 本首失败。
@@ -167,12 +167,16 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.4.0)]
+🛑 [Demucs v4 绝对红线阻断 (v1.5.0)]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```
 
-Y：干声分离后 Forced Alignment；外语只对齐原文，译文挂回 `translation`。有行无字时拒绝会降级合成；无行轴时拒绝不能合成。
+**双引擎声学调度架构（v1.5.0 原生收编）**：
+- **语种自动探测路由（`core/utils/lang_detect.py`）**：Cantopop 白名单歌手库 + 粤语经典意象词表（40+ 词条）+ 俚语字频统计 + 未剥离音频首窗预探。CLI 可通过 `--lang auto/zh/yue` 强制指定。
+- **国语/外语通用引擎（`DualEngineHybridAligner`）**：Demucs 人声分离 + Whisper Cross-Attention 行窗咬合 + 44.1kHz STFT 瞬态吸附 + RMS 换气谷底双向锁定 + sustain 衰减门控。
+- **粤语专用引擎（`CantoneseCTCAligner`）**：Demucs 人声分离 + `wav2vec2-large-xlsr-cantonese` + 729 类无调粤拼 CTC 映射桥梁 + `torchaudio.functional.forced_align` Viterbi DP 强制对齐 + 入声韵尾（-p/-t/-k）120ms 闭气保护 + 西文单词等比内插 + 铁律 19 零重叠硬门禁。
+- 外语只对齐原文，译文挂回 `translation`。有行无字时拒绝会降级合成；无行轴时拒绝不能合成。
 
 ---
 
@@ -182,10 +186,12 @@ Y：干声分离后 Forced Alignment；外语只对齐原文，译文挂回 `tra
 - 标签：`scripts/tag_editor.py`
 - 调度：`core/aggregator.py`（Apple TTML → 酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB）
 - 抓取：`core/fetchers/`（`apple_ttml.py`、`amll_index.py`、`itunes_client.py`、`cover_art.py` 等）
-- GPU / 合成：`core/acoustic_aligner.py`（有行无字先问 GPU；numpy 合成 ≠ GPU）
+- 声学对齐（双引擎）：`core/acoustic_aligner.py`（调度与普通话 Whisper 双引擎流水线）、`core/acoustic_canto.py`（粤语 CTC 对齐引擎）
+- 语种路由：`core/utils/lang_detect.py`（歌手/意象/俚语/首窗声学探针）
+- 粤拼转换：`core/utils/jyutping.py`、`core/data/jyutping_dict.tsv`（简繁离线词典与多音字前缀消歧）
 - 纯文本搜集：`core/plain_lyric_search.py`（六源 plain + GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`tests/test_apple_ttml.py`（55 条全量测试）、`test_cover_art.py`、`test_parsers.py`、`test_pipeline.py`、`test_m1_safety.py`、`test_gpu_plain.py`、`test_kugou_gates.py`、`test_converter_prelude.py`
+- 离线测：`tests/test_canto_align.py`、`tests/test_jyutping.py`、`tests/test_lang_detect.py`、`tests/test_apple_ttml.py`、`tests/test_cover_art.py`、`tests/test_parsers.py`、`tests/test_pipeline.py`、`tests/test_m1_safety.py`、`tests/test_gpu_plain.py`、`tests/test_kugou_gates.py`、`tests/test_converter_prelude.py`、`tests/test_acoustic_pipeline.py`
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
