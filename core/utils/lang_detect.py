@@ -95,10 +95,11 @@ def match_imagery_ngrams(text: str) -> int:
 
 def probe_audio_cantonese_confidence(
     audio_path: str,
-    probe_seconds: float = 20.0,
+    lyrics_text: str = "",
+    probe_seconds: float = 30.0,
     device: str = "cuda"
 ) -> float:
-    """原始混音前段音频探针（无需 Demucs），检测粤音 CTC 置信度。
+    """原始混音前段音频探针（无需 Demucs），检测粤音 CTC 匹配置信度。
 
     返回 0.0 ~ 1.0 的置信度分数。若无模型或环境不可用，安全返回 0.0。
     """
@@ -109,6 +110,7 @@ def probe_audio_cantonese_confidence(
         import torch
         import torchaudio.transforms as T
         from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+        from .jyutping import text_to_jyutping_tokens
 
         model_id = "scottykwok/wav2vec2-large-xlsr-cantonese"
         # 尝试本地加载
@@ -143,20 +145,39 @@ def probe_audio_cantonese_confidence(
         with torch.no_grad():
             logits = model(inputs).logits
 
-        probs = torch.softmax(logits, dim=-1)  # (1, T, V)
-        max_probs, preds = torch.max(probs[0], dim=-1)
+        preds = torch.argmax(logits, dim=-1)
+        decoded_text = proc.decode(preds[0])
 
-        # 过滤 pad_token (3554) 与空白
-        pad_id = getattr(model.config, "pad_token_id", 3554)
-        non_pad_mask = preds != pad_id
-        if non_pad_mask.sum() == 0:
-            return 0.0
-
-        mean_conf = float(max_probs[non_pad_mask].mean().item())
         del model
         if device == "cuda":
             torch.cuda.empty_cache()
-        return mean_conf
+
+        if not decoded_text:
+            return 0.0
+
+        dec_jps = set(text_to_jyutping_tokens(decoded_text))
+        if not dec_jps:
+            return 0.0
+
+        if lyrics_text and lyrics_text.strip():
+            lyr_jps = text_to_jyutping_tokens(lyrics_text[:600])
+            dec_jps = text_to_jyutping_tokens(decoded_text)
+            if len(lyr_jps) >= 2 and len(dec_jps) >= 2:
+                lyr_bigrams = set(zip(lyr_jps, lyr_jps[1:]))
+                dec_bigrams = set(zip(dec_jps, dec_jps[1:]))
+                common_bigrams = dec_bigrams.intersection(lyr_bigrams)
+                single_common = set(dec_jps).intersection(set(lyr_jps))
+                single_ratio = len(single_common) / max(1, len(set(dec_jps)))
+                # 连续二元音节命中 >= 2，或 1 个 bigram 且单音节重合度高，确认为粤语
+                if len(common_bigrams) >= 2 or (len(common_bigrams) >= 1 and single_ratio >= 0.25):
+                    return min(1.0, 0.50 + len(common_bigrams) * 0.10)
+                return 0.0
+
+        # 无歌词时：检查解码出的粤拼有效口语字或特征音节
+        slang_cnt = sum(1 for ch in decoded_text if is_cantonese_slang(ch))
+        if slang_cnt >= 2:
+            return 0.40
+        return 0.0
     except Exception:
         return 0.0
 
@@ -195,7 +216,7 @@ def detect_language(
     # 2. 歌词口语字命中（仅加分，海阔天空等书面歌命中率为 0 不扣分）
     slang_matches = sum(1 for ch in lyrics_text if is_cantonese_slang(ch))
     details["slang_count"] = slang_matches
-    if slang_matches >= 3:
+    if slang_matches >= 2:
         canto_score += 0.50
     elif slang_matches >= 1:
         canto_score += 0.30
@@ -209,14 +230,16 @@ def detect_language(
     elif imagery_matches >= 1:
         canto_score += 0.25
 
-    # 4. 音频探针终裁（当先验在模糊区 0.20 ~ 0.50 且提供了音频时）
-    if 0.15 <= canto_score <= 0.60 and audio_path and os.path.isfile(audio_path):
-        probe_conf = probe_audio_cantonese_confidence(audio_path, probe_seconds=20.0, device=device)
+    # 4. 音频探针终裁（先验尚未达到确定阈值时，若提供了音频则执行原始混音探针）
+    if canto_score < 0.50 and audio_path and os.path.isfile(audio_path):
+        probe_conf = probe_audio_cantonese_confidence(
+            audio_path, lyrics_text=lyrics_text, probe_seconds=30.0, device=device
+        )
         details["audio_probe_conf"] = round(probe_conf, 3)
         if probe_conf >= 0.35:
-            canto_score += 0.30
+            canto_score += 0.50
         elif probe_conf < 0.15 and canto_score < 0.40:
-            canto_score -= 0.15
+            canto_score = max(0.0, canto_score - 0.15)
 
     confidence = min(1.0, max(0.0, canto_score))
     details["total_score"] = round(canto_score, 3)

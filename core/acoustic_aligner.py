@@ -419,8 +419,12 @@ class DualEngineHybridAligner:
             raise ValueError("AcousticAligner 绝对红线拦截：未能从输入文本中解析出有效的歌词唱词！")
 
         hints: Optional[List[Tuple[float, str]]] = None
-        if line_timing_hints and len(line_timing_hints) == len(clean_lines):
-            hints = [(float(t), str(x)) for t, x in line_timing_hints]
+        if line_timing_hints:
+            filtered_hints = [(float(t), str(x)) for t, x in line_timing_hints if str(x).strip() and not is_source_or_credit_line(str(x))]
+            if len(filtered_hints) == len(clean_lines):
+                hints = filtered_hints
+            else:
+                hints = [(float(t), str(x)) for t, x in line_timing_hints]
         elif len(parsed_hints) == len(clean_lines):
             hints = parsed_hints
 
@@ -444,6 +448,8 @@ class DualEngineHybridAligner:
         # 2. 粤语分支调度 (Cantonese CTC Aligner)
         if route_lang == "yue":
             v_mono, sr = AcousticAligner.extract_vocals_mono(audio_path, device=self._device)
+            # Demucs 分离完成，立即释放 Demucs 显存（A2 显存纪律：两模型严禁同驻显存）
+            AcousticAligner.release_models()
             t16 = torch.from_numpy(v_mono.astype(np.float32)).unsqueeze(0)
             v16 = torchaudio.functional.resample(t16, sr, 16000).squeeze(0).numpy()
             from .acoustic_canto import CantoneseCTCAligner
@@ -458,6 +464,7 @@ class DualEngineHybridAligner:
 
         # 3. 普通话分支调度 (Whisper Token Alignment)
         v_mono, sr = AcousticAligner.extract_vocals_mono(audio_path, device=self._device)
+        AcousticAligner.release_models()
         total_len = len(v_mono) / sr
         t16 = torch.from_numpy(v_mono.astype(np.float32)).unsqueeze(0)
         v16 = torchaudio.functional.resample(t16, sr, 16000).squeeze(0).numpy()
@@ -757,6 +764,19 @@ class AcousticAligner:
             cls._whisper_model = stable_whisper.load_model('base', device=device)
 
         return cls._demucs_model, cls._whisper_model, device
+
+    @classmethod
+    def release_models(cls) -> None:
+        """释放缓存的 Demucs 与 Whisper 权重，严格守卫显存上限。"""
+        import torch
+        if cls._demucs_model is not None:
+            del cls._demucs_model
+            cls._demucs_model = None
+        if cls._whisper_model is not None:
+            del cls._whisper_model
+            cls._whisper_model = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     @classmethod
     def extract_vocals_mono(cls, audio_path: str, device: str = 'cuda') -> Tuple["np.ndarray", int]:
