@@ -2,7 +2,7 @@
 """粤语声学对齐引擎 (Cantonese Acoustic Alignment Engine v1.5.0)。
 
 核心技术路线：
-1. 粤拼中转桥（Jyutping Bridge）：统一字表与声学模型投影空间至 729 维无调粤拼类别；
+1. 粤拼中转桥（Jyutping Bridge）：统一字表与声学模型投影空间至 703 类无调粤拼类别；
 2. torchaudio 原生 forced_align（PyTorch Viterbi DP）GPU 向量化直接字级对齐；
 3. 滑窗分块推理（20s 窗 + 2s 重叠）+ 显存纪律（严守 6GB 显存红线）；
 4. 非汉字策略：阿拉伯数字转粤拼音节入对齐 target，英文字词启发式区间插值分配；
@@ -35,6 +35,11 @@ _MIN_CHAR_S = 0.060
 _RELEASE_THRESH = 0.020
 _MIN_SILENT_MS = 60
 _ENTERING_TONE_SILENT_MS = 120  # 入声字闭气截断容错
+
+# v1.5.1-A1: 双侧重同步的前瞻窗口。判定「多余 run」时向前看这么多个 target，
+# 若该 run 的音节 id 出现在窗口内，就认定当前 target 缺失而非 run 多余。
+# 取 12 是因为一句歌词通常不超过 12 个音节，超过则宁可丢弃该 run（影响更轻）。
+_RESYNC_WINDOW_TARGETS = 12
 
 
 def reconstruct_target_spans(
@@ -77,24 +82,48 @@ def reconstruct_target_spans(
         return {"start": st_s, "end": ed_s, "score": mean_sc}
 
     # 2. target 侧按连续同字分组并逐组映射
+    # v1.5.1-A1: 旧版在「本组找不到 run」时 break，把当前 target 之后的**全部**
+    # target 一起置 None——一个音节错配就毁掉整首后半段。改为双侧重同步：
+    # 每轮先判断「是 target 缺 run」还是「run 多余」，只推进 u 或 ri 之一，
+    # 缺失时只跳过本组，后续 target 仍能各自匹配。
+    n_targets = len(target_syllable_ids)
     target_spans: List[Optional[Dict[str, Any]]] = []
     u = 0
     ri = 0
-    while u < len(target_syllable_ids):
+    n_missing = 0
+    n_stray = 0
+
+    def _lookahead(from_u: int) -> set:
+        return set(target_syllable_ids[from_u: from_u + _RESYNC_WINDOW_TARGETS])
+
+    while u < n_targets:
         sid = target_syllable_ids[u]
         k = 1
-        while u + k < len(target_syllable_ids) and target_syllable_ids[u + k] == sid:
+        while u + k < n_targets and target_syllable_ids[u + k] == sid:
             k += 1
 
+        # (a) 双侧重同步：先把「多余 run」消化掉。
+        # 若该 run 的音节 id 出现在后续 target 里，说明它是后面的音节提前出现，
+        # 即**当前 target 缺失**，此时 ri 不动；否则它是模型多吐的 run，直接丢弃。
+        while ri < len(runs) and runs[ri][0] != sid:
+            if runs[ri][0] in _lookahead(u):
+                break
+            ri += 1
+            n_stray += 1
+
+        # (b) 收集本组 run（最多 k 个）
         grp = []
         while ri < len(runs) and runs[ri][0] == sid and len(grp) < k:
             grp.append(runs[ri])
             ri += 1
 
         if not grp:
-            # 帧路径中找不到该音节：剩余全部置 None，绝不合成伪时间
-            target_spans.extend([None] * (len(target_syllable_ids) - u))
-            break
+            # 当前 target 在帧路径里确实没有跨度：只跳过本组 k 项，绝不 break。
+            # 交由下游 5.x 的区间插值兜底，不影响其余 target 的匹配。
+            target_spans.extend([None] * k)
+            n_missing += k
+            u += k
+            continue
 
         if len(grp) == k:
             # 独立 run：1:1 映射，绝对禁止切分
@@ -127,6 +156,22 @@ def reconstruct_target_spans(
                     target_spans.append(build_span(sub_s, sub_e))
 
         u += k
+
+    # v1.5.1-A1: 长度恒等防御。构造上每次迭代恰好 append k 项、u += k，
+    # 所以 len(target_spans) 必等于 n_targets；一旦不等说明上面的分支被改坏了，
+    # 宁可补齐/截断并报错，也不能让下游 target_spans[t_idx] 越界。
+    if len(target_spans) != n_targets:
+        logger.error(
+            "   [canto-reconstruct] 长度失配 %d != %d（已安全补齐/截断）",
+            len(target_spans), n_targets,
+        )
+        target_spans = (target_spans + [None] * n_targets)[:n_targets]
+
+    if n_missing or n_stray:
+        logger.info(
+            "   [canto-reconstruct] target 缺失 %d / 多余 run 丢弃 %d / 共 %d 个 target",
+            n_missing, n_stray, n_targets,
+        )
 
     return target_spans
 
@@ -172,7 +217,7 @@ class CantoneseCTCAligner:
             torch.cuda.empty_cache()
 
     def _init_model_and_mapping(self) -> None:
-        """加载 wav2vec2-large-xlsr-cantonese 模型并构建 729 维粤拼投影映射表。"""
+        """加载 wav2vec2-large-xlsr-cantonese 模型并构建 703 类粤拼投影映射表。"""
         if self._model is not None and self._vocab_mapping is not None:
             return
 
@@ -183,7 +228,18 @@ class CantoneseCTCAligner:
         try:
             self._processor = Wav2Vec2Processor.from_pretrained(model_id, local_files_only=True)
             self._model = Wav2Vec2ForCTC.from_pretrained(model_id, local_files_only=True)
-        except Exception:
+        except Exception as exc:
+            # v1.5.1-C4: 旧版这里**静默联网下载**，与 lang_detect 的「本地缺失即跳过」
+            # 不一致，且无任何日志。现在：MTL_OFFLINE=1 时禁止联网并抛环境错；
+            # 否则显式告知正在下载。
+            if os.environ.get("MTL_OFFLINE", "").strip() in ("1", "true", "yes", "on"):
+                raise RuntimeError(
+                    f"MTL_OFFLINE=1：本地无 {model_id}，禁止联网下载"
+                ) from exc
+            logger.warning(
+                "   ⚠️ [canto] 本地无 %s（%s），将联网下载（可用 MTL_OFFLINE=1 禁止）",
+                model_id, type(exc).__name__,
+            )
             self._processor = Wav2Vec2Processor.from_pretrained(model_id)
             self._model = Wav2Vec2ForCTC.from_pretrained(model_id)
 
@@ -192,7 +248,7 @@ class CantoneseCTCAligner:
         self._model = self._model.to(target_device)
         self._model.eval()
 
-        # 收集所有粤拼音节构建全局音节表（729 类）
+        # 收集所有粤拼音节构建全局音节表（实测 703 类）
         from .utils.jyutping import get_all_syllables
         self._syllable_list = get_all_syllables()
         self._syllable_to_id = {s: i + 1 for i, s in enumerate(self._syllable_list)}  # 0 为 blank
@@ -227,14 +283,22 @@ class CantoneseCTCAligner:
         import torch
 
         self._init_model_and_mapping()
-        assert self._model is not None
-        assert self._processor is not None
-        assert self._vocab_mapping is not None
+        # v1.5.1-A5: 旧版用 assert 做运行期校验，`python -O` 下会被整体移除，
+        # 之后 self._model(...) 会以 AttributeError 的形式崩在更远的地方。
+        if self._model is None or self._processor is None or self._vocab_mapping is None:
+            raise RuntimeError("粤语 CTC 模型/投影映射未就绪（_init_model_and_mapping 未生效）")
 
         sr = 16000
         win_samples = int(window_sec * sr)
         overlap_samples = int(overlap_sec * sr)
         hop_samples = win_samples - overlap_samples
+        # v1.5.1-A5: hop<=0 会让下面的 while st < total_samples 永远不前进（死循环），
+        # 参数当前未对外暴露，属理论路径，但守卫成本为零。
+        if hop_samples <= 0:
+            raise ValueError(
+                f"滑窗参数非法：window_sec={window_sec} overlap_sec={overlap_sec} "
+                f"-> hop_samples={hop_samples}，必须 > 0"
+            )
         total_samples = len(audio_16k)
 
         K = len(self._syllable_list)
@@ -367,6 +431,7 @@ class CantoneseCTCAligner:
 
             # 4. 将 target_spans 时间戳回填到行与字结构中（v8：秒级单位契约，禁止二次乘 0.020）
             raw_aligned_lines: List[Dict[str, Any]] = []
+            n_unaligned_targets = 0   # v1.5.1-B: 供 unaligned_ratio（分母 = target 音节数）
             for line_idx, text in enumerate(clean_lines):
                 toks = line_parsed_tokens[line_idx]
                 line_words: List[Dict[str, Any]] = []
@@ -375,6 +440,10 @@ class CantoneseCTCAligner:
                     t_idx = tok.get("target_idx")
                     sp = target_spans[t_idx] if (t_idx is not None and t_idx < len(target_spans)) else None
                     if sp is None:
+                        if t_idx is not None:
+                            # 只有「本该有跨度的 target 音节」才计入未对齐；
+                            # 拉丁词（t_idx=None）从来不是 target，不进分母也不进分子。
+                            n_unaligned_targets += 1
                         line_words.append({
                             "char": tok["char"], "start": None, "end": None,
                             "type": tok.get("type", "unknown"), "is_entering": False, "score": None,
@@ -459,6 +528,11 @@ class CantoneseCTCAligner:
                     head_dur = first_al * 0.35
                     head_st = max(min_head, words[first_al]["start"] - head_dur)
                     step = max(0.060, (words[first_al]["start"] - head_st) / first_al)
+                    # v1.5.1-C6: 行首未对齐字用固定 0.35s/字 编造，属启发式不是声学
+                    logger.debug(
+                        "   [canto] 行 %d 行首 %d 个未对齐字按 0.35s/字 编造（启发式）",
+                        line_idx + 1, first_al,
+                    )
                     for i in range(first_al):
                         words[i]["start"] = head_st + i * step
                         words[i]["end"] = head_st + (i + 1) * step
@@ -487,6 +561,11 @@ class CantoneseCTCAligner:
                     tail_count = len(words) - 1 - last_al
                     tail_st = words[last_al]["end"]
                     step = 0.30
+                    # v1.5.1-C6: 行尾未对齐字按固定 0.30s/字 编造，属启发式不是声学
+                    logger.debug(
+                        "   [canto] 行 %d 行尾 %d 个未对齐字按 0.30s/字 编造（启发式）",
+                        line_idx + 1, tail_count,
+                    )
                     for j in range(1, tail_count + 1):
                         words[last_al + j]["start"] = tail_st + (j - 1) * step
                         words[last_al + j]["end"] = tail_st + j * step
@@ -645,17 +724,60 @@ class CantoneseCTCAligner:
                     ln["end"] = ws[-1]["end"]
                     ln["duration"] = max(100, ln["end"] - ln["start"])
 
-            # P0-3: 粤语 CTC 质量硬熔断（mean_score < -2.10 或总时长覆盖比例 < 15% 放弃逐字安全回退）
-            all_words = [w for ln in output_lines for w in ln.get("words", [])]
-            scores = [w["score"] for w in all_words if w.get("score") is not None and w.get("score") < 0]
-            mean_score = sum(scores) / len(scores) if scores else -99.0
-            first_start_s = output_lines[0]["start"] / 1000.0 if output_lines else 0.0
-            last_end_s = output_lines[-1]["end"] / 1000.0 if output_lines else 0.0
-            span_ratio = (last_end_s - first_start_s) / max(1e-6, total_audio_s)
+            # ── v1.5.1-B: 双层质量门禁 ──────────────────────────────────
+            # 旧实现是单点熔断：mean_score < -2.10 就整首丢逐字。-2.10 距唯一粤语
+            # 样本（焚情 mean=-1.886）只有 0.214，误杀风险远大于漏放；而且未对齐字
+            # 被排除在分母外，伪时间越多反而越不容易触发。现在改为：
+            #   · 整曲宽门限（防整体不可用） + 分行严门限（个别差行降级为行级）
+            #   · unaligned_ratio 用 n_target 做分母，单独拦「大量音节无跨度」
+            #   · 熔断抛 AcousticQualityError（与环境错误严格区分），上层可做 zh 重试
+            from .acoustic_quality import (
+                GateConfig, load_gate_config, compute_track_stats,
+                evaluate_track_gate, evaluate_line_gate,
+                AcousticQualityError, AlignStatus, SRC_GATE_DEMOTED,
+                finalize_word_source_flags,
+            )
 
-            if mean_score < -2.10 or span_ratio < 0.15:
-                logger.warning("   ⚠️ [canto] 对齐声学置信度不足（mean=%.3f, ratio=%.3f），放弃逐字并安全回退", mean_score, span_ratio)
-                return None
+            gate_cfg = load_gate_config()
+
+            # B3: 分行门限 —— 说唱桥段不再拖垮整首。
+            # 注意顺序：**先统计、后降级**。若先清 words 再算 stats，
+            # 被降级的行会把分数一起清掉，warn 模式下只剩 mean=-99，日志毫无信息量。
+            demoted_idx = []
+            for li, ln in enumerate(output_lines):
+                dec = evaluate_line_gate(ln, gate_cfg)
+                if dec.demote:
+                    demoted_idx.append((li, "; ".join(dec.reasons)))
+
+            hints_span_s = None
+            if hints and len(hints) >= 2 and hints[-1][0] > hints[0][0]:
+                hints_span_s = hints[-1][0] - hints[0][0]
+
+            stats = compute_track_stats(
+                output_lines,
+                total_audio_s,
+                n_target=len(target_syllable_ids),
+                n_target_unaligned=n_unaligned_targets,
+                demote_ratio=(len(demoted_idx) / max(1, len(output_lines))),
+                n_lines_evaluable=len(output_lines),
+                n_lines_demoted=len(demoted_idx),
+                hints_span_s=hints_span_s,
+            )
+            reasons = evaluate_track_gate(stats, gate_cfg)
+
+            logger.info("   [canto-gate] %s", stats.summary())
+            if reasons:
+                if gate_cfg.enforce:
+                    raise AcousticQualityError(reasons, stats, engine="cantonese_ctc")
+                logger.warning(
+                    "   ⚠️ [canto] 质量门禁命中（warn 模式，不熔断）: %s | %s",
+                    ", ".join(reasons), stats.summary(),
+                )
+
+            # 真正执行分行降级（清 words，保留行级 start/end）
+            for li, why in demoted_idx:
+                output_lines[li]["words"] = []
+                logger.info("   [canto-gate] 行 %d 降级为行级（%s）", li + 1, why)
 
             msg = (f"[CantoneseCTC] 粤语逐字声学对齐完成：{len(output_lines)} 行"
                    f"（torchaudio forced_align，入声闭气门控，行间 ≥{_LINE_GAP_MS}ms）")
@@ -664,12 +786,20 @@ class CantoneseCTCAligner:
             except Exception:
                 print(f"[OK] {msg}")
 
-            return {
+            result = {
                 "source": "cantonese_ctc_alignment",
                 "lyric_type": "verbatim",
                 "synthesized_words": False,
                 "time_precision": 3,
                 "lines": output_lines,
+                # v1.5.1-B: 记账字段，供 process_song 做 synthesized_ratio 汇总
+                "align_status": AlignStatus.OK.value,
+                "quality_stats": stats.summary(),
+                "demoted_line_indices": [li for li, _ in demoted_idx],
+                "n_target": len(target_syllable_ids),
+                "n_target_unaligned": n_unaligned_targets,
             }
+            finalize_word_source_flags(result, demoted_lines=[li for li, _ in demoted_idx])
+            return result
         finally:
             self.unload()

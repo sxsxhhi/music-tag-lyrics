@@ -401,13 +401,26 @@ _NO_HINT_MAX_ADV = 12          # 无提示最多前移次数
 # ==========================================
 
 def _is_cjk(ch: str) -> bool:
-    """判定是否为中日韩文字（CJK 汉字、平/片假名、长音符、谚文）。"""
+    """判定是否为中日韩文字（CJK 汉字全集 Ext A~I、兼容字、平/片假名、长音符、谚文）。"""
+    if not ch or len(ch) != 1:
+        return False
     c = ord(ch)
-    return (0x4E00 <= c <= 0x9FFF or   # CJK 统一表意文字
-            0x3400 <= c <= 0x4DBF or   # CJK 扩展 A
-            0x3040 <= c <= 0x309F or   # 日文平假名
-            0x30A0 <= c <= 0x30FF or   # 日文片假名（含长音符 \u30fc「ー」）
-            0xAC00 <= c <= 0xD7AF)     # 韩文谚文音节
+    return (
+        (0x4E00 <= c <= 0x9FFF) or       # CJK 统一表意文字基本集
+        (0x3400 <= c <= 0x4DBF) or       # CJK 扩展 A
+        (0x20000 <= c <= 0x2A6DF) or     # CJK 扩展 B
+        (0x2A700 <= c <= 0x2B73F) or     # CJK 扩展 C
+        (0x2B740 <= c <= 0x2B81F) or     # CJK 扩展 D
+        (0x2B820 <= c <= 0x2CEAF) or     # CJK 扩展 E
+        (0x2CEB0 <= c <= 0x2EBEF) or     # CJK 扩展 F
+        (0x30000 <= c <= 0x3134F) or     # CJK 扩展 G
+        (0x31350 <= c <= 0x323AF) or     # CJK 扩展 H / I
+        (0xF900 <= c <= 0xFAFF) or       # CJK 兼容表意文字
+        (0x2F800 <= c <= 0x2FA1F) or     # CJK 兼容表意文字补充
+        (0x3040 <= c <= 0x309F) or       # 日文平假名
+        (0x30A0 <= c <= 0x30FF) or       # 日文片假名（含长音符 \u30fc「ー」）
+        (0xAC00 <= c <= 0xD7AF)          # 韩文谚文音节
+    )
 
 
 def _is_word_char(ch: str) -> bool:
@@ -416,13 +429,19 @@ def _is_word_char(ch: str) -> bool:
     CJK 字符一律排除，确保中日韩永远保持单字粒度；
     拉丁扩展与全角英数整词保留，避免 Whisper 输出整词时发生粒度失配。
     """
+    if not ch or len(ch) != 1:
+        return False
     if ch in "'-":
         return True
-    norm = unicodedata.normalize('NFKC', ch)
-    if _is_cjk(ch) or _is_cjk(norm):
+    if _is_cjk(ch):
         return False
-    cat = unicodedata.category(norm)
-    return cat.startswith(('L', 'N'))
+    norm = unicodedata.normalize('NFKC', ch)
+    if any(_is_cjk(c) for c in norm):
+        return False
+    return (
+        unicodedata.category(ch).startswith(('L', 'N'))
+        and all(unicodedata.category(c).startswith(('L', 'N')) for c in norm)
+    )
 
 
 def split_orig_tokens(text: str) -> Tuple[List[str], List[str]]:
@@ -482,18 +501,30 @@ def align_orig_text_to_char_spans(
     orig_text: str,
     expanded_chars: List[Dict[str, Any]],
     line_start_s: float,
-    line_end_s: float
+    line_end_s: float,
+    out_flags: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """以原始歌词文本为基准，将 Whisper 时间跨度弹性内插回填（只借时间，不改字）。"""
+    """以原始歌词文本为基准，将 Whisper 时间跨度弹性内插回填（只借时间，不改字）。
+
+    v1.5.1-C1: `out_flags` 是可选出参，用于自曝「本行是线性保底还是真对齐」。
+    三条线性保底出口会写 `out_flags["linear_fallback"] = True`；否则为 False。
+    这样上层才能把 synthesized_words 从「永远 False」修正为按行记账。
+    """
+
+    def _fallback() -> List[Dict[str, Any]]:
+        if out_flags is not None:
+            out_flags["linear_fallback"] = True
+        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+
     O_tokens, O_out = split_orig_tokens(orig_text)
     W_tokens = [w for w in expanded_chars if not w.get("char", "").isspace()]
     if not O_tokens or not W_tokens:
-        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+        return _fallback()
 
     M, N = len(O_tokens), len(W_tokens)
     # 0. 可行性前置守卫（v6）：与调用方 _MIN_CHAR_S = 0.060（acoustic_aligner.py:353）同口径。
     if M * _MIN_CHAR_S > (line_end_s - line_start_s):
-        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+        return _fallback()
 
     # 1. Needleman-Wunsch / LCS 字符单调动态规划匹配
     dp = [[0] * (N + 1) for _ in range(M + 1)]
@@ -520,7 +551,7 @@ def align_orig_text_to_char_spans(
 
     # 匹配字数过少（< 35%）说明语音与文本脱节，使用原词线性保底，绝不泄露 Whisper 改写字
     if len(match_pairs) / max(1, M) < 0.35:
-        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+        return _fallback()
 
     # 3. 构建结果，填充锚点（用 O_out：空白尾附，保证逐字拼接可无损还原原文）
     result = [{"char": O_out[k], "start": None, "end": None} for k in range(M)]
@@ -697,8 +728,15 @@ class DualEngineHybridAligner:
             filtered_hints = [(float(t), str(x)) for t, x in line_timing_hints if str(x).strip() and not is_source_or_credit_line(str(x))]
             if len(filtered_hints) == len(clean_lines):
                 hints = filtered_hints
-            else:
+            elif len(line_timing_hints) == len(clean_lines):
+                # v1.5.1-C5: 过滤后不等长时，只有**未过滤**也恰好等长才敢用；
+                # 否则 hints[i] 与歌词行会错位（hint 2 对到行 3），谷底窗跟着跑偏。
                 hints = [(float(t), str(x)) for t, x in line_timing_hints]
+            else:
+                logger.warning(
+                    "   ⚠️ [align] hints 长度与歌词行不一致（%d vs %d），本轮弃用提示窗",
+                    len(filtered_hints), len(clean_lines),
+                )
         elif len(parsed_hints) == len(clean_lines):
             hints = parsed_hints
 
@@ -859,6 +897,8 @@ class DualEngineHybridAligner:
 
         # 6. 字级精修：谱流拆分/吸附 + onset 校准 + 行内单调 + sustain 门控
         output_lines: List[Dict[str, Any]] = []
+        # v1.5.1-C1: 记录哪些行走了线性保底（均分），供 synthesized_words 按行记账
+        fallback_line_idx: List[int] = []
         for i, item in enumerate(raw_lines_data):
             text = item["text"]
             line_st_bound, line_ed_bound = bounds[i]
@@ -872,6 +912,8 @@ class DualEngineHybridAligner:
                 continue
 
             chars = self._expand_chars(item, v_mono, sr)
+            if item.get("_linear_fallback"):
+                fallback_line_idx.append(i)
             if not chars:
                 st_ms = int(line_st_bound * 1000)
                 ed_ms = int(line_ed_bound * 1000)
@@ -970,13 +1012,17 @@ class DualEngineHybridAligner:
             print(f"✅ {msg}")
         except Exception:
             print(f"[OK] {msg}")
-        return {
+        # v1.5.1-C1: 按行记账。线性保底（均分）不是声学，不能对外宣称「GPU 声学逐字」。
+        from .acoustic_quality import finalize_word_source_flags
+        result = {
             "source": "demucs_gpu_alignment",
             "lyric_type": "verbatim",
             "synthesized_words": False,
             "time_precision": 3,
             "lines": output_lines,
         }
+        finalize_word_source_flags(result, fallback_lines=fallback_line_idx)
+        return result
 
     # ------------------------------------------------------------------
     def _expand_chars(self, item: Dict[str, Any], v_mono: "np.ndarray", sr: int) -> List[Dict[str, Any]]:
@@ -1015,7 +1061,13 @@ class DualEngineHybridAligner:
         if chars:
             line_start_s = min(item.get("raw_start", chars[0]["start"]), chars[0]["start"])
             line_end_s = max(item.get("raw_end", chars[-1]["end"]), chars[-1]["end"])
-        return align_orig_text_to_char_spans(orig_text, chars, line_start_s, line_end_s)
+        # v1.5.1-C1: 让对齐函数自曝「本行是否走了线性保底」，供上层按行记账
+        flags: Dict[str, Any] = {}
+        result = align_orig_text_to_char_spans(
+            orig_text, chars, line_start_s, line_end_s, out_flags=flags
+        )
+        item["_linear_fallback"] = bool(flags.get("linear_fallback"))
+        return result
 
 
 # ==========================================
@@ -1031,6 +1083,13 @@ class AcousticAligner:
     """
     _demucs_model = None
     _whisper_model = None
+    # v1.5.1-PERF: 内存级单曲人声缓存 (normalized_path, v_mono, sr)
+    _vocal_cache: Optional[Tuple[str, "np.ndarray", int]] = None
+
+    @classmethod
+    def clear_vocal_cache(cls) -> None:
+        """显式清空人声缓存，换曲或全流程结束时调用。"""
+        cls._vocal_cache = None
 
     @classmethod
     def get_models(cls, device: str = 'cuda'):
@@ -1086,11 +1145,19 @@ class AcousticAligner:
             torch.cuda.empty_cache()
 
     @classmethod
-    def extract_vocals_mono(cls, audio_path: str, device: str = 'cuda') -> Tuple["np.ndarray", int]:
+    def extract_vocals_mono(cls, audio_path: str, device: str = 'cuda', use_cache: bool = True) -> Tuple["np.ndarray", int]:
         """
         Uses Demucs v4 (htdemucs) to extract pure vocals from audio file.
         Returns (vocals_mono_array, sample_rate).
+        若启用 use_cache 且路径命中，秒级复用内存数据，避免同曲重试重复分离。
         """
+        norm_path = os.path.abspath(audio_path)
+        if use_cache and cls._vocal_cache is not None:
+            cached_path, cached_v, cached_sr = cls._vocal_cache
+            if cached_path == norm_path:
+                logger.info("   ⚡ [AcousticAligner] 命中内存人声缓存，复用 Demucs 分离结果 (免二次分离)")
+                return cached_v, cached_sr
+
         import soundfile as sf
         import torch
         import torchaudio
@@ -1132,6 +1199,8 @@ class AcousticAligner:
             out = apply_model(demucs_model, wav_t, device=device, split=True, segment=7.8, progress=False)
         vocals = out[0, cls._vocal_idx, :, :].t().cpu().numpy()
         v_mono = np.mean(vocals, axis=1)
+        if use_cache:
+            cls._vocal_cache = (norm_path, v_mono, sr)
         return v_mono, sr
 
     @classmethod

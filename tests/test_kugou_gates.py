@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """酷狗解析门禁离线回归：尾奏不拒、预览/冲轴拒绝、Live 时长贴齐。运行：python tests/test_kugou_gates.py"""
 
+try:  # 允许 `python tests/xxx.py` 与 `python -m tests.xxx` 两种调用
+    import _testkit
+except ImportError:  # pragma: no cover
+    from tests import _testkit  # type: ignore
+
 import io
 import os
 import sys
@@ -240,17 +245,8 @@ def test_album_match_score_short_name_guard():
 
 
 def main():
-    cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    failed = []
-    for name, fn in cases:
-        try:
-            fn()
-            print(f"  PASS  {name}")
-        except AssertionError as e:
-            failed.append(name)
-            print(f"  FAIL  {name}  -> {e}")
-    print(f"\n{len(cases) - len(failed)}/{len(cases)} passed")
-    return 1 if failed else 0
+    """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
+    return _testkit.run(globals())
 
 
 if __name__ == "__main__":

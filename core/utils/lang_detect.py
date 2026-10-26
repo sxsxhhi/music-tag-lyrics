@@ -15,6 +15,24 @@ from typing import Dict, Any, Optional
 
 from .jyutping import is_cantonese_slang, CANTONESE_SLANG_CHARS, CANTONESE_CORE_GRAMMAR, CANTONESE_IMAGERY_WORDS
 
+import logging
+logger = logging.getLogger(__name__)
+
+# v1.5.1-C3: 探针三态。"skipped"（没跑）与 "failed"（跑了失败）必须能区分，
+# 否则路由侧把环境问题当成「这是普通话」的证据，还会连带扣 -0.15 分。
+_LAST_PROBE_STATUS: str = "skipped"
+_LAST_PROBE_REASON: str = ""
+
+
+def last_probe_status() -> tuple:
+    """返回 (status, reason)。status ∈ {"ok", "skipped", "failed"}。"""
+    return _LAST_PROBE_STATUS, _LAST_PROBE_REASON
+
+
+def probe_ran() -> bool:
+    """探针是否真的执行过（区别于因缺模型/缺音频而跳过）。"""
+    return _LAST_PROBE_STATUS == "ok"
+
 # 典型粤语/Cantopop 歌手白名单（强先验）
 CANTOPOP_ARTISTS = frozenset([
     "beyond", "黄家驹", "黃家駒",
@@ -102,7 +120,14 @@ def probe_audio_cantonese_confidence(
     """原始混音前段音频探针（无需 Demucs），检测粤音 CTC 匹配置信度。
 
     返回 0.0 ~ 1.0 的置信度分数。若无模型或环境不可用，安全返回 0.0。
+
+    v1.5.1-C3: 新增 `last_probe_status()` 三态（ok / skipped / failed），
+    区分「没跑」与「跑了失败」。旧版两者都返回 0.0，路由侧无法判断，
+    而且失败还会连带扣 0.15 分 —— 等于把环境问题算成「这是普通话」的证据。
     """
+    global _LAST_PROBE_STATUS, _LAST_PROBE_REASON
+    _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "skipped", "no_audio"
+
     if not audio_path or not os.path.isfile(audio_path):
         return 0.0
     try:
@@ -117,7 +142,10 @@ def probe_audio_cantonese_confidence(
         try:
             proc = Wav2Vec2Processor.from_pretrained(model_id, local_files_only=True)
             model = Wav2Vec2ForCTC.from_pretrained(model_id, local_files_only=True)
-        except Exception:
+        except Exception as exc:
+            # v1.5.1-C3/C4: 模型缺失 = skipped，不是 failed；并且**不静默联网**
+            _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "skipped", f"model_unavailable:{type(exc).__name__}"
+            logger.debug("  [probe] 粤语模型本地不可用，跳过音频探针: %s", exc)
             return 0.0
 
         if device == "cuda" and torch.cuda.is_available():
@@ -176,10 +204,12 @@ def probe_audio_cantonese_confidence(
             torch.cuda.empty_cache()
 
         if not decoded_text:
+            _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "empty_decode"
             return 0.0
 
         dec_jps = set(text_to_jyutping_tokens(decoded_text))
         if not dec_jps:
+            _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "no_syllable"
             return 0.0
 
         if lyrics_text and lyrics_text.strip():
@@ -193,15 +223,22 @@ def probe_audio_cantonese_confidence(
                 single_ratio = len(single_common) / max(1, len(set(dec_jps)))
                 # 连续二元音节命中 >= 2，或 1 个 bigram 且单音节重合度高，确认为粤语
                 if len(common_bigrams) >= 2 or (len(common_bigrams) >= 1 and single_ratio >= 0.25):
+                    _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "bigram_hit"
                     return min(1.0, 0.50 + len(common_bigrams) * 0.10)
+                _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "no_bigram"
                 return 0.0
 
         # 无歌词时：检查解码出的粤拼有效口语字或特征音节
         slang_cnt = sum(1 for ch in decoded_text if is_cantonese_slang(ch))
         if slang_cnt >= 2:
+            _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "slang_hit"
             return 0.40
+        _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "ok", "no_match"
         return 0.0
-    except Exception:
+    except Exception as exc:
+        # v1.5.1-C3: 真正的执行失败才记 failed（采样/解码/推理异常）
+        _LAST_PROBE_STATUS, _LAST_PROBE_REASON = "failed", f"{type(exc).__name__}:{exc}"
+        logger.debug("  [probe] 音频探针执行失败: %r", exc)
         return 0.0
 
 
@@ -265,10 +302,16 @@ def detect_language(
             audio_path, lyrics_text=lyrics_text, probe_seconds=30.0, device=device
         )
         details["audio_probe_conf"] = round(probe_conf, 3)
+        # v1.5.1-C3: 记录探针三态，便于事后区分「没跑」与「跑了没命中」
+        details["audio_probe_status"], details["audio_probe_reason"] = last_probe_status()
         if probe_conf >= 0.35:
             canto_score += 0.50
         elif probe_conf > 0.0 and probe_conf < 0.15 and canto_score < 0.40:
+            # 只有探针真的跑出低置信分才扣分；skipped/failed（probe_conf == 0.0）
+            # 不得当成「这是普通话」的证据
             canto_score = max(0.0, canto_score - 0.15)
+    else:
+        details["audio_probe_status"], details["audio_probe_reason"] = "skipped", "not_requested"
 
     confidence = min(1.0, max(0.0, canto_score))
     details["total_score"] = round(canto_score, 3)

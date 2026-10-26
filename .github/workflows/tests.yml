@@ -41,3 +41,7 @@ jobs:
         run: python tests/test_canto_align.py
       - name: CLI & End-to-end v1.5.0
         run: python tests/test_cli.py
+      - name: Text utils & KRC decrypt v1.5.1
+        run: python tests/test_text_utils.py
+      - name: Process song orchestration v1.5.1
+        run: python tests/test_process_song.py

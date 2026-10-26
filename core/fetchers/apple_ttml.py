@@ -2,6 +2,7 @@
 """Apple Music TTML 歌词源：多镜像按 origin 攒票回退、本地索引/iTunes 发现与严格门禁。"""
 
 import os
+import re
 import time
 import logging
 from typing import Optional, Dict, Any, Tuple, List, Set, NamedTuple
@@ -41,6 +42,16 @@ TTML_PATH = "/am-lyrics/{apple_id}.ttml"
 QUORUM = 2             # 不同 origin 数
 SONG_DEADLINE_S = 6.0  # 单曲 TTML 抓取硬顶
 
+# v1.5.1-D1: Apple Music ID 必须是纯数字。入口收口，防索引/CLI/搜索结果
+# 里的非法值被拼进 URL（如 `1&country=us` / `../`）。索引侧 amll_index.ID_RE
+# 已做同样校验，这里是第二道防线，覆盖 --apple-id 直取路径。
+_APPLE_ID_RE = re.compile(r"^\d{1,16}$")
+
+
+def _valid_apple_id(value: Any) -> Optional[str]:
+    s = str(value or "").strip()
+    return s if _APPLE_ID_RE.match(s) else None
+
 
 def _has_verbatim_words(lines: List[Dict[str, Any]]) -> bool:
     """是否存在真 span 逐字词（整句兜底的 synthetic word 不算）。A5 去重：原先两处内联。"""
@@ -61,6 +72,13 @@ def fetch_ttml_raw(
     返回 (verdict, text, meta):
       verdict in ("OK", "NOT_FOUND", "SUSPECT_MISSING", "UNREACHABLE")
     """
+    # v1.5.1-D1: 非法 ID 直接判未收录，绝不进 URL
+    safe_id = _valid_apple_id(apple_id)
+    if not safe_id:
+        logger.warning("   ⚠️ [apple-ttml] 丢弃非法 Apple ID: %r", apple_id)
+        return "NOT_FOUND", "", {"apple_id": str(apple_id), "invalid_id": True}
+    apple_id = safe_id
+
     mirror_list = mirrors if mirrors is not None else MIRRORS
     t_start = time.perf_counter()
     origins_404: Set[str] = set()
@@ -232,6 +250,11 @@ class AppleTTMLFetcher:
         if os.environ.get("MTL_APPLE_TIER") == "off":
             return None
 
+        # v1.5.1-D2: 全流程共用一个 deadline。旧版 alt-id 探测另起 6.0s，
+        # 与主链叠加后单曲最坏 ≈30.5s，远超文档承诺的 8.5s。
+        t_song_start = time.perf_counter()
+        song_deadline = t_song_start + SONG_DEADLINE_S + 2.5  # ID 2.5s + TTML 6.0s
+
         is_foreign = is_foreign_track(title, artist)
         is_zh = not is_foreign
 
@@ -264,16 +287,21 @@ class AppleTTMLFetcher:
                             ttml_text = txt
                             resolved_mirror = meta.get("mirror", "")
                         elif v != "UNREACHABLE" and len(chosen_entry.ids) > 1:
-                            # P1-5: alt-id 共享全局 6.0s deadline 与快速失败
-                            deadline = time.time() + 6.0
+                            # v1.5.1-D2: alt-id 与主链**共用** song_deadline，不再另起 6.0s
                             for alt_id in chosen_entry.ids[1:4]:
-                                if time.time() >= deadline:
+                                # v1.5.1-D1: 索引里的 id 也必须过格式校验才进 URL
+                                if not _valid_apple_id(alt_id):
+                                    logger.warning(
+                                        "   ⚠️ [apple-ttml] 跳过非法 alt ID: %r", alt_id
+                                    )
+                                    continue
+                                if time.perf_counter() >= song_deadline:
                                     break
                                 found_alt = False
                                 for m in MIRRORS[:2]:
-                                    if time.time() >= deadline:
+                                    rem_timeout = min(2.5, max(0.3, song_deadline - time.perf_counter()))
+                                    if rem_timeout <= 0.3 or time.perf_counter() >= song_deadline:
                                         break
-                                    rem_timeout = min(2.5, max(0.5, deadline - time.time()))
                                     alt_url = f"{m.base}{TTML_PATH.format(apple_id=alt_id)}"
                                     alt_res = http.http_get_text_ex(alt_url, timeout=rem_timeout)
                                     if alt_res.status == 200 and "<tt" in (alt_res.text[:2000] if alt_res.text else "").lower():

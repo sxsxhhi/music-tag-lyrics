@@ -78,7 +78,7 @@ def github_blob_to_raw(url: str) -> Optional[str]:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
 
 
-def _from_five_sources(title: str, artist: str, album: str, duration_ms: int) -> Optional[str]:
+def _from_plain_sources(title: str, artist: str, album: str, duration_ms: int) -> Optional[str]:
     try:
         raw = NetEaseFetcher.fetch_raw_lyrics(title, artist, duration_ms)
         if raw:
@@ -219,7 +219,7 @@ def fetch_plain_lyric_text(
     """
     为 GPU 打轴搜集权威逐行文本。下架曲五源常空，主路径是全球搜索（GitHub 优先）。
     """
-    text = _from_five_sources(title, artist, album, duration_ms)
+    text = _from_plain_sources(title, artist, album, duration_ms)
     if text:
         return text
     return _web_search_plain(title, artist)

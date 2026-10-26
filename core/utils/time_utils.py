@@ -2,7 +2,13 @@
 """时间戳解析与格式化：LRC/KRC/TTML、offset/adjust 叠加。"""
 
 import re
+import logging
 from typing import Match
+
+logger = logging.getLogger(__name__)
+
+# v1.5.1-C7: 负时间戳计数（只在第 1 / 100 次打日志，避免刷屏）
+_NEG_TIME_SEEN = 0
 
 TIME_COLON_RE = re.compile(r"^(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?$")
 TIME_SECONDS_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*s?$", re.IGNORECASE)
@@ -79,6 +85,14 @@ def format_time_tag(ms: int, bracket: str = "[]", precision: int = 2) -> str:
     注意 2 位分支用的是 Python 的 round（银行家舍入），±5ms 有界、不累积。
     """
     if ms < 0:
+        # v1.5.1-C7: 负时间一律钳 0。旧版静默钳，下游完全看不出上游给了错值。
+        # 用模块级计数器只打一次，避免每个字都刷日志。
+        global _NEG_TIME_SEEN
+        _NEG_TIME_SEEN = _NEG_TIME_SEEN + 1
+        if _NEG_TIME_SEEN == 1:
+            logger.debug("  [time] 检测到负时间戳 %r，已钳为 0（后续同类不再重复提示）", ms)
+        elif _NEG_TIME_SEEN == 100:
+            logger.warning("  [time] 负时间戳已达 100 次，上游时间轴可能有问题")
         ms = 0
     l_b, r_b = bracket[0], bracket[1]
     if precision >= 3:

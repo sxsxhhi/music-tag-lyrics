@@ -16,7 +16,7 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 def _is_cjk(ch: str) -> bool:
     """判断字符是否属于中日韩表意/假名/全角区（这些语言词间不加空格）。"""
-    if not ch:
+    if not ch or len(ch) != 1:
         return False
     o = ord(ch)
     return (
@@ -24,6 +24,8 @@ def _is_cjk(ch: str) -> bool:
         or 0x3400 <= o <= 0x4DBF     # CJK 扩展 A
         or 0x4E00 <= o <= 0x9FFF     # CJK 基本区
         or 0xF900 <= o <= 0xFAFF     # CJK 兼容表意
+        or 0x20000 <= o <= 0x323AF   # CJK 扩展 B~I
+        or 0x2F800 <= o <= 0x2FA1F   # CJK 兼容表意补充
         or 0xFF00 <= o <= 0xFFEF     # 全角标点/字母
     )
 

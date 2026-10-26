@@ -4,6 +4,11 @@
 对应缺陷清单 v2.0 的 P0-1。运行：python tests/test_converter_prelude.py
 """
 
+try:  # 允许 `python tests/xxx.py` 与 `python -m tests.xxx` 两种调用
+    import _testkit
+except ImportError:  # pragma: no cover
+    from tests import _testkit  # type: ignore
+
 import os
 import re
 import sys
@@ -132,17 +137,8 @@ def test_no_credit_still_works():
 
 
 def main():
-    cases = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    failed = []
-    for name, fn in cases:
-        try:
-            fn()
-            print(f"  PASS  {name}")
-        except AssertionError as e:
-            failed.append(name)
-            print(f"  FAIL  {name}  -> {e}")
-    print(f"\n{len(cases) - len(failed)}/{len(cases)} passed")
-    return 1 if failed else 0
+    """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
+    return _testkit.run(globals())
 
 
 if __name__ == "__main__":

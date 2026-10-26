@@ -86,7 +86,29 @@ COMMON_SINGLE_CHAR_PRIORITY = {
     "說": "syut",
     "还": "waan",
     "還": "waan",
+    # v1.5.1-A4: 繁体字条读音正确、简体字条首项被词频带偏，逐字校准。
+    # 证据：词典 種→['zung'] 而 种→['cung','zung']；各種→['gok','zung']。
+    "种": "zung",
+    # 台→['ji','toi']：歌词里的「台」几乎全是 tái（舞台/电台/平台）= toi4
+    "台": "toi",
+    "臺": "toi",
+    "檯": "toi",
+    # 著→['zoek','zyu'] 而 着→['ziu','zoek']：着凉→['zoek','loeng'] 可佐证
+    "着": "zoek",
+    # 行→['haang','hang','hong']：书面语「行走/进行」读 hang4，行街 才是 haang4
+    "行": "hang",
 }
+
+# v1.5.1-A4: 读音覆盖表。有些简体字在词典里**根本没有正确读音**
+# （叶→['hip'] 而非 jip6），改优先级救不了，只能直接指定。
+SINGLE_CHAR_READING_OVERRIDE = {
+    "叶": "jip",   # 葉→['jip','sip']；叶子→['jip','zi'] 可佐证
+}
+
+# v1.5.1-A3: 标点字符集（NFKC 展开后若全在此集内，仍按一个标点 token 处理）
+_PUNCT_CHARS = frozenset(
+    ",.!?;:'\"-()[]{}，。！？；：“”‘’（）【】、~·…—–《》〈〉「」『』"
+)
 
 
 def _load_dictionary_if_needed() -> None:
@@ -177,17 +199,28 @@ def to_jyutping(text: str) -> List[Dict[str, Any]]:
     words_dict = _WORDS_DICT or {}
 
     tokens: List[Dict[str, Any]] = []
-    norm_text = unicodedata.normalize("NFKC", text)
     i = 0
-    n = len(norm_text)
+    n = len(text)
+
+    # v1.5.1-A3: NFKC 只用于**查表/判定**，绝不用于输出。
+    # 旧版把整段文本 NFKC 后同时用作输出，于是 `…`→`...`（1 字变 3 字）、
+    # 全角字母→半角，token["char"] 与原文不再一致，converter 的一致性校验
+    # （converter.py:239-243）判为「逐字文本 != 行文本」后**整行降级为行级**，
+    # 用户侧只看到一行 warning，逐字全丢。这里改成逐字符按需归一。
+    def _nfkc(s: str) -> str:
+        return unicodedata.normalize("NFKC", s)
+
+    def _is_ascii_word_char(c: str) -> bool:
+        return len(c) == 1 and (("a" <= c <= "z") or ("A" <= c <= "Z") or c == "'")
 
     while i < n:
-        ch = norm_text[i]
+        raw_ch = text[i]
+        ch = _nfkc(raw_ch)          # 仅供判定与查表
 
-        # 1. 阿拉伯数字
-        if ch.isdigit():
+        # 1. 阿拉伯数字（含全角 １）
+        if len(ch) == 1 and ch.isdigit():
             tokens.append({
-                "char": ch,
+                "char": raw_ch,
                 "jyutping": CANTO_DIGITS.get(ch, "ling"),
                 "type": "digit",
                 "is_disambiguated": True,
@@ -195,24 +228,27 @@ def to_jyutping(text: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
-        # 2. 连续英文字母/单词 (ASCII 字母)
-        if ("a" <= ch <= "z") or ("A" <= ch <= "Z"):
+        # 2. 连续英文字母/单词（含全角字母 Ａ → A）
+        if len(ch) == 1 and (("a" <= ch <= "z") or ("A" <= ch <= "Z")):
             start_eng = i
-            while i < n and (("a" <= norm_text[i] <= "z") or ("A" <= norm_text[i] <= "Z") or norm_text[i] == "'"):
+            while i < n and _is_ascii_word_char(_nfkc(text[i])):
                 i += 1
-            eng_word = norm_text[start_eng:i]
             tokens.append({
-                "char": eng_word,
+                "char": text[start_eng:i],   # 保留原始字形（可能是全角）
                 "jyutping": "",  # 英文无直接粤拼，交由后续启发式对齐
                 "type": "latin",
                 "is_disambiguated": True,
             })
             continue
 
-        # 3. 空白字符或常见标点符号
-        if ch.isspace() or ch in ",.!?;:'\"-()[]{}，。！？；：“”‘’（）【】、~·":
+        # 3. 空白字符或常见标点符号。
+        # `…`、`——`、`《》` 这类经 NFKC 会展开成多个 ASCII 标点的字符，
+        # 只要展开后全是标点，也按「一个标点 token」处理，保持原文长度。
+        if raw_ch.isspace() or ch in _PUNCT_CHARS or (
+            len(ch) > 1 and all(c in _PUNCT_CHARS for c in ch)
+        ):
             tokens.append({
-                "char": ch,
+                "char": raw_ch,
                 "jyutping": "",
                 "type": "punct",
                 "is_disambiguated": True,
@@ -220,16 +256,20 @@ def to_jyutping(text: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
-        # 4. 汉字：前向最长匹配词组消歧
+        # 4. 汉字：前向最长匹配词组消歧。
+        # 归一化若改变了长度（如 `㍿`→`株式会社`），无法按原文切片对齐，跳过该窗口。
         matched_word = False
         for wlen in range(min(_MAX_WORD_LEN, n - i), 1, -1):
-            sub = norm_text[i : i + wlen]
+            sub_raw = text[i : i + wlen]
+            sub = _nfkc(sub_raw)
+            if len(sub) != wlen:
+                continue
             if sub in words_dict:
                 jps = words_dict[sub]
                 for k, c in enumerate(sub):
                     jp = jps[k] if k < len(jps) else ""
                     tokens.append({
-                        "char": c,
+                        "char": sub_raw[k],
                         "jyutping": jp,
                         "type": "hanzi",
                         "is_disambiguated": True,
@@ -244,10 +284,14 @@ def to_jyutping(text: str) -> List[Dict[str, Any]]:
         # 5. 单汉字查表
         if ch in chars_dict:
             p_list = chars_dict[ch]
-            primary = p_list[0] if p_list else ""
+            # v1.5.1-A4: 优先查人工校准表（含「字典里根本没有该读音」的字，如 叶→jip）
+            primary = SINGLE_CHAR_READING_OVERRIDE.get(ch)
+            if primary is None:
+                primary = p_list[0] if p_list else ""
+                primary = COMMON_SINGLE_CHAR_PRIORITY.get(ch, primary)
             is_poly = len(p_list) > 1
             tokens.append({
-                "char": ch,
+                "char": raw_ch,
                 "jyutping": primary,
                 "type": "hanzi",
                 "is_disambiguated": not is_poly,  # 多音字单查打非消歧
@@ -255,9 +299,9 @@ def to_jyutping(text: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
-        # 6. 未知字符兜底
+        # 6. 未知字符兜底（保留原始字形，不能写 NFKC 结果，否则破坏文本保真）
         tokens.append({
-            "char": ch,
+            "char": raw_ch,
             "jyutping": "",
             "type": "unknown",
             "is_disambiguated": False,
@@ -274,7 +318,7 @@ def text_to_jyutping_tokens(text: str) -> List[str]:
 
 
 def get_all_syllables() -> List[str]:
-    """获取字典中所有无调粤拼音节（有序列表，共 729 类）。"""
+    """获取字典中所有无调粤拼音节（有序列表，实测 703 类）。"""
     _load_dictionary_if_needed()
     syllables = set()
     for jps in (_CHARS_DICT or {}).values():

@@ -5,6 +5,11 @@ validator 零重叠防御（R2）、converter 链式前奏（B3）、Golden 夹�
 全部离线（CI 无 torch 可跑；STFT 用例在无 torch 环境自动跳过）。
 运行：python tests/test_acoustic_pipeline.py
 """
+try:  # 允许 `python tests/xxx.py` 与 `python -m tests.xxx` 两种调用
+    import _testkit
+except ImportError:  # pragma: no cover
+    from tests import _testkit  # type: ignore
+
 import os
 import re
 import sys
@@ -62,12 +67,10 @@ def test_01_env_gate_raises_without_torch():
 def test_02_env_gate_passes_with_real_cuda():
     """真机 CUDA 可用时门禁放行（CI 无 torch 自动跳过）。"""
     if not _torch_available():
-        print("     (skip: 无 torch 环境)")
-        return
+        _testkit.skip("无 torch 环境")
     import torch
     if not torch.cuda.is_available():
-        print("     (skip: 无 CUDA)")
-        return
+        _testkit.skip("无 CUDA")
     _check_acoustic_environment("cuda")  # 不抛即通过
 
 
@@ -116,8 +119,7 @@ def test_05_valley_min_gap_enforced():
 def test_06_flux_split_two_char_token():
     """B6/C2：双字 token 谱流权威切分——合成 0.4s 音频在 0.2s 处有爆破瞬态。"""
     if not _torch_available():
-        print("     (skip: 无 torch 环境)")
-        return
+        _testkit.skip("无 torch 环境")
     from core.acoustic_aligner import spectral_flux_split_time
     sr = 44100
     n = int(0.4 * sr)
@@ -215,24 +217,198 @@ def test_09_converter_chained_prelude():
     assert composer_start + 3000 + 100 <= first_start    # 不压首唱
 
 
+def _mk_line(start, text, words=None, dur=3000):
+    return {"start": start, "end": start + dur, "duration": dur, "text": text,
+            "translation": "", "words": words or []}
+
+
+def _mk_words(chars, st, step):
+    return [{"text": c, "start": st + i * step, "end": st + (i + 1) * step, "duration": step}
+            for i, c in enumerate(chars)]
+
+
+def test_10_validator_zero_overlap_priority():
+    """v1.5.1-A2：行间零重叠绝对优先，500ms 行下限让位。
+
+    旧版用 max(last_line_start + 500, line_start - 50) 收拢前一行，当两行间隔
+    不足 550ms 时该 max 会反超 line_start - 50，**重新制造**行间重叠
+    （实测两行 0/200ms、字 60ms 时残留 350ms）。
+    """
+    from scripts.lyric_validator import validate_and_fix_lyrics
+
+    cases = {
+        "间隔不足 550ms": [_mk_line(0, "abc", _mk_words("abc", 0, 60)),
+                          _mk_line(200, "def", _mk_words("def", 200, 60))],
+        "两行起点相同": [_mk_line(0, "a", _mk_words("a", 0, 60)),
+                        _mk_line(0, "b", _mk_words("b", 0, 60))],
+        "三行连挤": [_mk_line(0, "a", _mk_words("a", 0, 60)),
+                    _mk_line(100, "b", _mk_words("b", 100, 60)),
+                    _mk_line(200, "c", _mk_words("c", 200, 60))],
+        "空间充足": [_mk_line(0, "ab", _mk_words("ab", 0, 60)),
+                    _mk_line(6000, "cd", _mk_words("cd", 6000, 60))],
+    }
+    for name, lines in cases.items():
+        data = {"tags": {}, "lines": lines}
+        ok, out, _w = validate_and_fix_lyrics(data, 0)
+        assert ok, name
+        rows = out["lines"]
+        for i in range(len(rows) - 1):
+            assert rows[i]["end"] <= rows[i + 1]["start"], (
+                f"{name}: 行 {i+1} end={rows[i]['end']} 越过行 {i+2} start={rows[i+1]['start']}"
+            )
+        # 恒等式：line.end 必须等于末字 end（to_spl 的 <tend> 取末字 end）
+        for i, r in enumerate(rows):
+            if r.get("words"):
+                assert r["end"] == r["words"][-1]["end"], f"{name}: 行 {i+1} 恒等式破坏"
+            # 字级单调 + 无零/负时长
+            for k in range(len(r.get("words") or []) - 1):
+                assert r["words"][k]["end"] <= r["words"][k + 1]["start"], f"{name}: 字重叠"
+            for w in r.get("words") or []:
+                assert w["end"] > w["start"] or len(r["words"]) > 1, f"{name}: 零宽字"
+
+
+def test_11_validator_idempotent():
+    """v1.5.1-A2：二次校验必须完全幂等（process_song 会跑两遍），否则时间轴二次漂移。"""
+    from scripts.lyric_validator import validate_and_fix_lyrics
+
+    lines = [_mk_line(1000, "第一句歌词",
+                      [{"text": "第", "start": 1000, "end": 1600, "duration": 600},
+                       {"text": "词", "start": 3800, "end": 5000, "duration": 1200}]),
+             _mk_line(2600, "第二句歌词",
+                      [{"text": "第", "start": 2600, "end": 3200, "duration": 600},
+                       {"text": "词", "start": 5200, "end": 6000, "duration": 800}])]
+    _ok, once, _w1 = validate_and_fix_lyrics({"lines": lines}, 0)
+    _ok2, twice, w2 = validate_and_fix_lyrics(once, 0)
+    assert not w2, f"二次校验仍有告警（非幂等）: {w2}"
+    for a, b in zip(once["lines"], twice["lines"]):
+        assert a["start"] == b["start"] and a["end"] == b["end"], (a, b)
+        for wa, wb in zip(a.get("words") or [], b.get("words") or []):
+            assert wa["start"] == wb["start"] and wa["end"] == wb["end"]
+
+
+def test_12_naturalness_packed_exemption():
+    """v1.5.1-N17：贴齐的 60ms 短字是「字距挤出来的结构性压缩」，不是伪时间。
+
+    粤语 CTC 的 _MIN_CHAR_S=60ms，旧口径会把每首粤语快歌都刷成
+    「Natural Acoustic Alert」恒噪声，反而掩盖真正的机器伪时间。
+    """
+    from scripts.lyric_validator import check_acoustic_naturalness
+
+    packed = [{"text": c, "start": i * 60, "end": (i + 1) * 60, "duration": 60}
+              for i, c in enumerate("一二三四五六七八九十")]
+    healthy, ratio = check_acoustic_naturalness(packed)
+    assert healthy, f"贴齐 60ms 被误判为伪时间（ratio={ratio}）"
+
+    gappy = [{"text": c, "start": i * 90, "end": i * 90 + 60, "duration": 60}
+             for i, c in enumerate("一二三四五六七八九十")]
+    healthy2, _ = check_acoustic_naturalness(gappy)
+    assert not healthy2, "留 30ms 空隙的 60ms 短字应仍被判为伪时间"
+
+
+def test_13_quality_gate_track():
+    """v1.5.1-B1 整曲门禁：好分放行、差分熔断、各维度独立生效。"""
+    from core.acoustic_quality import GateConfig, TrackStats, evaluate_track_gate
+
+    cfg = GateConfig()
+    ok = TrackStats(n_target=200, n_scored=180, mean=-1.886, med=-1.75, p10=-3.0,
+                    unaligned_ratio=0.05, span_ratio=0.85, demote_ratio=0.0,
+                    n_lines_evaluable=30, n_lines_demoted=0)
+    assert evaluate_track_gate(ok, cfg) == [], "焚情量级被误熔断"
+
+    # 那么骄傲量级：必须熔断，且理由里要带 R_TRACK_MEAN
+    bad = TrackStats(n_target=200, n_scored=180, mean=-7.785, med=-8.153, p10=-12.0,
+                     unaligned_ratio=0.05, span_ratio=0.85, demote_ratio=0.0,
+                     n_lines_evaluable=30, n_lines_demoted=0)
+    reasons = evaluate_track_gate(bad, cfg)
+    assert any("R_TRACK_MEAN" in r for r in reasons), reasons
+
+    # 未对齐过多（伪时间）：均值好看也要熔断
+    ua = TrackStats(n_target=200, n_scored=180, mean=-1.5, med=-1.5, p10=-2.0,
+                    unaligned_ratio=0.60, span_ratio=0.85, demote_ratio=0.0,
+                    n_lines_evaluable=30, n_lines_demoted=0)
+    assert any("R_TRACK_UNALIGNED" in r for r in evaluate_track_gate(ua, cfg)), evaluate_track_gate(ua, cfg)
+
+    # 时长覆盖不足（未满足豁免条件：均值 -3.5 < -3.00）
+    sp = TrackStats(n_target=200, n_scored=180, mean=-3.5, med=-3.5, p10=-4.0,
+                    unaligned_ratio=0.05, span_ratio=0.10, demote_ratio=0.0,
+                    n_lines_evaluable=30, n_lines_demoted=0)
+    assert any("R_TRACK_SPAN" in r for r in evaluate_track_gate(sp, cfg))
+
+    # 分行降级过多 → 升级为整曲熔断
+    md = TrackStats(n_target=200, n_scored=180, mean=-1.5, med=-1.5, p10=-2.0,
+                    unaligned_ratio=0.05, span_ratio=0.85, demote_ratio=0.70,
+                    n_lines_evaluable=30, n_lines_demoted=21)
+    assert any("R_MASS_DEMOTE" in r for r in evaluate_track_gate(md, cfg))
+
+    # 样本不足时跳过均值维度（n_scored < 30）
+    small = TrackStats(n_target=8, n_scored=8, mean=-9.0, med=-9.0, p10=-9.0,
+                       unaligned_ratio=0.0, span_ratio=0.9, demote_ratio=0.0,
+                       n_lines_evaluable=1, n_lines_demoted=0)
+    assert evaluate_track_gate(small, cfg) == [], "样本不足不应按均值熔断"
+
+
+def test_14_quality_gate_line_and_modes():
+    """v1.5.1-B3 分行门禁 + off/warn 模式回滚开关。"""
+    from core.acoustic_quality import GateConfig, evaluate_line_gate, evaluate_track_gate, TrackStats
+
+    cfg = GateConfig()
+
+    def line(n, score, none_tail=0):
+        ws = [{"text": "字", "score": score, "start": i * 100, "end": (i + 1) * 100}
+              for i in range(n - none_tail)]
+        ws += [{"text": "字", "score": None, "start": i * 100, "end": (i + 1) * 100}
+               for i in range(n - none_tail, n)]
+        return {"words": ws}
+
+    assert not evaluate_line_gate(line(8, -1.5), cfg).demote, "好分行不该降级"
+    assert evaluate_line_gate(line(8, -6.5), cfg).demote, "整行差应降级（< line_mean_min=-5.0）"
+    assert evaluate_line_gate(line(8, -1.5, none_tail=5), cfg).demote, "覆盖不足应降级"
+    assert not evaluate_line_gate(line(3, -6.5), cfg).demote, "3 字行不评估（噪声）"
+
+    worst = TrackStats(n_target=200, n_scored=180, mean=-99.0, med=-99.0, p10=-99.0,
+                       unaligned_ratio=0.99, span_ratio=0.01, demote_ratio=0.9,
+                       n_lines_evaluable=30, n_lines_demoted=27)
+    assert evaluate_track_gate(worst, GateConfig(mode="off")) == [], "off 模式必须整体放行"
+    assert evaluate_track_gate(worst, GateConfig(mode="warn")), "warn 模式仍应算出理由（只告警不熔断）"
+    assert not GateConfig(mode="off").enabled
+    assert GateConfig(mode="warn").enabled and not GateConfig(mode="warn").enforce
+
+
+def test_15_synthesized_word_accounting():
+    """v1.5.1-C1 synthesized_words 语义：只有整首无真声学逐字才为 True。"""
+    from core.acoustic_quality import finalize_word_source_flags
+
+    def mk():
+        return {"lines": [
+            {"text": "ab", "words": [{"text": "a", "score": -1.0}, {"text": "b", "score": -1.2}]},
+            {"text": "cd", "words": [{"text": "c", "score": -1.1}, {"text": "d", "score": -1.3}]},
+        ]}
+
+    # 两行都是真声学 → 不算合成
+    d = finalize_word_source_flags(mk())
+    assert d["synthesized_words"] is False
+    assert d["synthesized_ratio"] == 0.0
+    assert d["acoustic_coverage"] == 1.0
+
+    # 一行线性保底 → 比例 0.5，但仍不算「整首合成」
+    d = finalize_word_source_flags(mk(), fallback_lines=[1])
+    assert d["synthesized_words"] is False
+    assert d["synthesized_ratio"] == 0.5
+    assert d["words_source_stats"]["gpu_linear_fallback"] == 1
+
+    # 两行都线性保底 → 才算整首合成
+    d = finalize_word_source_flags(mk(), fallback_lines=[0, 1])
+    assert d["synthesized_words"] is True
+    assert d["synthesized_ratio"] == 1.0
+
+    # 空歌词按「无真声学」处理
+    d = finalize_word_source_flags({"lines": [{"text": "x", "words": []}]})
+    assert d["synthesized_words"] is True
+
+
 def main():
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    passed = 0
-    failed = []
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-            passed += 1
-        except Exception as exc:
-            print(f"  FAIL  {t.__name__}: {exc}")
-            import traceback
-            traceback.print_exc()
-            failed.append(t.__name__)
-    print(f"\n{passed}/{len(tests)} passed")
-    if failed:
-        print(f"FAILED: {failed}")
-    return 0 if passed == len(tests) else 1
+    """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
+    return _testkit.run(globals())
 
 
 if __name__ == "__main__":

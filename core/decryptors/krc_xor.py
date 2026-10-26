@@ -18,7 +18,11 @@ def decrypt_krc(raw_bytes: bytes) -> str:
     # Check for magic header 'krc1'
     offset = 4 if raw_bytes[:4] == b'krc1' else 0
     data = raw_bytes[offset:]
-    
+    if not data:
+        # v1.5.1: 只有 magic 头、没有任何载荷（如下载被截断），与空输入同样处理，
+        # 不要拿空字节去喂 zlib 然后抛 ValueError 打断整条流水线。
+        return ""
+
     # XOR decryption
     decrypted_bytes = bytearray(len(data))
     for i, b in enumerate(data):

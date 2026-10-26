@@ -3,13 +3,13 @@
 
 import re
 
-CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U000323af\uf900-\ufaff\U0002f800-\U0002fa1f\u3040-\u30ff\uac00-\ud7af]")
 
 # LRC 元数据行（[ti:] [ar:] [al:] [by:] [offset:]）——lyric_validator 与
 # plain_lyric_search 共用同一份（A2 去重，两处正则曾逐字重复）。
 LRC_META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
-# 汉字判定统一到 CJK 统一表意区（旧代码这里用 \u9fa5，会把 \u9fa6~\u9fff 的字漏掉）
-HANZI_RE = re.compile(r"[\u4e00-\u9fff]")
+# 汉字判定统一到 CJK 统一表意全集（涵盖基本区、扩展 A~I 与兼容区）
+HANZI_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U000323af\uf900-\ufaff\U0002f800-\U0002fa1f]")
 KANA_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
 HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 
@@ -60,15 +60,48 @@ SOURCE_LINE_RE = re.compile(
 
 _HAS_ALNUM_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
 
+# v1.5.1: 署名行判定的单一出处（原先 lyric_validator 里有一份等价实现，两边漂移）。
+# 语义与 validator 完全一致：多字关键词必须跟冒号/空白/行尾（否则「作词人」「鼓楼」
+# 「键盘上的泪」会被误杀）；单字「词/曲」必须带冒号（否则「词不达意」「曲终人散」）。
+CREDIT_KEYWORD_RE = re.compile(
+    r"^(?:作词|作曲|编曲|制作|监制|录音|混音|吉他|贝斯|鼓|键盘|母带|弦乐|出品|"
+    r"作詞|編曲|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered|"
+    r"작사|작곡|편곡)"
+    r"(?:\s*[:：]|\s|$)"
+    r"|^(?:词|曲)\s*[:：]",
+    re.IGNORECASE,
+)
+
 INSTRUMENTAL_KEYWORDS = ("纯音乐", "请欣赏", "伴奏", "Instrumental", "No Lyrics")
 
 
+def is_credit_line(text: str) -> bool:
+    """是否为作词/作曲/编曲等署名行（内部先剥时间戳，可直接传带轴行）。"""
+    from core.utils.time_utils import strip_timing_tags
+
+    t = (text or "").strip()
+    if not t:
+        return False
+    clean = strip_timing_tags(t)
+    return bool(CREDIT_KEYWORD_RE.search(clean))
+
+
 def is_source_or_credit_line(text: str) -> bool:
-    """判断一行是来源标注/署名而非歌词正文（X-21）。"""
+    """判断一行是来源标注/署名而非歌词正文（X-21）。
+
+    v1.5.1: 旧实现只认「LRC: / URL / 歌词来源」这类**来源标注**，完全不含
+    「作词 : 某某」这类**署名行**，与函数名不符。后果是
+    `acoustic_aligner.enrich_track_with_acoustic_words` 的注释写着
+    「来源/署名行不参与合成」，实际上署名行照样被合成出一条逐字时间轴，
+    并且会进 CTC 的 target 序列（作/词/姬/赓 四个音节）干扰对齐。
+    现在把署名行一并纳入。
+    """
     t = (text or "").strip()
     if not t:
         return True
     if SOURCE_LINE_RE.search(t):
+        return True
+    if is_credit_line(t):
         return True
     return not _HAS_ALNUM_RE.search(t)
 

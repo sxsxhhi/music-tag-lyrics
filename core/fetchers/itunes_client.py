@@ -50,9 +50,10 @@ class ITunesClient:
 
     def __init__(self):
         self.bucket = TokenBucket()
-        self.cooldown_until: float = 0.0
+        # v1.5.1-D3: 按用途分桶（search / lookup），一次 429 不再拖垮全部用途
+        self._cooldown_until: Dict[str, float] = {"search": 0.0, "lookup": 0.0}
         self._bucket_warn_at: float = -1000.0
-        self._consecutive_429: int = 0
+        self._consecutive_429: Dict[str, int] = {"search": 0, "lookup": 0}
         self.cache: Dict[str, Any] = {}
         self._load_cache()
 
@@ -102,12 +103,20 @@ class ITunesClient:
         except Exception as exc:
             logger.warning("保存 itunes-cache 失败: %s", exc)
 
-    def _request(self, url: str) -> Optional[Dict[str, Any]]:
-        """执行受限流与冷却保护的 HTTP 请求。"""
+    def _request(self, url: str, purpose: str = "lookup") -> Optional[Dict[str, Any]]:
+        """执行受限流与冷却保护的 HTTP 请求。
+
+        v1.5.1-D3: 429 冷却**按用途分桶**。旧版是进程级单值，一次 429 会让
+        冷却期内**所有**华语曲（search + lookup 一起）静默降级酷狗。
+        现在 lookup 与 search 各自独立退避，互不拖累。
+        """
         now = time.perf_counter()
-        if now < self.cooldown_until:
-            rem = int(self.cooldown_until - now)
-            logger.warning("   ⚠️ [itunes] iTunes 客户端处于 429 冷却中（剩余 %ds），跳过请求", rem)
+        cool_until = self._cooldown_until.get(purpose, 0.0)
+        if now < cool_until:
+            rem = int(cool_until - now)
+            logger.warning(
+                "   ⚠️ [itunes] iTunes %s 处于 429 冷却中（剩余 %ds），跳过请求", purpose, rem
+            )
             return None
 
         if not self.bucket.consume():
@@ -122,14 +131,18 @@ class ITunesClient:
 
         res = http.http_get_text_ex(url, timeout=3.0)
         if res.status == 429:
-            self._consecutive_429 += 1
-            backoff_sec = min(300.0, COOLDOWN_SEC * (2 ** (self._consecutive_429 - 1)))
-            self.cooldown_until = time.perf_counter() + backoff_sec
-            logger.warning("   ⚠️ [itunes] iTunes 返回 429，激活 %.0fs 指数退避冷却，后续请求直接跳过", backoff_sec)
+            self._consecutive_429[purpose] = self._consecutive_429.get(purpose, 0) + 1
+            n = self._consecutive_429[purpose]
+            backoff_sec = min(300.0, COOLDOWN_SEC * (2 ** (n - 1)))
+            self._cooldown_until[purpose] = time.perf_counter() + backoff_sec
+            logger.warning(
+                "   ⚠️ [itunes] iTunes %s 返回 429（第 %d 次），激活 %.0fs 指数退避冷却",
+                purpose, n, backoff_sec,
+            )
             return None
 
         if res.status == 200:
-            self._consecutive_429 = 0
+            self._consecutive_429[purpose] = 0
 
         if res.status != 200 or not res.text:
             return None
@@ -201,7 +214,7 @@ class ITunesClient:
             batch = ids[i:i + LOOKUP_BATCH]
             ids_str = ",".join(batch)
             url = f"https://itunes.apple.com/lookup?id={ids_str}&country={country}"
-            data = self._request(url)
+            data = self._request(url, purpose="lookup")
             if data is None:
                 transport_failed.extend(batch)
                 continue
@@ -258,7 +271,7 @@ class ITunesClient:
 
         for region in SEARCH_REGIONS:
             url = f"https://itunes.apple.com/search?term={encoded_query}&country={region}&media=music&entity=song&limit=10"
-            data = self._request(url)
+            data = self._request(url, purpose="search")
             if data is None:
                 continue
             regions_ok += 1

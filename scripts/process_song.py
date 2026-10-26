@@ -5,6 +5,7 @@ import os
 import sys
 import logging
 import argparse
+import time
 from typing import Optional, Dict, Any, List, Tuple
 
 # Reconfigure stdout/stderr for utf-8 on Windows
@@ -34,6 +35,9 @@ from scripts.lyric_validator import (
 )
 from core.aggregator import LyricAggregator
 from core.converter import to_spl
+from core.acoustic_quality import (
+    AlignStatus, AcousticQualityError, finalize_word_source_flags,
+)
 from core.utils.io_safe import atomic_write_many, read_text_guess_encoding
 from core.utils.text_utils import is_foreign_track
 from core.utils.version_guard import is_live_version, matches_version_policy
@@ -171,6 +175,9 @@ def run_acoustic_align(
     existing_lines: Optional[List[Dict[str, Any]]] = None,
     lang: str = "auto",
 ) -> Optional[Dict[str, Any]]:
+    """单次声学打轴。返回 None 时用 last_align_status() 区分「熔断」与「环境失败」。"""
+    global _LAST_ALIGN_STATUS, _LAST_ALIGN_REASONS
+    _LAST_ALIGN_STATUS, _LAST_ALIGN_REASONS = AlignStatus.UNAVAILABLE, []
     try:
         from core.acoustic_aligner import AcousticAligner, AcousticEnvironmentError
         align_text, trans_by_idx, hints = _prepare_align_payload(
@@ -195,7 +202,13 @@ def run_acoustic_align(
             for i, line in enumerate(aligned_data.get("lines") or []):
                 if i < len(trans_by_idx) and trans_by_idx[i]:
                     line["translation"] = trans_by_idx[i]
+        _LAST_ALIGN_STATUS = AlignStatus.OK
         return aligned_data
+    except AcousticQualityError as e:
+        # v1.5.1-B2: 熔断 ≠ 环境失败。上层据此决定是否换引擎重试。
+        _LAST_ALIGN_STATUS, _LAST_ALIGN_REASONS = AlignStatus.LOW_QUALITY, list(e.reasons)
+        print(f"🛑 声学质量熔断（{lang}）：{', '.join(e.reasons)}")
+        return None
     except AcousticEnvironmentError as e:
         print(f"🛑 声学环境不达标，GPU 打轴已被铁律 20 阻断（拒绝生成伪逐字）：{e}")
         return None
@@ -207,10 +220,86 @@ def run_acoustic_align(
         return None
 
 
+# v1.5.1-B2: 三态记录。core 层抛 AcousticQualityError 表达熔断，
+# 这里转成 AlignStatus 供上层分流；不改 run_acoustic_align 的返回类型，
+# 避免破坏 tests/test_gpu_plain.py 里对它的 mock。
+_LAST_ALIGN_STATUS: "AlignStatus" = AlignStatus.UNAVAILABLE
+_LAST_ALIGN_REASONS: List[str] = []
+
+
+def last_align_status() -> Tuple["AlignStatus", List[str]]:
+    return _LAST_ALIGN_STATUS, list(_LAST_ALIGN_REASONS)
+
+
+def _better_align(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """两次打轴择优：按「真声学逐字占比」取高，平手时保留首次。"""
+    if not a:
+        return b
+    if not b:
+        return a
+    return a if a.get("acoustic_coverage", 1.0) >= b.get("acoustic_coverage", 0.0) else b
+
+
+def _align_with_policy(
+    filepath: str,
+    title: str,
+    artist: str,
+    lyrics_text: str,
+    existing_lines: Optional[List[Dict[str, Any]]],
+    lang: str,
+) -> Optional[Dict[str, Any]]:
+    """唯一重试出口：粤语熔断时回落 zh 双引擎重试一次，仍失败才交给 numpy。
+
+    有限序列 + 预算双闸，不可能无限重试：
+      · attempts 写死为 [yue, zh]（仅 lang=yue 时），最多 2 次
+      · MTL_ALIGN_MAX_PASSES（默认 2）与 MTL_ALIGN_BUDGET_S（默认 600s）硬限
+    """
+    resolved = (lang or "auto").lower().strip()
+    attempts = ["yue", "zh"] if resolved == "yue" else [resolved]
+    max_passes = int(os.environ.get("MTL_ALIGN_MAX_PASSES", "2") or "2")
+    budget_s = float(os.environ.get("MTL_ALIGN_BUDGET_S", "600") or "600")
+
+    t0 = time.time()
+    best: Optional[Dict[str, Any]] = None
+    for i, try_lang in enumerate(attempts):
+        if i >= max_passes:
+            break
+        if time.time() - t0 > budget_s:
+            print(f"   ℹ️ 打轴预算 {budget_s:.0f}s 已用尽，停止重试。")
+            break
+        result = run_acoustic_align(
+            filepath, title, artist, lyrics_text,
+            existing_lines=existing_lines, lang=try_lang,
+        )
+        best = _better_align(best, result)
+        status, reasons = last_align_status()
+        if status is AlignStatus.OK:
+            return best
+        if status is AlignStatus.LOW_QUALITY and i + 1 < len(attempts):
+            print(f"   ↻ [{try_lang}] 熔断，改用 {attempts[i + 1]} 双引擎重试一次…")
+            continue
+        break
+    return best
+
+
 def apply_numpy_word_synth(validated_data: Dict[str, Any]) -> Dict[str, Any]:
+    """按行时长合成逐字（numpy），**只补缺词行**，已有真逐字的行原样保留。
+
+    v1.5.1-C1: 旧版无条件写 `synthesized_words = True`，把整首（含大量
+    GPU 真逐字行）标成 numpy 合成 —— 假阳性。现在按行记账，只有整首
+    没有任何真声学逐字时才置 True。
+    """
     from core.acoustic_aligner import enrich_track_with_acoustic_words
+
+    before_missing = {
+        i for i, ln in enumerate(validated_data.get("lines") or [])
+        if not ln.get("words")
+    }
     out = enrich_track_with_acoustic_words(validated_data)
-    out["synthesized_words"] = True
+    # enrich_track_with_acoustic_words 只给「原本缺词」的行合成，
+    # 所以这些行就是本轮的 numpy 来源
+    numpy_lines = sorted(before_missing)
+    finalize_word_source_flags(out, numpy_lines=numpy_lines)
     print("   🎼 已降级：按行时长合成逐字时间戳（numpy，非酷狗逐字、非 GPU）")
     return out
 
@@ -245,7 +334,8 @@ def enrich_missing_words(
             return validated_data
     n_lines = len([l for l in lines if (l.get("text") or "").strip()])
     if prompt_gpu_authorization("line", n_lines, non_interactive):
-        aligned = run_acoustic_align(
+        # v1.5.1-B2: 走唯一重试出口 —— 粤语熔断时回落 zh 双引擎重试一次
+        aligned = _align_with_policy(
             filepath, title, artist, "", existing_lines=lines, lang=lang
         )
         if aligned and aligned.get("lines"):
@@ -253,7 +343,12 @@ def enrich_missing_words(
             aligned.setdefault("source", validated_data.get("source", "acoustic"))
             aligned["lyric_type"] = "word"
             return aligned
-        print("   ℹ️ GPU 打轴未成功，降级按行合成。")
+        # v1.5.1-C2: 归因 —— 熔断 / 环境失败 / 无结果 三者不能都叫「未成功」
+        status, reasons = last_align_status()
+        if status is AlignStatus.LOW_QUALITY:
+            print(f"   ℹ️ 声学质量熔断（{', '.join(reasons) or 'n/a'}），zh 重试仍不足，降级按行合成。")
+        else:
+            print("   ℹ️ GPU 打轴未成功，降级按行合成。")
     try:
         return apply_numpy_word_synth(validated_data)
     except ImportError as exc:
@@ -310,7 +405,7 @@ def prompt_demucs_fallback(
         if det.get("lang") == "yue":
             lang = "yue"
             print(f"🌐 [lang_detect] 基于已获取权威文本判定为粤语 (置信得分 {det.get('confidence', 0.0):.2f})，启用粤语声学打轴。")
-    aligned = run_acoustic_align(filepath, title, artist, plain_text_lyrics, lang=lang)
+    aligned = _align_with_policy(filepath, title, artist, plain_text_lyrics, None, lang)
     if aligned:
         aligned["gpu_aligned"] = True
         aligned.setdefault("source", "acoustic")
@@ -331,6 +426,39 @@ def _resolve_apple_artwork_url(lyric_data: Optional[Dict[str, Any]]) -> str:
 
 
 def process_single_song(
+    filepath: str,
+    update_tags: bool = True,
+    output_dir: Optional[str] = None,
+    lyrics_only: bool = False,
+    force_gpu: bool = False,
+    lyrics_file: Optional[str] = None,
+    non_interactive: bool = False,
+    enable_apple: bool = True,
+    no_cover: bool = False,
+    lang: str = "auto",
+) -> bool:
+    try:
+        return _process_single_song_impl(
+            filepath=filepath,
+            update_tags=update_tags,
+            output_dir=output_dir,
+            lyrics_only=lyrics_only,
+            force_gpu=force_gpu,
+            lyrics_file=lyrics_file,
+            non_interactive=non_interactive,
+            enable_apple=enable_apple,
+            no_cover=no_cover,
+            lang=lang,
+        )
+    finally:
+        try:
+            from core.acoustic_aligner import AcousticAligner
+            AcousticAligner.clear_vocal_cache()
+        except Exception:
+            pass
+
+
+def _process_single_song_impl(
     filepath: str,
     update_tags: bool = True,
     output_dir: Optional[str] = None,

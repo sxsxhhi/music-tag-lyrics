@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """语言路由检测器 (Language Route Detector) 单元测试。"""
 
+try:  # 允许 `python tests/xxx.py` 与 `python -m tests.xxx` 两种调用
+    import _testkit
+except ImportError:  # pragma: no cover
+    from tests import _testkit  # type: ignore
+
 import os
 import sys
 
@@ -103,24 +108,8 @@ def test_embedded_lyrics_detection():
 
 
 def main():
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    passed = 0
-    failed = []
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-            passed += 1
-        except Exception as exc:
-            print(f"  FAIL  {t.__name__}: {exc}")
-            import traceback
-            traceback.print_exc()
-            failed.append(t.__name__)
-
-    print(f"\n{passed}/{len(tests)} passed")
-    if failed:
-        print(f"FAILED: {failed}")
-    return 0 if passed == len(tests) else 1
+    """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
+    return _testkit.run(globals())
 
 
 if __name__ == "__main__":

@@ -97,16 +97,25 @@ def main():
             failures.append(f"行 {i+1} 与行 {i+2} 间隙 {gap}ms < 50ms（违背铁律 19）")
 
     # 4.2 严格单调与 words 完整性
+    # v1.5.1-B3: 分行门禁会把个别低质量行（说唱桥段/念白/快嘴）降级为行级，
+    # 这是**设计行为**，不是缺陷。验收改为「降级比例 ≤ 10%」而非「每行必有逐字」。
+    MAX_DEMOTE_RATIO = 0.10
+    n_demoted = 0
     for i, ln in enumerate(lines):
         ws = ln.get("words") or []
         if not ws:
-            failures.append(f"行 {i+1} 缺少逐字时间戳: {ln['text']}")
+            n_demoted += 1
+            print(f"   ℹ️ 行 {i+1} 降级为行级（{ln['text'][:20]}）")
             continue
         for a, b in zip(ws, ws[1:]):
             if b["start"] < a["start"]:
                 failures.append(f"行 {i+1} 字时间倒流: {a['text']}({a['start']}ms) -> {b['text']}({b['start']}ms)")
             if a["end"] <= a["start"]:
                 failures.append(f"行 {i+1} 字时长非正: {a['text']}({a['start']}~{a['end']}ms)")
+    demote_ratio = n_demoted / max(1, len(lines))
+    print(f"\n--- 分行降级: {n_demoted}/{len(lines)} = {demote_ratio:.1%}（上限 {MAX_DEMOTE_RATIO:.0%}）---")
+    if demote_ratio > MAX_DEMOTE_RATIO:
+        failures.append(f"分行降级比例 {demote_ratio:.1%} > {MAX_DEMOTE_RATIO:.0%}（B3 门限过严）")
 
     # 4.3 抽检入声字结尾行
     sample_first_5 = lines[:5]
