@@ -17,9 +17,21 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import logging
 import unicodedata
 from typing import List, Dict, Any, Optional, Tuple
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -704,8 +716,12 @@ class DualEngineHybridAligner:
 
         mode = "hint" if hints else "cursor"
         lang_label = "粤语 (yue)" if route_lang == "yue" else "普通话 (zh)"
-        print(f"🎤 [DualEngine] 双引擎流水线启动：{len(clean_lines)} 行，模式={mode}，语种={lang_label}"
-              + ("（行级提示窗锚定）" if hints else "（顺序游标，无行级提示）"))
+        msg = (f"[DualEngine] 双引擎流水线启动：{len(clean_lines)} 行，模式={mode}，语种={lang_label}"
+               + ("（行级提示窗锚定）" if hints else "（顺序游标，无行级提示）"))
+        try:
+            print(f"🎤 {msg}")
+        except Exception:
+            print(f"[DualEngine] {msg}")
 
         # 2. 粤语分支调度 (Cantonese CTC Aligner)
         if route_lang == "yue":
@@ -769,7 +785,10 @@ class DualEngineHybridAligner:
                     got = (w_st, words)
                     break
             if got is None:
-                print(f"   ⚠️ [DualEngine] 行 {i+1} 未对齐（保留行级）：{text}")
+                try:
+                    print(f"   ⚠️ [DualEngine] 行 {i+1} 未对齐（保留行级）：{text}")
+                except Exception:
+                    print(f"   [WARN] [DualEngine] 行 {i+1} 未对齐（保留行级）：{text}")
                 hint_t = hints[i][0] if (hints and i < len(hints)) else cursor
                 raw_lines_data.append({
                     "text": text, "words": [],
@@ -785,7 +804,10 @@ class DualEngineHybridAligner:
                                    "raw_end": raw_end, "_slice_st": w_st})
             if mode == "cursor":
                 cursor = min(total_len, raw_end + 0.12)
-            print(f"   [{i+1:02d}/{len(clean_lines)}] ✓ {raw_start:7.2f}s → {raw_end:7.2f}s {text}")
+            try:
+                print(f"   [{i+1:02d}/{len(clean_lines)}] ✓ {raw_start:7.2f}s → {raw_end:7.2f}s {text}")
+            except Exception:
+                print(f"   [{i+1:02d}/{len(clean_lines)}] OK {raw_start:7.2f}s -> {raw_end:7.2f}s {text}")
 
         # 4.5 提示 sanitize（hint 模式）：行级提示是同表演真值（±0.3s 级精度），
         # 对 whisper 原始起止做有界纠偏——防咬窗/漂移值污染谷底搜索窗
@@ -942,8 +964,12 @@ class DualEngineHybridAligner:
                     w["end"] = min(lim, s0 + (w["end"] - s0) * target // span)
                     w["duration"] = max(_MIN_WORD_MS // 2, w["end"] - w["start"])
 
-        print(f"✅ [DualEngine] 声学咬合完成：{len(output_lines)} 行逐字"
-              f"（模式={mode}，谷底双向锁定，行间 ≥{_LINE_GAP_MS}ms）")
+        msg = (f"[DualEngine] 声学咬合完成：{len(output_lines)} 行逐字"
+               f"（模式={mode}，谷底双向锁定，行间 ≥{_LINE_GAP_MS}ms）")
+        try:
+            print(f"✅ {msg}")
+        except Exception:
+            print(f"[OK] {msg}")
         return {
             "source": "demucs_gpu_alignment",
             "lyric_type": "verbatim",

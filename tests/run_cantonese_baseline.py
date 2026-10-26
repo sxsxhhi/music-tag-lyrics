@@ -20,7 +20,9 @@ if REPO_ROOT not in sys.path:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-CANTO_AUDIO = r"D:\WindowsAppp\Desktop\测试\焚情 - 黄凯芹.flac"
+DEFAULT_CANTO_AUDIO = r"D:\WindowsAppp\Desktop\测试\焚情 - 黄凯芹.flac"
+FALLBACK_CANTO_AUDIO = os.path.abspath(os.path.join(REPO_ROOT, "..", "任务", "2026-10-24-v132-fix", "_cover_test", "焚情 - 黄凯芹.flac"))
+CANTO_AUDIO = DEFAULT_CANTO_AUDIO if os.path.isfile(DEFAULT_CANTO_AUDIO) else FALLBACK_CANTO_AUDIO
 
 
 def main():
@@ -79,6 +81,7 @@ def main():
         device="cuda",
         lang="yue",
     )
+    assert aligned_out is not None, "粤语声学引擎返回 None（触发了置信度硬熔断或声学失败）"
     lines = aligned_out.get("lines") or []
     assert lines, "粤语声学引擎未输出任何行"
     print(f"✅ 引擎对齐完成，产出 {len(lines)} 行逐字歌词")

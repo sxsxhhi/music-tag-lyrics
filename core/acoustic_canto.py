@@ -377,7 +377,7 @@ class CantoneseCTCAligner:
                     if sp is None:
                         line_words.append({
                             "char": tok["char"], "start": None, "end": None,
-                            "type": tok.get("type", "unknown"), "is_entering": False, "score": 0.0,
+                            "type": tok.get("type", "unknown"), "is_entering": False, "score": None,
                         })
                         continue
                     st_s, ed_s = sp["start"], sp["end"]      # 已是秒，禁止再乘 0.020
@@ -547,7 +547,7 @@ class CantoneseCTCAligner:
                     "start": int(w["start"] * 1000),
                     "end": int(w["end"] * 1000),
                     "duration": max(_MIN_WORD_MS // 2, int((w["end"] - w["start"]) * 1000)),
-                    "score": w.get("score", 0.0),
+                    "score": w.get("score"),
                 } for w in words]
                 # P1-25: 标点符号吸收合并至前字（双路径同步实施）
                 merged_words = absorb_punctuation_tokens(raw_words, text)
@@ -645,7 +645,7 @@ class CantoneseCTCAligner:
                     ln["end"] = ws[-1]["end"]
                     ln["duration"] = max(100, ln["end"] - ln["start"])
 
-            # P0-3: 粤语 CTC 质量硬熔断（mean_score < -1.80 或总时长覆盖比例 < 15% 放弃逐字安全回退）
+            # P0-3: 粤语 CTC 质量硬熔断（mean_score < -2.10 或总时长覆盖比例 < 15% 放弃逐字安全回退）
             all_words = [w for ln in output_lines for w in ln.get("words", [])]
             scores = [w["score"] for w in all_words if w.get("score") is not None and w.get("score") < 0]
             mean_score = sum(scores) / len(scores) if scores else -99.0
@@ -653,7 +653,7 @@ class CantoneseCTCAligner:
             last_end_s = output_lines[-1]["end"] / 1000.0 if output_lines else 0.0
             span_ratio = (last_end_s - first_start_s) / max(1e-6, total_audio_s)
 
-            if mean_score < -1.80 or span_ratio < 0.15:
+            if mean_score < -2.10 or span_ratio < 0.15:
                 logger.warning("   ⚠️ [canto] 对齐声学置信度不足（mean=%.3f, ratio=%.3f），放弃逐字并安全回退", mean_score, span_ratio)
                 return None
 

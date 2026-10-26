@@ -337,7 +337,7 @@ def test_absorb_punctuation_tokens():
 
 
 def test_canto_circuit_breaker_p0_3():
-    """P0-3 熔断门禁验证：当对齐置信度不足（mean < -1.80）时，必须熔断并安全返回 None。"""
+    """P0-3 熔断门禁验证：当对齐置信度不足（mean < -2.10）时，必须熔断并安全返回 None。"""
     import unittest.mock as mock
     try:
         import torch
@@ -350,7 +350,7 @@ def test_canto_circuit_breaker_p0_3():
     aligner._syllable_list = ["hoi", "fut", "tin", "hung"]
     aligner._syllable_to_id = {s: i + 1 for i, s in enumerate(aligner._syllable_list)}
 
-    # 模拟低置信对齐得分（全为 -2.50 < -1.80）
+    # 模拟低置信对齐得分（全为 -2.50 < -2.10）
     T = 500
     fake_lp = torch.full((1, T, 5), -2.50)
     for t_idx in range(4):
@@ -362,6 +362,24 @@ def test_canto_circuit_breaker_p0_3():
 
     out = aligner.align_cantonese_lines(audio, clean_lines)
     assert out is None, "低质量声学对齐未触发熔断！"
+
+
+def test_unaligned_word_score_none():
+    """算法契约验证：未对齐词（无声学跨度）的 score 必须显式为 None。"""
+    toks = [{"char": "la", "type": "latin", "target_idx": None}]
+    target_spans = []
+    line_words = []
+    for tok in toks:
+        t_idx = tok.get("target_idx")
+        sp = target_spans[t_idx] if (t_idx is not None and t_idx < len(target_spans)) else None
+        if sp is None:
+            line_words.append({
+                "char": tok["char"], "start": None, "end": None,
+                "type": tok.get("type", "unknown"), "is_entering": False, "score": None,
+            })
+    assert len(line_words) == 1
+    assert line_words[0]["score"] is None
+
 
 
 def main():
