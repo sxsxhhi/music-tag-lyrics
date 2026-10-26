@@ -26,6 +26,15 @@ except ImportError:  # C-01: numpy 只在声学/合成路径需要，缺失时�
 
 from .utils.text_utils import CJK_RE, is_source_or_credit_line
 
+# ffmpeg 桥：声学环境自带 imageio-ffmpeg 二进制，自动挂入 PATH（供 Demucs/Torch 使用）
+try:
+    import imageio_ffmpeg
+    _ff_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+    if _ff_dir and _ff_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _ff_dir + os.pathsep + os.environ.get("PATH", "")
+except (ImportError, Exception):
+    pass
+
 # ==========================================
 # 0. 声学环境硬门禁（铁律 20，严进）
 # ==========================================
@@ -383,7 +392,8 @@ class DualEngineHybridAligner:
 
     # ------------------------------------------------------------------
     def align_pipeline(self, audio_path: str, lyrics_text: str,
-                       line_timing_hints: Optional[List[Tuple[float, str]]] = None) -> Dict[str, Any]:
+                       line_timing_hints: Optional[List[Tuple[float, str]]] = None,
+                       lang: str = "auto") -> Dict[str, Any]:
         """主入口：权威文本（+可选行级提示）→ 逐字时间轴。毫秒整数交付。"""
         import torch  # noqa: F401  懒加载守卫（_check_acoustic_environment 已验证）
         import torchaudio
@@ -413,11 +423,40 @@ class DualEngineHybridAligner:
             hints = [(float(t), str(x)) for t, x in line_timing_hints]
         elif len(parsed_hints) == len(clean_lines):
             hints = parsed_hints
+
+        # 语种分支裁决 (v1.5.0)
+        route_lang = (lang or "auto").lower().strip()
+        if route_lang == "auto":
+            from .utils.lang_detect import detect_language
+            det = detect_language(
+                lyrics_text=lyrics_text,
+                audio_path=audio_path,
+                interactive=False,
+                device=self._device,
+            )
+            route_lang = det.get("lang", "zh")
+
         mode = "hint" if hints else "cursor"
-        print(f"🎤 [DualEngine] 双引擎流水线启动：{len(clean_lines)} 行，模式={mode}"
+        lang_label = "粤语 (yue)" if route_lang == "yue" else "普通话 (zh)"
+        print(f"🎤 [DualEngine] 双引擎流水线启动：{len(clean_lines)} 行，模式={mode}，语种={lang_label}"
               + ("（行级提示窗锚定）" if hints else "（顺序游标，无行级提示）"))
 
-        # 2. Demucs 人声（44.1k mono）→ whisper 输入重采样 16k
+        # 2. 粤语分支调度 (Cantonese CTC Aligner)
+        if route_lang == "yue":
+            v_mono, sr = AcousticAligner.extract_vocals_mono(audio_path, device=self._device)
+            t16 = torch.from_numpy(v_mono.astype(np.float32)).unsqueeze(0)
+            v16 = torchaudio.functional.resample(t16, sr, 16000).squeeze(0).numpy()
+            from .acoustic_canto import CantoneseCTCAligner
+            canto_aligner = CantoneseCTCAligner.get_instance(device=self._device)
+            return canto_aligner.align_cantonese_lines(
+                audio_16k=v16,
+                clean_lines=clean_lines,
+                hints=hints,
+                v_mono_44k=v_mono,
+                sr_44k=sr,
+            )
+
+        # 3. 普通话分支调度 (Whisper Token Alignment)
         v_mono, sr = AcousticAligner.extract_vocals_mono(audio_path, device=self._device)
         total_len = len(v_mono) / sr
         t16 = torch.from_numpy(v_mono.astype(np.float32)).unsqueeze(0)
@@ -850,9 +889,10 @@ class AcousticAligner:
         line_timing_hints: Optional[List[Tuple[float, str]]] = None,
         device: str = 'cuda',
         scratch_dir: Optional[str] = None,
+        lang: str = "auto",
     ) -> Dict[str, Any]:
         """
-        Executes precision acoustic alignment on valid plain-text lyrics (v1.4.0 双引擎流水线).
+        Executes precision acoustic alignment on valid plain-text lyrics (v1.5.0 双引擎流水线).
         【核心红线】：lyrics_text 严禁为空！禁止无词语音听写！
         （scratch_dir 为 v1.3 兼容形参，新流水线全程内存直馈，不再落临时 wav。）
         """
@@ -868,4 +908,5 @@ class AcousticAligner:
             audio_path=audio_path,
             lyrics_text=lyrics_text,
             line_timing_hints=line_timing_hints,
+            lang=lang,
         )
