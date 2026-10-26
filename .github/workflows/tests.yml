@@ -33,3 +33,9 @@ jobs:
         run: python tests/test_cover_art.py
       - name: Acoustic pipeline v1.4.0
         run: python tests/test_acoustic_pipeline.py
+      - name: Jyutping G2P v1.5.0
+        run: python tests/test_jyutping.py
+      - name: Language routing v1.5.0
+        run: python tests/test_lang_detect.py
+      - name: Cantonese CTC align v1.5.0
+        run: python tests/test_canto_align.py
