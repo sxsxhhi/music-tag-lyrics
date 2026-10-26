@@ -39,3 +39,5 @@ jobs:
         run: python tests/test_lang_detect.py
       - name: Cantonese CTC align v1.5.0
         run: python tests/test_canto_align.py
+      - name: CLI & End-to-end v1.5.0
+        run: python tests/test_cli.py

@@ -6,6 +6,7 @@ import re
 import sys
 import json
 import argparse
+import logging
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -60,6 +61,7 @@ def main(argv=None):
     parser.add_argument("--no-cache", action="store_true", help="Bypass local cache")
 
     args = parser.parse_args(argv)
+    logging.basicConfig(level=getattr(logging, os.environ.get("MTL_LOG_LEVEL", "INFO").upper(), logging.INFO), format="%(message)s")
 
     if args.no_cache:
         from core.fetchers.amll_index import AmllIndex
@@ -188,20 +190,14 @@ def main(argv=None):
     lrc_path = target_dir / f"{stem}.lrc"
     spl_path = target_dir / f"{stem}.spl"
 
-    content_bytes = elrc_text.encode("utf-8")
-    ok = atomic_write_many([
-        (str(lrc_path), content_bytes),
-        (str(spl_path), content_bytes),
-    ])
-
-    if ok:
-        print(f"✅ [apple-ttml] 成功交付 3 位毫秒歌词:")
-        print(f"   -> {lrc_path}")
-        print(f"   -> {spl_path}")
-        return 0
-    else:
-        print(f"❌ [apple-ttml] 歌词写盘失败")
+    try:
+        atomic_write_many({str(lrc_path): elrc_text, str(spl_path): elrc_text})
+    except OSError as exc:
+        print(f"❌ [apple-ttml] 歌词写盘失败: {exc}", file=sys.stderr)
         return 5
+
+    print(f"✅ [apple-ttml] 成功交付 3 位毫秒歌词:\n   -> {lrc_path}\n   -> {spl_path}")
+    return 0
 
 
 if __name__ == "__main__":

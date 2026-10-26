@@ -213,7 +213,8 @@ class KugouFetcher:
             parsed["source"] = "kugou"
             parsed["lyric_type"] = "word"  # Word-level verbatim
             return parsed
-        except Exception:
+        except Exception as exc:
+            logger.debug("[kugou] 解密或解析 KRC 失败: %s", exc)
             return None
 
     @classmethod

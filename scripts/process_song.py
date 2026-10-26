@@ -3,6 +3,7 @@
 
 import os
 import sys
+import logging
 import argparse
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -297,7 +298,7 @@ def prompt_demucs_fallback(
     n_lines = _singing_line_count(plain_text_lyrics)
     if not prompt_gpu_authorization("plain", n_lines, non_interactive):
         return None
-    if lang == "auto" or (lang == "zh" and plain_text_lyrics):
+    if lang == "auto":
         from core.utils.lang_detect import detect_language
         det = detect_language(
             lyrics_text=plain_text_lyrics,
@@ -429,7 +430,7 @@ def process_single_song(
             lyrics_text=initial_lyrics_text,
             title=cleaned_title,
             artist=normalized_artist,
-            audio_path=filepath,
+            audio_path=None,  # P1-22: 严禁在六源商业检索前执行音频探针，仅用文本与先验
             interactive=not non_interactive,
         )
         resolved_lang = det.get("lang", "zh")
@@ -448,7 +449,7 @@ def process_single_song(
             non_interactive=non_interactive,
             album=album,
             duration_ms=duration_ms,
-            lang=resolved_lang,
+            lang="auto" if lang_auto else resolved_lang,
         )
     else:
         print("🔍 Fetching lyrics across multi-engines (AppleTTML/Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
@@ -469,7 +470,7 @@ def process_single_song(
                 non_interactive=non_interactive,
                 album=album,
                 duration_ms=duration_ms,
-                lang=resolved_lang,
+                lang="auto" if lang_auto else resolved_lang,
             )
 
     # 3.5 专辑封面补全（R9）：默认写标签路径生效；已有封面绝不覆盖；OGG 本轮跳过。
@@ -559,6 +560,23 @@ def process_single_song(
         non_interactive=non_interactive,
         lang=resolved_lang,
     )
+    # P1-15: 打轴生成新数据结构后，再次调用 validate_and_fix_lyrics 执行时序与单调性二次确认
+    is_valid_post, validated_data, post_warnings = validate_and_fix_lyrics(
+        validated_data,
+        audio_duration_ms=duration_ms,
+        is_non_zh=is_non_zh,
+    )
+    for w in post_warnings:
+        print(f"   ℹ️ [post-enrich] {w}")
+    if not is_valid_post:
+        print(f"❌ 声学对齐后二次校验未通过，不写盘：{cleaned_title} - {normalized_artist}")
+        if update_tags and not lyrics_only:
+            _write_cleaned_metadata(
+                filepath, cleaned_title, normalized_artist, album,
+                cleaned_year, composer, lyricist,
+                cover_data=cover_bytes, cover_mime=cover_mime,
+            )
+        return False
 
     if not lyricist or not composer:
         line_text = "\n".join((l.get("text") or "") for l in validated_data.get("lines") or [])
@@ -661,6 +679,7 @@ def main():
     parser.add_argument("--lang", default="auto", choices=["auto", "zh", "yue"],
                         help="声学打轴语种分支：auto (自动检测) / zh (普通话) / yue (粤语)")
     args = parser.parse_args()
+    logging.basicConfig(level=getattr(logging, os.environ.get("MTL_LOG_LEVEL", "INFO").upper(), logging.INFO), format="%(message)s")
 
     # Apple 档总开关只在此处计算一次（A4 去重，原先单文件/目录两分支各算一遍）
     enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
@@ -709,6 +728,12 @@ def main():
                         ok = False
                     if ok:
                         success_count += 1
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except (ImportError, Exception):
+                        pass
         print(f"\nBatch processing completed: {success_count}/{count} succeeded.")
         return 0 if success_count == count else 1
     else:

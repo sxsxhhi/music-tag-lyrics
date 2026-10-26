@@ -93,3 +93,15 @@ def format_time_tag(ms: int, bracket: str = "[]", precision: int = 2) -> str:
 def apply_time_offset(timestamp_ms: int, offset_ms: int = 0) -> int:
     """Applies an offset adjustment in milliseconds, strictly clamped to >= 0."""
     return max(0, timestamp_ms + offset_ms)
+
+
+def compute_duration_axis(lines: list, body_dur_ms: int = 0) -> int:
+    """计算用于时长门禁判定的基准轴（毫秒）。
+    取非零的 body_dur_ms 与末行 end 的较小者；若均无则返回 0。
+    """
+    last_end = lines[-1].get("end", 0) if lines else 0
+    body = body_dur_ms or 0
+    if body and last_end:
+        return min(body, last_end)
+    return body or last_end or 0
+

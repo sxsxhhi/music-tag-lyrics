@@ -11,6 +11,7 @@ from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .parsers.lrc_parser import parse_lrc
+from .utils.time_utils import compute_duration_axis
 from .utils.lyric_attach import attach_translations_by_nearest
 from .utils.text_utils import (
     is_foreign_track, has_hanzi, is_instrumental_placeholder,
@@ -24,9 +25,15 @@ def candidate_has_translation(cand: Optional[Dict[str, Any]]) -> bool:
     """候选是否已自带译文（KRC 用 has_embedded_translation，LRCSHARE 用 has_translation）。"""
     if not cand:
         return False
-    if cand.get("has_embedded_translation") or cand.get("has_translation"):
-        return True
-    return any((line.get("translation") or "").strip() for line in cand.get("lines") or [])
+    lines = cand.get("lines") or []
+    if not lines:
+        return bool(cand.get("has_embedded_translation") or cand.get("has_translation"))
+    # P1-20: 译文 60% 完整率门禁（有效歌词行中至少 60% 带有非空译文才认定为自带译文）
+    non_empty_lines = [l for l in lines if (l.get("text") or "").strip()]
+    if not non_empty_lines:
+        return bool(cand.get("has_embedded_translation") or cand.get("has_translation"))
+    trans_lines = sum(1 for l in non_empty_lines if (l.get("translation") or "").strip())
+    return (trans_lines / len(non_empty_lines)) >= 0.60
 
 
 def align_translation_to_baseline(
@@ -99,7 +106,11 @@ def _rank(cand: Optional[Dict[str, Any]], is_foreign: bool) -> int:
     is_word = cand.get("lyric_type") in ("word", "verbatim") or any(
         l.get("words") for l in cand.get("lines") or []
     )
-    word = 1 if is_word else 0
+    # P1-2: 消费 match["confidence"] 区分 strict/loose
+    if is_word and cand.get("match", {}).get("confidence") == "loose":
+        word = 0
+    else:
+        word = 1 if is_word else 0
     trans = 1 if candidate_has_translation(cand) else 0
     return (trans * 2 + word) if is_foreign else (2 + word)
 
@@ -162,11 +173,11 @@ class LyricAggregator:
                     return None
                 # 六源统一时长门禁：只拒预览与冲轴
                 if duration_ms > 0:
-                    last_end = res["lines"][-1].get("end", 0)
-                    reject = parsed_duration_reject_reason(last_end, duration_ms)
+                    axis = compute_duration_axis(res.get("lines", []), res.get("duration_ms", 0))
+                    reject = parsed_duration_reject_reason(axis, duration_ms)
                     if reject:
                         reason = "预览截断" if reject == "preview" else "冲轴"
-                        print(f"   ℹ️ [{source or 'unknown'}] 丢弃候选（{reason}）：末行 {last_end}ms / 曲长 {duration_ms}ms")
+                        print(f"   ℹ️ [{source or 'unknown'}] 丢弃候选（{reason}）：基准轴 {axis}ms / 曲长 {duration_ms}ms")
                         return None
                 return res
             except Exception as exc:

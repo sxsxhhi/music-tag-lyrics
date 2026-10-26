@@ -113,8 +113,8 @@ class LrcShareFetcher:
                         cls._cached_catalog_text = cat_text.lower()
                         cls._catalog_expires_at = now + 24 * 3600
                     return token
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[lrcshare] 获取 session token 异常: %s", exc)
         return cls._cached_session_token
 
     @classmethod

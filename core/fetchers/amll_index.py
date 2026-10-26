@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """AMLL 本地索引反查：以 rawLyricFile 分组，内存建立反查表与歧义消歧。"""
 
+import re
 import json
 import time
 import logging
@@ -16,6 +17,8 @@ from ..utils.text_match import (
 )
 
 logger = logging.getLogger(__name__)
+
+ID_RE = re.compile(r"^[0-9A-Za-z_-]{1,32}$")
 
 INDEX_MIRRORS = ("gbclstudio", "gcore", "testingcf", "bikonoo", "dimeta")
 INDEX_PATH = "/am-lyrics/index.jsonl"
@@ -60,18 +63,27 @@ def build_ids_from_rows(rows: List[Dict[str, Any]]) -> Tuple[str, ...]:
     for r in rows:
         row_id = str(r.get("id") or "").strip()
         if row_id:
-            order.append(row_id)
+            if ID_RE.match(row_id):
+                order.append(row_id)
+            else:
+                logger.warning("   ⚠️ [amll_index] 丢弃非法 ID 格式: %r", row_id)
     for r in rows:
         am_ids = r.get("appleMusicId") or []
         if isinstance(am_ids, list):
             for aid in am_ids:
                 s_aid = str(aid).strip()
                 if s_aid:
-                    order.append(s_aid)
+                    if ID_RE.match(s_aid):
+                        order.append(s_aid)
+                    else:
+                        logger.warning("   ⚠️ [amll_index] 丢弃非法 ID 格式: %r", s_aid)
         elif isinstance(am_ids, (str, int)):
             s_aid = str(am_ids).strip()
             if s_aid:
-                order.append(s_aid)
+                if ID_RE.match(s_aid):
+                    order.append(s_aid)
+                else:
+                    logger.warning("   ⚠️ [amll_index] 丢弃非法 ID 格式: %r", s_aid)
 
     # 去重且截前 4
     seen = set()
@@ -85,6 +97,7 @@ def build_ids_from_rows(rows: List[Dict[str, Any]]) -> Tuple[str, ...]:
 
 class AmllIndex:
     _instance: Optional["AmllIndex"] = None
+    _last_failed_ts: float = 0.0
 
     def __init__(self, entries: List[Entry]):
         self.entries = entries
@@ -97,13 +110,21 @@ class AmllIndex:
 
     @classmethod
     def get_instance(cls) -> Optional["AmllIndex"]:
+        if cls._instance is not None:
+            return cls._instance
+        now = time.time()
+        # 60s 内存哨兵：下载失败后 60s 内不重复满载超时
+        if now - cls._last_failed_ts < 60.0:
+            return None
+        cls._instance = cls.load_or_fetch()
         if cls._instance is None:
-            cls._instance = cls.load_or_fetch()
+            cls._last_failed_ts = now
         return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
         cls._instance = None
+        cls._last_failed_ts = 0.0
 
     def _build_tables(self) -> None:
         for idx, entry in enumerate(self.entries):
@@ -297,8 +318,8 @@ class AmllIndex:
                 if len(lines) >= INDEX_MIN_LINES:
                     logger.info("下载失败但启用旧索引 (stale-while-error)")
                     return cls.parse_jsonl_content(lines)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("读取旧索引缓存异常: %s", exc)
 
         logger.info("本地索引不可用（12s 超时），将仅使用 iTunes 实时检索")
         return None

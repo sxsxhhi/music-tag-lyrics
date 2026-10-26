@@ -27,13 +27,17 @@ CANTO_DIGITS: Dict[str, str] = {
     "9": "gau",
 }
 
-# 粤语特征口语字（用于语言检测与加分）
+# 17 词 18 形核心语法虚词表（P0-2：包含繁简「諗/谂」两形，纳入高频否定词「唔」）
+CANTONESE_CORE_GRAMMAR = frozenset([
+    "嘅", "咗", "喺", "佢", "冇", "啲", "乜", "嚟",
+    "睇", "諗", "谂", "瞓", "哋", "畀", "㗎", "嘢", "啫", "唔"
+])
+
+# 粤语特征口语字（P0-2：已剔除落/点/紧/返/企/屋/埋/迟等22个国语常用字）
 CANTONESE_SLANG_CHARS = frozenset([
     "嘅", "咗", "喺", "佢", "冇", "啲", "乜", "嚟", "谂", "搵",
-    "唔", "睇", "瞓", "哋", "畀", "啱", "紧", "緊", "諗", "揾",
-    "睇", "㗎", "啰", "囉", "嘞", "喇", "嘢", "啫", "咪", "梗",
-    "掂", "掟", "撩", "揸", "掹", "氹", "拗", "嗌", "呃", "拗",
-    "返", "屋", "企", "企", "点", "點", "迟", "遲", "埋", "落",
+    "唔", "睇", "瞓", "哋", "畀", "啱", "諗", "揾",
+    "㗎", "嘢", "啫", "掟",
 ])
 
 # 粤歌书面意象 N-Gram 高频词（用于书面语粤歌路由加分）
@@ -52,6 +56,37 @@ CANTONESE_IMAGERY_WORDS = frozenset([
 _CHARS_DICT: Optional[Dict[str, List[str]]] = None
 _WORDS_DICT: Optional[Dict[str, List[str]]] = None
 _MAX_WORD_LEN: int = 4
+
+
+# P1-10: 常用二字词消歧表（过渡版，覆盖「还会/说话/还是/发财」等高频词）
+COMMON_DISAMBIGUATION_WORDS = {
+    "还会": ["waan", "wui"],
+    "還會": ["waan", "wui"],
+    "还是": ["waan", "si"],
+    "還是": ["waan", "si"],
+    "还要": ["waan", "jiu"],
+    "還要": ["waan", "jiu"],
+    "说话": ["syut", "waa"],
+    "說話": ["syut", "waa"],
+    "发财": ["faat", "coi"],
+    "發財": ["faat", "coi"],
+    "开会": ["hoi", "wui"],
+    "開會": ["hoi", "wui"],
+    "不会": ["bat", "wui"],
+    "不會": ["bat", "wui"],
+    "唔会": ["m", "wui"],
+    "唔會": ["m", "wui"],
+}
+
+# P1-10: 单字常用读音优先级调整（字典单字第一项调整为通用音）
+COMMON_SINGLE_CHAR_PRIORITY = {
+    "会": "wui",
+    "會": "wui",
+    "说": "syut",
+    "說": "syut",
+    "还": "waan",
+    "還": "waan",
+}
 
 
 def _load_dictionary_if_needed() -> None:
@@ -100,6 +135,18 @@ def _load_dictionary_if_needed() -> None:
                 words[key] = jps
                 if len(key) > max_len:
                     max_len = len(key)
+
+    # P1-10: 注入常用二字词消歧表
+    words.update(COMMON_DISAMBIGUATION_WORDS)
+    for k in COMMON_DISAMBIGUATION_WORDS:
+        if len(k) > max_len:
+            max_len = len(k)
+
+    # P1-10: 调整单字常用音到第一位
+    for ch, prio in COMMON_SINGLE_CHAR_PRIORITY.items():
+        if ch in chars and prio in chars[ch]:
+            cur_list = [p for p in chars[ch] if p != prio]
+            chars[ch] = [prio] + cur_list
 
     _CHARS_DICT = chars
     _WORDS_DICT = words
