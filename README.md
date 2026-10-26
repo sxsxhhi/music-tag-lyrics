@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-172%2F172%20Passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-177%2F177%20Passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20%7C%20OGG%20%7C%20DSF-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
@@ -35,7 +35,7 @@
 │                                music-tag-lyrics 核心能力矩阵                           │
 ├──────────────────┬──────────────────┬──────────────────┬───────────────────────────────┤
 │  🛡️ 纯原生轻量   │  🏷️ 元数据清洗   │  🖼️ 专辑封面补全 │  🌐 六级多源调度              │
-│  < 300KB 零外部  │  原地原子写入    │  3 级智能梯级    │  Apple TTML 4-origin 攒票     │
+│  约 6.0MB 自包含 │  原地原子写入    │  3 级智能梯级    │  Apple TTML 4-origin 攒票     │
 │  XOR/Zlib 自实现 │  保护用户既有    │  JPEG/PNG 魔数   │  单调等级调度，禁止降级顶替   │
 ├──────────────────┼──────────────────┼──────────────────┼───────────────────────────────┤
 │  🛑 绝不语音听写 │  🛑 绝不机械机翻 │  🎸 乐器尾奏保护 │  💎 三位一体镜像              │
@@ -44,7 +44,7 @@
 └──────────────────┴──────────────────┴──────────────────┴───────────────────────────────┘
 ```
 
-1. **🛡️ 纯原生轻量自包含架构（< 300KB · 零外部软件捆绑）**：
+1. **🛡️ 纯原生自包含轻量架构（约 6.0MB · 含离线粤拼词典 · 零外部软件捆绑）**：
    - 彻底脱耦外部闭源第三方歌词软件安装依赖，核心解密（16 字节掩码 XOR+Zlib）、XML/JSON 解析与格式转换全部采用纯 Python 原生内聚实现；
    - 用户可随时在干净环境中即开即用，技能依然 **100% 永久独立稳定运行**。
 2. **🏷️ 音频母体绝对安全与内嵌元数据清洗**：
@@ -109,7 +109,7 @@
 针对下架绝版孤品，恪守**【绝不语音听写】**红线。两条入口，精度优先：
 
 1. **有逐行、无逐字**：征求 GPU，把已有行轴作为 `line_timing_hints` 短窗；拒绝 / `--non-interactive` / GPU 失败 $\rightarrow$ `numpy` 按行合成（不是 GPU）。
-2. **五源都没有 `lines`**：先搜集权威文本（`--lyrics-file` $\rightarrow$ 五源 plain $\rightarrow$ GitHub/raw 优先再必应/DuckDuckGo $\rightarrow$ 同目录 txt），再征求 GPU。无文本红线阻断。此分支拒绝**不能** `numpy`。
+2. **六源都没有 `lines`**：先搜集权威文本（`--lyrics-file` $\rightarrow$ 网易+LRCLIB 纯文本检索 $\rightarrow$ GitHub/raw 优先再必应/DuckDuckGo $\rightarrow$ 同目录 txt），再征求 GPU。无文本红线阻断。此分支拒绝**不能** `numpy`。
 
 ```mermaid
 flowchart LR
@@ -134,7 +134,7 @@ flowchart LR
 | :---: | :---: | :---: | :---: | :---: | :---: |
 | **FLAC** | `.flac` | Vorbis Comments | `LYRICS` (Enhanced LRC) | `METADATA_BLOCK_PICTURE` | 副本改写 + 原子替换 |
 | **MP3** | `.mp3` | ID3v2.3 / ID3v2.4 | `USLT` (单帧防冲突) | `APIC` (Front Cover) | 副本改写 + 原子替换 |
-| **M4A / ALAC** | `.m4a` | MP4 iTunes Atoms | `©lyr` (Enhanced LRC) | `covr` | 副本改写 + 原子替换 |
+| **M4A / ALAC** | `.m4a`, `.mp4` | MP4 iTunes Atoms | `©lyr` (Enhanced LRC) | `covr` | 副本改写 + 原子替换 |
 | **WAV** | `.wav` | ID3 Chunk | `USLT` (Enhanced LRC) | `APIC` (Front Cover) | 副本改写 + 原子替换 |
 | **OGG / Opus** | `.ogg` | Vorbis Comments | `LYRICS` (Enhanced LRC) | *(保留既有标签)* | 副本改写 + 原子替换 |
 | **DSF** | `.dsf` | ID3v2.4 (DSD) | `USLT` (Enhanced LRC) | `APIC` (Front Cover) | 副本改写 + 原子替换 |
@@ -168,9 +168,9 @@ flowchart LR
 ```
 <!-- slide -->
 ```spl
-/* 4. Salt Player 官方 SPL 逐字标准 */
-[00:15.32](0,230)I (230,270)could (500,330)lie, (830,270)say (1100,280)I (1380,320)like (1700,330)it (2030,300)like (2330,350)that
-[00:18.45](0,350)Like (350,320)it (670,330)like (1000,400)that
+/* 4. Salt Player 官方 SPL 逐字标准 (v1.5.0 与 Enhanced LRC <mm:ss.xxx> 语法同构交付) */
+[00:15.32]<00:15.32>I <00:15.55>could <00:15.82>lie, <00:16.15>say <00:16.42>I <00:16.70>like <00:17.02>it <00:17.35>like <00:17.65>that
+[00:18.45]<00:18.45>Like <00:18.80>it <00:19.12>like <00:19.45>that
 ```
 ````
 
@@ -205,10 +205,10 @@ flowchart LR
 | 操作场景 | 推荐命令 | 说明 |
 | :--- | :--- | :--- |
 | **标准处理单曲** | `python scripts/process_song.py "song.flac"` | 原地洗标签 + 自动补封面 + 抓取逐字 + 生成 `.spl`/`.lrc` |
-| **保护既有元数据** | `python scripts/process_song.py "song.flac" --lyrics-only` | 仅更新歌词帧与补全封面，绝不覆盖用户手动维护的标签 |
+| **保护既有元数据** | `python scripts/process_song.py "song.flac" --lyrics-only` | 仅更新音频内嵌歌词帧并生成 .lrc/.spl，跳过元数据清洗与封面抓取 |
 | **纯歌词零污染** | `python scripts/process_song.py "song.flac" --no-tags` | 仅抓词生成 `.spl` 与 `.lrc`，音频文件 100% 零修改 |
 | **关闭封面抓取** | `python scripts/process_song.py "song.flac" --no-cover` | 仅治理元数据与歌词，不探测与写入封面 |
-| **递归处理曲库目录** | `python scripts/process_song.py "D:/Music/"` | 自动递归扫描全部子目录中支持的 6 类音频文件 |
+| **递归处理曲库目录** | `python scripts/process_song.py "D:/Music/"` | 自动递归扫描全部子目录中支持的 7 类音频文件（FLAC/MP3/M4A/MP4/WAV/OGG/DSF） |
 | **无人值守批跑 / CI** | `python scripts/process_song.py "D:/Music/" --non-interactive` | 遇到无逐字歌曲不弹 GPU 提示，有逐行自动合成，无逐行自动跳过 |
 | **强制 GPU 声学打轴** | `python scripts/process_song.py "song.flac" --force-gpu` | 强制调用本地 Demucs v4 剥离伴奏并进行双端能量门禁咬合 |
 | **指定外部纯文本** | `python scripts/process_song.py "song.flac" --lyrics-file "song.txt"` | 指定权威文本进行强制声学对齐（绝不听写） |
@@ -222,7 +222,7 @@ flowchart LR
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
-| [**v1.5.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.5.0) | `2026-10-26` | **粤语声学逐字对齐引擎与智能语种探测路由** | • **CantoneseCTCAligner**：原生收编粤语逐字声学对齐引擎，基于 `wav2vec2-large-xlsr-cantonese` + 729 类无调粤拼 CTC 映射桥梁，20s 窗 + 2s 交叉淡化兼顾 6GB VRAM 上限；原生 `torchaudio.functional.forced_align` Viterbi DP 动态规划实现毫秒级咬合；入声韵尾（-p/-t/-k）120ms 闭气保护；西文单词等比内插；铁律 19 零重叠硬门禁<br/>• **语种多级启发式路由探测（`lang_detect`）**：Cantopop 白名单歌手库 + 粤语经典歌词意象 N-gram 库（40+ 词条）+ 粤语方言特征字频统计 + 未剥离混合音频首窗预探；CLI 新增 `--lang auto/zh/yue` 显式控制<br/>• **离线粤拼字典（`jyutping.py`）**：内聚 30,286 字符与 165,682 词汇紧凑字典（`jyutping_dict.tsv`），自动简繁对齐，最长前缀匹配消歧多音字，阿拉伯数字音译，全离线零外部调用<br/>• **回归验证**：《焚情 - 黄凯芹》粤语实战回归 32/32 行单调全绿通过；《那么骄傲》母盘普通话双引擎回归 51/51 行零回退；离线单元测试 12 组全部全绿 | 生产级 · 粤语声学引擎升级 |
+| [**v1.5.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.5.0) | `2026-10-26` | **粤语声学逐字对齐引擎与智能语种探测路由** | • **CantoneseCTCAligner**：原生收编粤语逐字声学对齐引擎，基于 `wav2vec2-large-xlsr-cantonese` + 729 类无调粤拼 CTC 映射桥梁，20s 窗 + 2s 交叉淡化兼顾 6GB VRAM 上限；原生 `torchaudio.functional.forced_align` Viterbi DP 动态规划实现毫秒级咬合；入声韵尾（-p/-t/-k）120ms 闭气保护；西文单词等比内插；铁律 19 零重叠硬门禁<br/>• **语种多级启发式路由探测（`lang_detect`）**：Cantopop 白名单歌手库 + 粤语经典歌词意象 N-gram 库（40+ 词条）+ 粤语方言特征字频统计 + 未剥离混合音频首窗预探；CLI 新增 `--lang auto/zh/yue` 显式控制<br/>• **离线粤拼字典（`jyutping.py`）**：内聚 30,286 字符与 165,682 词汇紧凑字典（`jyutping_dict.tsv`），自动简繁对齐，最长前缀匹配消歧多音字，阿拉伯数字音译，全离线零外部调用<br/>• **回归验证**：《焚情 - 黄凯芹》粤语实战回归 32/32 行单调全绿通过；《那么骄傲》母盘普通话双引擎回归 51/51 行零回退；离线单元测试 13 组 / 177 条全部全绿 | 生产级 · 粤语声学引擎升级 |
 | [**v1.4.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.4.0) | `2026-10-25` | **声学逐字对齐引擎原生重构（双引擎混合流水线）** | • **DualEngineHybridAligner**：收编方案 4 执行件——Demucs 人声 → 行级提示窗 Stable-Whisper Token 对齐 → 44.1kHz STFT 谱流单字拆分/±60ms 瞬态吸附 → 25ms/5ms RMS 换气谷底双向锁定 → sustain 衰减门控 → 双声回音覆盖（行间 +50ms 硬门禁）<br/>• **铁律 19/20**：行间绝对单向零重叠（validator 自动缩拢含 R2 回退）；声学真逐字硬门禁（`AcousticEnvironmentError` 严进宽出，numpy 合成保留并强制标注）<br/>• **converter 链式前奏调度器**：消除标题行与署名行数学重叠；**`core/version.py` 单一版本信源**终结七处散落漏改；懒加载全程（CI 无 torch 可跑）<br/>• **回归锚**：《那么骄傲》母盘 Golden 夹具 + GPU opt-in 基线脚本；离线测试 158 条全绿 | 生产级 · 声学内核升级 |
 | [**v1.3.5**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.5) | `2026-10-25` | **酷狗专辑/Remix 门禁固化** | • **酷狗错配混音版专辑修复（补录 `6348fe2`）**：调度层此前漏传 `album` 给酷狗、同名专辑加权缺失，微小时长抖动可让混音候选逆转录音室专辑——现全链路透传 album + 同名专辑加权（+60/+30）优先于时长抖动；`REMIX_PATTERN`（remix/re-mix/混音/club·extended·radio edit/xxx mix）双向互斥接入 `matches_version_policy`（新可选参，向后兼容）<br/>• **规范固化**：SKILL.md 铁律 9 扩写 Remix 互斥与专辑加权两条；新增 e9 回归测试锁定「调度层→酷狗 album 透传」防复发（与 F1 的 UA 断言同款手法）<br/>• **去重收敛**：`candidate_rank` 与 `_krc_cand_rank` 两份相同加权实现合并为 `album_match_score` 单一出处（行为零变化）；离线测试 147 条 | 生产级稳定 |
 | [**v1.3.4**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.3.4) | `2026-10-24` | **封面 UA 回归修复 · 工程加固** | • **F1**：封面下载出口补全桌面浏览器 UA（v1.3.3 收敛到 `http_get_bytes` 时遗漏传参，商用图片 CDN 会 403 拦截脚本 UA）；`http_get_bytes` 缺省 UA 同步改 `UA_DESKTOP` 双保险<br/>• **F2**：新增 `atomic_write_bytes` 与 `http_get_bytes` 独立离线单测（二进制完整性 / 403·404·超限门禁 / UA 传递断言），离线测试 144 条全绿<br/>• **F3**：v1.3.3 重构残留死导入清理 12 处（逐符号 grep 复核；修正外部扫描对 `urllib.parse` 的误报——`search_track` 在用，保留） | 生产级稳定 |

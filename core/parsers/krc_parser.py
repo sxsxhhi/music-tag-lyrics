@@ -54,8 +54,8 @@ def extract_krc_language_translation(krc_text: str, tags: Optional[Dict[str, str
                 combined = "".join(lines)
                 if re.search(r"[\u4e00-\u9fff]", combined):
                     return lines
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger(__name__).debug("提取 KRC 内嵌翻译异常: %s", exc)
         
     return []
 

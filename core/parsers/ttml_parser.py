@@ -210,7 +210,20 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
                 "join": "space" if has_gap else "none",
             })
 
-        line_text = "".join(w["text"] for w in words).strip() if words else _TAG_RE.sub("", body).strip()
+        # P1-17: 纯译文段落幽灵行修复：若段落没有主词（words 为空），
+        # 且剩下的文本全是译文（剥离 x-translation 后无内容），
+        # 则 line_text 置空，不得拿译文作为原文文本合成假字。
+        body_no_trans = _strip_span_blocks(body, "x-translation")
+        fallback_text = _TAG_RE.sub("", body_no_trans).strip()
+        line_text = "".join(w["text"] for w in words).strip() if words else fallback_text
+
+        p_role = (p_attrs.get("ttm:role") or p_attrs.get("role") or "").lower()
+        if p_role == "x-translation":
+            if not translation:
+                translation = _TAG_RE.sub("", body).strip()
+            line_text = ""
+            words = []
+
         if not words and line_text:
             words.append({
                 "start": p_begin,
@@ -221,10 +234,12 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
                 "synthetic": True,
             })
 
-        # P1-4: 纯 x-bg 段被抽空后会剩下 text="" 与 words=[] 的幽灵行，
+        # P1-4 & P1-17: 纯 x-bg 段或纯 x-translation 段被抽空后会剩下 text="" 与 words=[] 的幽灵行，
         # 它会占 len(lines) 计数（影响 30% 译文阈值与纯音乐占位判断），
-        # 还可能成为 lines[-1] 影响 Outro 判定。直接跳过。
+        # 还可能成为 lines[-1] 影响 Outro 判定。若存在 translation 则尝试附着到前一行，随后跳过。
         if not line_text and not words:
+            if translation and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
+                lines[-1]["translation"] = translation
             continue
 
         lines.append({

@@ -52,6 +52,7 @@ class ITunesClient:
         self.bucket = TokenBucket()
         self.cooldown_until: float = 0.0
         self._bucket_warn_at: float = -1000.0
+        self._consecutive_429: int = 0
         self.cache: Dict[str, Any] = {}
         self._load_cache()
 
@@ -70,12 +71,22 @@ class ITunesClient:
         if cache_file.is_file():
             try:
                 self.cache = json.loads(cache_file.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as exc:
+                logger.debug("读取本地 itunes-cache 异常: %s", exc)
                 self.cache = {}
 
     def _save_cache(self) -> None:
         cache_file = get_cache_path("itunes-cache.json")
         try:
+            if cache_file.is_file():
+                try:
+                    on_disk = json.loads(cache_file.read_text(encoding="utf-8"))
+                    if isinstance(on_disk, dict):
+                        on_disk.update(self.cache)
+                        self.cache = on_disk
+                except Exception as exc:
+                    logger.debug("读取本地 itunes-cache 合并异常: %s", exc)
+
             if len(self.cache) > MAX_CACHE_ENTRIES:
                 # 剔除最旧的 10%
                 sorted_items = sorted(
@@ -95,7 +106,8 @@ class ITunesClient:
         """执行受限流与冷却保护的 HTTP 请求。"""
         now = time.perf_counter()
         if now < self.cooldown_until:
-            logger.info("iTunes 客户端处于 429 冷却中，直接跳过")
+            rem = int(self.cooldown_until - now)
+            logger.warning("   ⚠️ [itunes] iTunes 客户端处于 429 冷却中（剩余 %ds），跳过请求", rem)
             return None
 
         if not self.bucket.consume():
@@ -110,16 +122,22 @@ class ITunesClient:
 
         res = http.http_get_text_ex(url, timeout=3.0)
         if res.status == 429:
-            self.cooldown_until = time.perf_counter() + COOLDOWN_SEC
-            logger.warning("iTunes 返回 429，激活 90s 冷却，后续请求直接跳过")
+            self._consecutive_429 += 1
+            backoff_sec = min(300.0, COOLDOWN_SEC * (2 ** (self._consecutive_429 - 1)))
+            self.cooldown_until = time.perf_counter() + backoff_sec
+            logger.warning("   ⚠️ [itunes] iTunes 返回 429，激活 %.0fs 指数退避冷却，后续请求直接跳过", backoff_sec)
             return None
+
+        if res.status == 200:
+            self._consecutive_429 = 0
 
         if res.status != 200 or not res.text:
             return None
 
         try:
             return json.loads(res.text)
-        except Exception:
+        except Exception as exc:
+            logger.debug("iTunes 返回非 JSON 响应: %s", exc)
             return None
 
     def lookup_durations(self, apple_ids: List[str], is_zh: bool = True) -> Dict[str, int]:

@@ -2,7 +2,10 @@
 """把统一歌词结构导出为 Enhanced LRC；to_lrc 直接委托 to_spl。"""
 
 import re
+import logging
 from typing import Dict, Any, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from .utils.time_utils import format_time_tag
 from scripts.lyric_validator import is_credit_line
@@ -232,7 +235,14 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
             
         # Word-level verbatim line (Standard Enhanced LRC format)
         if words:
-            output_lines.append(format_verbatim_words_line(words, start_ms, end_ms, _precision))
+            # 逐字文本与行文本一致性校验（P0-4 绝对红线守护：过滤全部空白抖动，中英文标点与字词 100% 严密守护）
+            joined_words_text = re.sub(r'\s+', '', "".join(w.get("text", "") for w in words))
+            clean_line_text = re.sub(r'\s+', '', line_text)
+            if joined_words_text != clean_line_text:
+                logger.warning("   ⚠️ [converter] 逐字字面与行文本不一致，降级为行级输出: %r vs %r", joined_words_text, clean_line_text)
+                output_lines.append(f"{format_time_tag(start_ms, '[]', _precision)}{line_text}")
+            else:
+                output_lines.append(format_verbatim_words_line(words, start_ms, end_ms, _precision))
         else:
             output_lines.append(f"{format_time_tag(start_ms, '[]', _precision)}{line_text}")
 

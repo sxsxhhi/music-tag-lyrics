@@ -17,7 +17,11 @@ from __future__ import annotations
 
 import os
 import re
+import logging
+import unicodedata
 from typing import List, Dict, Any, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -136,11 +140,16 @@ def align_line_to_words(line_text: str, start_ms: int, duration_ms: int) -> List
 
     total_weight = sum(weights) or 1.0
 
+    raw_durs = [max(60, int((weights[i] / total_weight) * duration_ms)) for i in range(len(units))]
+    tot_d = sum(raw_durs)
+    if tot_d > duration_ms and duration_ms >= len(units) * 20:
+        scale = duration_ms / tot_d
+        raw_durs = [max(20, int(d * scale)) for d in raw_durs]
+
     words = []
     current_ms = start_ms
     for i, u in enumerate(units):
-        allocated_dur = int((weights[i] / total_weight) * duration_ms)
-        allocated_dur = max(60, allocated_dur)
+        allocated_dur = raw_durs[i]
         w_end = current_ms + allocated_dur
 
         words.append({
@@ -150,6 +159,11 @@ def align_line_to_words(line_text: str, start_ms: int, duration_ms: int) -> List
             "text": u
         })
         current_ms = w_end
+
+    if words and duration_ms > 0:
+        if words[-1]["end"] > start_ms + duration_ms:
+            words[-1]["end"] = max(words[-1]["start"] + 20, start_ms + duration_ms)
+            words[-1]["duration"] = words[-1]["end"] - words[-1]["start"]
 
     return words
 
@@ -162,7 +176,7 @@ def enrich_track_with_acoustic_words(data: Dict[str, Any]) -> Dict[str, Any]:
     按字符均分出来的伪逐字，会污染整条时间轴。
     """
     lines = data.get("lines", [])
-    for line in lines:
+    for idx, line in enumerate(lines):
         if not line.get("words") and line.get("text"):
             text = line["text"]
             # 来源/署名行不参与合成。译文行应由 validator 先剥离到 translation；
@@ -171,8 +185,18 @@ def enrich_track_with_acoustic_words(data: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             start = line.get("start", 0)
             duration = line.get("duration", 3000)
+            # P1-13: 严格受限于下一行起点（预留 50ms 间隙），消除重叠
+            if idx + 1 < len(lines):
+                next_start = lines[idx + 1].get("start")
+                if next_start is not None and next_start > start:
+                    duration = min(duration, max(100, next_start - 50 - start))
             line["words"] = align_line_to_words(text, start, duration)
             if line["words"]:
+                if idx + 1 < len(lines):
+                    next_start = lines[idx + 1].get("start")
+                    if next_start is not None and next_start > start:
+                        line["words"][-1]["end"] = min(line["words"][-1]["end"], next_start - 50)
+                        line["words"][-1]["duration"] = max(20, line["words"][-1]["end"] - line["words"][-1]["start"])
                 line["end"] = line["words"][-1]["end"]
     return data
 
@@ -360,6 +384,244 @@ _NO_HINT_ADVANCE_S = 2.0       # 无提示失败前移步长
 _NO_HINT_MAX_ADV = 12          # 无提示最多前移次数
 
 
+# ==========================================
+# 2.5 P0-4 & P1-25 权威歌词弹性回填与标点吸收
+# ==========================================
+
+def _is_cjk(ch: str) -> bool:
+    """判定是否为中日韩文字（CJK 汉字、平/片假名、长音符、谚文）。"""
+    c = ord(ch)
+    return (0x4E00 <= c <= 0x9FFF or   # CJK 统一表意文字
+            0x3400 <= c <= 0x4DBF or   # CJK 扩展 A
+            0x3040 <= c <= 0x309F or   # 日文平假名
+            0x30A0 <= c <= 0x30FF or   # 日文片假名（含长音符 \u30fc「ー」）
+            0xAC00 <= c <= 0xD7AF)     # 韩文谚文音节
+
+
+def _is_word_char(ch: str) -> bool:
+    """判定是否为连续成词字符（ASCII英数、带音标西欧拉丁字母、全角英数、连字符与所有格）。
+
+    CJK 字符一律排除，确保中日韩永远保持单字粒度；
+    拉丁扩展与全角英数整词保留，避免 Whisper 输出整词时发生粒度失配。
+    """
+    if ch in "'-":
+        return True
+    norm = unicodedata.normalize('NFKC', ch)
+    if _is_cjk(ch) or _is_cjk(norm):
+        return False
+    cat = unicodedata.category(norm)
+    return cat.startswith(('L', 'N'))
+
+
+def split_orig_tokens(text: str) -> Tuple[List[str], List[str]]:
+    """原词分词（v8）：返回 (match_tokens, out_tokens)。
+
+    · match_tokens：NFKC 归一后的纯文本单元，用于与 Whisper 逐单元比较
+                    （CJK 单字 / 拉丁及全角整词），不含空白；
+    · out_tokens  ：原始字符的同样单元，把其后的空白尾附到末尾，用于输出。
+
+    两者一一对应、长度相等，且 "".join(out_tokens) == text 严格成立
+    （行首空白并入首个单元，行尾空白并入末个单元）。
+    归一只作用于比较侧，输出侧保留原文，因此既能让 LCS 与 Whisper 的半角输出逐词相等，
+    又不会破坏 P1-25 的 "".join(w["text"]) == line_text 等式。
+    """
+    match_tokens: List[str] = []
+    out_tokens: List[str] = []
+    i, n = 0, len(text)
+    lead = ""
+    while i < n:
+        ch = text[i]
+        if ch.isspace():
+            if out_tokens:
+                out_tokens[-1] += ch
+            else:
+                lead += ch
+            i += 1
+            continue
+        if _is_word_char(ch):
+            st = i
+            while i < n and _is_word_char(text[i]):
+                i += 1
+            tok = text[st:i]
+        else:
+            tok = ch
+            i += 1
+        # v8：match_tokens 必须做 NFKC 归一，才能与 Whisper 的半角输出逐词相等。
+        match_tokens.append(unicodedata.normalize("NFKC", tok))
+        out_tokens.append(lead + tok)
+        lead = ""
+    return match_tokens, out_tokens
+
+
+def _linear_split_from_orig(orig_tokens: List[str], line_start_s: float, line_end_s: float) -> List[Dict[str, Any]]:
+    """以权威原词为准进行线性时间均分保底，绝不回吐 Whisper 改写字。"""
+    n = len(orig_tokens)
+    if n == 0:
+        return []
+    dur = max(0.001, line_end_s - line_start_s) / n
+    return [{
+        "char": t,
+        "start": line_start_s + i * dur,
+        "end": line_start_s + (i + 1) * dur
+    } for i, t in enumerate(orig_tokens)]
+
+
+def align_orig_text_to_char_spans(
+    orig_text: str,
+    expanded_chars: List[Dict[str, Any]],
+    line_start_s: float,
+    line_end_s: float
+) -> List[Dict[str, Any]]:
+    """以原始歌词文本为基准，将 Whisper 时间跨度弹性内插回填（只借时间，不改字）。"""
+    O_tokens, O_out = split_orig_tokens(orig_text)
+    W_tokens = [w for w in expanded_chars if not w.get("char", "").isspace()]
+    if not O_tokens or not W_tokens:
+        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+
+    M, N = len(O_tokens), len(W_tokens)
+    # 0. 可行性前置守卫（v6）：与调用方 _MIN_CHAR_S = 0.060（acoustic_aligner.py:353）同口径。
+    if M * _MIN_CHAR_S > (line_end_s - line_start_s):
+        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+
+    # 1. Needleman-Wunsch / LCS 字符单调动态规划匹配
+    dp = [[0] * (N + 1) for _ in range(M + 1)]
+    for i in range(1, M + 1):
+        for j in range(1, N + 1):
+            if O_tokens[i - 1] == W_tokens[j - 1]["char"]:
+                dp[i][j] = dp[i - 1][j - 1] + 2
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    # 2. 回溯生成一对一锚点映射
+    i, j = M, N
+    match_pairs = []
+    while i > 0 and j > 0:
+        if O_tokens[i - 1] == W_tokens[j - 1]["char"]:
+            match_pairs.append((i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    match_pairs.reverse()
+
+    # 匹配字数过少（< 35%）说明语音与文本脱节，使用原词线性保底，绝不泄露 Whisper 改写字
+    if len(match_pairs) / max(1, M) < 0.35:
+        return _linear_split_from_orig(O_out, line_start_s, line_end_s)
+
+    # 3. 构建结果，填充锚点（用 O_out：空白尾附，保证逐字拼接可无损还原原文）
+    result = [{"char": O_out[k], "start": None, "end": None} for k in range(M)]
+    for o_idx, w_idx in match_pairs:
+        result[o_idx]["start"] = W_tokens[w_idx]["start"]
+        result[o_idx]["end"] = W_tokens[w_idx]["end"]
+
+    # 4. 双向内插
+    # 4.1 首部未匹配字（带 step=0 保护）
+    first_m = match_pairs[0][0]
+    if first_m > 0:
+        anchor_st = result[first_m]["start"]
+        st_bound = max(line_start_s, anchor_st - first_m * 0.180)
+        dur_span = anchor_st - st_bound
+        if dur_span <= _MIN_CHAR_S:
+            for k in range(first_m):
+                result[k]["start"] = max(line_start_s, anchor_st - (first_m - k) * _MIN_CHAR_S)
+                result[k]["end"] = max(line_start_s + 0.020, anchor_st - (first_m - k - 1) * _MIN_CHAR_S)
+        else:
+            step = dur_span / first_m
+            for k in range(first_m):
+                result[k]["start"] = st_bound + k * step
+                result[k]["end"] = st_bound + (k + 1) * step
+
+    # 4.2 中间未匹配字均分 gap
+    for p in range(len(match_pairs) - 1):
+        idx1, idx2 = match_pairs[p][0], match_pairs[p + 1][0]
+        gap = idx2 - idx1 - 1
+        if gap > 0:
+            gap_st = result[idx1]["end"]
+            gap_ed = result[idx2]["start"]
+            min_need = gap * _MIN_CHAR_S
+            if gap_ed < gap_st + min_need:
+                gap_ed = gap_st + min_need
+                result[idx2]["start"] = gap_ed
+            step = (gap_ed - gap_st) / gap
+            for k in range(1, gap + 1):
+                result[idx1 + k]["start"] = gap_st + (k - 1) * step
+                result[idx1 + k]["end"] = gap_st + k * step
+
+    # 4.3 尾部未匹配字
+    last_m = match_pairs[-1][0]
+    if last_m < M - 1:
+        tail_count = M - 1 - last_m
+        tail_st = result[last_m]["end"]
+        ed_bound = min(line_end_s, tail_st + tail_count * 0.220)
+        step = max(_MIN_CHAR_S, (ed_bound - tail_st) / max(1, tail_count))
+        for k in range(1, tail_count + 1):
+            result[last_m + k]["start"] = tail_st + (k - 1) * step
+            result[last_m + k]["end"] = tail_st + k * step
+
+    # 5. 正向单调性保证（统一用 _MIN_CHAR_S = 60ms，与调用方 6.4 同口径）
+    for k in range(M - 1):
+        if result[k + 1]["start"] < result[k]["start"] + _MIN_CHAR_S:
+            result[k + 1]["start"] = result[k]["start"] + _MIN_CHAR_S
+        result[k]["end"] = result[k + 1]["start"]
+    result[-1]["end"] = max(result[-1]["start"] + _MIN_CHAR_S, result[-1]["end"])
+
+    # 6. 反向行尾终钳（彻底消除越行违规）
+    result[-1]["end"] = min(line_end_s, result[-1]["end"])
+    result[-1]["start"] = min(result[-1]["start"], result[-1]["end"] - _MIN_CHAR_S)
+    for k in range(M - 2, -1, -1):
+        if result[k]["end"] > result[k + 1]["start"]:
+            result[k]["end"] = result[k + 1]["start"]
+        if result[k]["start"] > result[k]["end"] - _MIN_CHAR_S:
+            result[k]["start"] = max(line_start_s, result[k]["end"] - _MIN_CHAR_S)
+
+    return result
+
+
+def absorb_punctuation_tokens(words: List[Dict[str, Any]], line_text: str = "") -> List[Dict[str, Any]]:
+    """P1-25: 标点符号吸收合并至前字（双路径同步实施）。
+
+    标点符号（，。！？、；：“”‘’（）《》〈〉【】『』「」,.!?;:()[]\"'~…—～ 等）不单独占位、不独立成字。
+    将行内标点字符直接并入前一个文字的 text 字段末尾；行首标点并入首字前端。
+    保证 "".join(w["text"] for w in words) == line_text 严格成立。
+    """
+    if not words:
+        return []
+
+    def _is_pure_punct(text: str) -> bool:
+        for ch in text:
+            if ch.isspace():
+                continue
+            if _is_cjk(ch) or _is_word_char(ch) or ch.isdigit():
+                return False
+        return True
+
+    merged: List[Dict[str, Any]] = []
+    leading_punct = ""
+    for w in words:
+        txt = w.get("text", "")
+        if _is_pure_punct(txt):
+            if merged:
+                merged[-1]["text"] += txt
+                if w.get("end") and (not merged[-1].get("end") or w["end"] > merged[-1]["end"]):
+                    merged[-1]["end"] = w["end"]
+                if "duration" in merged[-1] and merged[-1].get("end") is not None and merged[-1].get("start") is not None:
+                    merged[-1]["duration"] = max(0, merged[-1]["end"] - merged[-1]["start"])
+            else:
+                leading_punct += txt
+        else:
+            w_item = dict(w)
+            if leading_punct:
+                w_item["text"] = leading_punct + w_item["text"]
+                leading_punct = ""
+            merged.append(w_item)
+
+    if not merged and leading_punct:
+        return words
+    return merged
+
+
 class DualEngineHybridAligner:
     """方案 4 双引擎混合声学逐字流水线（v1.4.0 原生收编）。
 
@@ -479,7 +741,7 @@ class DualEngineHybridAligner:
         cursor = 0.0
         for i, text in enumerate(clean_lines):
             n_chars = len(text.replace(" ", ""))
-            if hints:
+            if hints and i < len(hints):
                 hint = hints[i][0]
                 next_hint = hints[i + 1][0] if i + 1 < len(hints) else hint + 8.0
                 ladder = [(max(0.0, hint - _HINT_PAD_BEFORE), min(total_len, next_hint + _HINT_PAD_AFTER))]
@@ -508,7 +770,7 @@ class DualEngineHybridAligner:
                     break
             if got is None:
                 print(f"   ⚠️ [DualEngine] 行 {i+1} 未对齐（保留行级）：{text}")
-                hint_t = hints[i][0] if hints else cursor
+                hint_t = hints[i][0] if (hints and i < len(hints)) else cursor
                 raw_lines_data.append({
                     "text": text, "words": [],
                     "raw_start": hint_t, "raw_end": min(total_len, hint_t + max(2.0, n_chars * 0.4)),
@@ -530,6 +792,8 @@ class DualEngineHybridAligner:
         # （执行件 test_valley_alignment 隐性依赖干净 raw 值，此处显式化）。
         if hints:
             for i, item in enumerate(raw_lines_data):
+                if i >= len(hints):
+                    break
                 hint = hints[i][0]
                 next_hint = hints[i + 1][0] if i + 1 < len(hints) else hint + 8.0
                 rs = hint + min(max(item["raw_start"] - hint, -0.8), 0.5)
@@ -554,7 +818,7 @@ class DualEngineHybridAligner:
         for i in range(n - 1):
             # 谷底搜索窗：hint 模式锚定在下一行提示（呼吸谷底物理上就在下一行开嗓前），
             # 彻底与 whisper 原始值漂移解耦；桥段/和声回音行的早于提示起唱天然覆盖。
-            if hints:
+            if hints and i + 1 < len(hints):
                 hn = hints[i + 1][0]
                 win_end_prev = max(0.0, hn - 1.10)
                 win_start_next = min(total_len, hn + 0.25)
@@ -585,16 +849,25 @@ class DualEngineHybridAligner:
                                      "text": text, "words": []})
                 continue
 
-            # 6.1 字展开：1 字原样；2 字谱流权威切分；≥3 字均分（执行件口径）
-            #     raw words 的 s/e 为切片相对时间，_slice_st 换算为绝对时间
             chars = self._expand_chars(item, v_mono, sr)
+            if not chars:
+                st_ms = int(line_st_bound * 1000)
+                ed_ms = int(line_ed_bound * 1000)
+                output_lines.append({
+                    "start": st_ms,
+                    "end": ed_ms,
+                    "duration": max(300, ed_ms - st_ms),
+                    "text": text,
+                    "words": []
+                })
+                continue
 
             # 6.2 字时间钳入行界。权威顺序（v1.4.0 定案）：谷底物理边界 > whisper。
             #     谷底窗已提示锚定（物理有界，无级联风险），行起点完全交由谷底行使——
             #     和声回音行早于提示网格起唱（golden 实测提前 0.5~0.9s）由谷底自然表达。
             lo = line_st_bound
             hi_end = line_ed_bound
-            if hints:
+            if hints and i < len(hints):
                 hint_i = hints[i][0]
                 hint_next = hints[i + 1][0] if i + 1 < len(hints) else total_len
                 hi_end = min(hi_end, hint_next - _LINE_GAP_MS / 1000.0)
@@ -609,7 +882,7 @@ class DualEngineHybridAligner:
             cal_st = AcousticAligner.find_onset_backward(
                 v_mono, sr, chars[0]["end"], chars[0]["start"],
                 prev_line_end_s=prev_end_s)
-            if hints:
+            if hints and i < len(hints):
                 cal_st = min(max(cal_st, hints[i][0] - 1.2), hints[i][0] + 0.35)
                 cal_st = max(cal_st, lo)
             else:
@@ -633,17 +906,20 @@ class DualEngineHybridAligner:
 
             line_start = chars[0]["start"]
             line_end = chars[-1]["end"]
+            raw_words = [{
+                "text": c["char"],
+                "start": int(c["start"] * 1000),
+                "end": int(c["end"] * 1000),
+                "duration": max(_MIN_WORD_MS // 2, int((c["end"] - c["start"]) * 1000)),
+            } for c in chars]
+            # P1-25: 标点符号吸收合并至前字（双路径同步实施）
+            merged_words = absorb_punctuation_tokens(raw_words, text)
             output_lines.append({
                 "start": int(line_start * 1000),
                 "end": int(line_end * 1000),
                 "duration": max(_MIN_WORD_MS, int((line_end - line_start) * 1000)),
                 "text": text,
-                "words": [{
-                    "text": c["char"],
-                    "start": int(c["start"] * 1000),
-                    "end": int(c["end"] * 1000),
-                    "duration": max(_MIN_WORD_MS // 2, int((c["end"] - c["start"]) * 1000)),
-                } for c in chars],
+                "words": merged_words,
             })
 
         # 7. 终局钳制：行间零重叠（铁律 19）——绝对间隙优先，不设任何制造重叠的地板
@@ -684,31 +960,36 @@ class DualEngineHybridAligner:
         """
         slice_st = item.get("_slice_st", 0.0)
         chars: List[Dict[str, Any]] = []
-        for w in item["words"]:
+        for w in item.get("words", []):
             wt = w["t"]
             w_st = slice_st + w["s"]
             w_ed = slice_st + w["e"]
             dur = max(0.05, w_ed - w_st)
             if len(wt) == 1:
                 chars.append({"char": wt, "start": w_st, "end": w_ed})
-            elif len(wt) == 2:
+            elif len(wt) == 2 and not all(_is_word_char(c) for c in wt):
                 i_st = int(w_st * sr)
                 i_ed = int(w_ed * sr)
-                split_rel = spectral_flux_split_time(v_mono[i_st:i_ed], sr)
+                split_rel = spectral_flux_split_time(v_mono[i_st:i_ed], sr) if np is not None else None
                 split_t = w_st + split_rel if split_rel is not None else w_st + dur / 2
                 chars.append({"char": wt[0], "start": w_st, "end": split_t})
                 chars.append({"char": wt[1], "start": split_t, "end": w_ed})
+            elif all(_is_word_char(c) for c in wt):
+                # P1-12: ASCII / 拉丁英文单词整词保留，不拆分为单个字母
+                chars.append({"char": wt, "start": w_st, "end": w_ed})
             else:
                 step = dur / len(wt)
                 for k, c in enumerate(wt):
                     chars.append({"char": c, "start": w_st + k * step, "end": w_st + (k + 1) * step})
-        # 文本完整性自检（执行件同款 assert 语义，软化为告警防整轮报废）
-        joined = "".join(c["char"] for c in chars)
-        if joined != item["text"]:
-            import logging
-            logging.getLogger(__name__).warning(
-                "DualEngine 字序列与行文本不一致（%r vs %r），保留 whisper 原始序列", joined, item["text"])
-        return chars
+
+        # P0-4 & P3-4: 弹性时间回填（只借时间，不改字）。以原词为基准回填，绝不输出 Whisper 改写字
+        orig_text = item.get("text", "")
+        line_start_s = slice_st
+        line_end_s = slice_st + item.get("duration", 0.0)
+        if chars:
+            line_start_s = min(item.get("raw_start", chars[0]["start"]), chars[0]["start"])
+            line_end_s = max(item.get("raw_end", chars[-1]["end"]), chars[-1]["end"])
+        return align_orig_text_to_char_spans(orig_text, chars, line_start_s, line_end_s)
 
 
 # ==========================================
@@ -790,13 +1071,32 @@ class AcousticAligner:
         from demucs.apply import apply_model
 
         demucs_model, _, device = cls.get_models(device)
-        wav, sr = sf.read(audio_path, dtype='float32')
-        if len(wav.shape) == 1:
-            wav = np.repeat(wav[:, None], 2, axis=1)
-        elif wav.shape[1] == 1:
-            wav = np.repeat(wav, 2, axis=1)
+        ext = os.path.splitext(audio_path)[1].lower()
+        if ext in (".m4a", ".mp4", ".dsf"):
+            wav_t, sr = torchaudio.load(audio_path)
+            wav_t = wav_t.to(torch.float32)
+            if wav_t.shape[0] == 1:
+                wav_t = wav_t.repeat(2, 1)
+            elif wav_t.shape[0] > 2:
+                wav_t = wav_t[:2, :]
+            wav_t = wav_t.unsqueeze(0)
+        else:
+            try:
+                wav, sr = sf.read(audio_path, dtype='float32')
+                if len(wav.shape) == 1:
+                    wav = np.repeat(wav[:, None], 2, axis=1)
+                elif wav.shape[1] == 1:
+                    wav = np.repeat(wav, 2, axis=1)
+                wav_t = torch.from_numpy(wav).t().unsqueeze(0)
+            except Exception:
+                wav_t, sr = torchaudio.load(audio_path)
+                wav_t = wav_t.to(torch.float32)
+                if wav_t.shape[0] == 1:
+                    wav_t = wav_t.repeat(2, 1)
+                elif wav_t.shape[0] > 2:
+                    wav_t = wav_t[:2, :]
+                wav_t = wav_t.unsqueeze(0)
 
-        wav_t = torch.from_numpy(wav).t().unsqueeze(0)
         target_sr = getattr(demucs_model, 'samplerate', 44100)
         if sr != target_sr:
             wav_t = torchaudio.functional.resample(wav_t, sr, target_sr)
@@ -853,53 +1153,6 @@ class AcousticAligner:
                 break
 
         return round(max(search_start, min(word_end_s - 0.1, onset_t)), 2)
-
-    @classmethod
-    def find_offset_forward(
-        cls,
-        v_mono: "np.ndarray",
-        sr: int,
-        last_word_start_s: float,
-        orig_end_s: float,
-        next_line_start_s: Optional[float] = None
-    ) -> float:
-        """
-        Line-Tail Offset Gate: Scans forward in vocals.mono with 20ms step to detect falling edge (RMS < 0.015).
-        （铁律 12 口径：0.015 保持不变——R1 已把 0.020 划归行间谷底场景）
-        """
-        max_search_end = max(last_word_start_s + 0.35, min(orig_end_s + 0.35, last_word_start_s + 2.5))
-        if next_line_start_s:
-            max_search_end = min(max_search_end, next_line_start_s - 0.05)
-
-        st_idx = int(last_word_start_s * sr)
-        ed_idx = int(max_search_end * sr)
-        if st_idx >= ed_idx:
-            return round(last_word_start_s + 0.25, 2)
-
-        audio_slice = v_mono[st_idx:ed_idx]
-        win_len = int(0.04 * sr)
-        step_len = int(0.02 * sr)
-
-        offset_t = orig_end_s
-        consecutive_low = 0
-        found = False
-        for cur_idx in range(0, len(audio_slice) - win_len, step_len):
-            chunk = audio_slice[cur_idx:cur_idx + win_len]
-            rms = np.sqrt(np.mean(chunk**2))
-            t = last_word_start_s + cur_idx / sr
-            if rms < 0.015:
-                consecutive_low += 1
-                if consecutive_low >= 2 and (t - last_word_start_s) >= 0.18:
-                    offset_t = t - 0.04
-                    found = True
-                    break
-            else:
-                consecutive_low = 0
-
-        if not found:
-            offset_t = min(orig_end_s, max_search_end)
-
-        return round(max(last_word_start_s + 0.18, min(max_search_end, offset_t)), 2)
 
     @classmethod
     def align_lyrics(

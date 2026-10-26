@@ -13,7 +13,7 @@ import os
 import re
 from typing import Dict, Any, Optional
 
-from .jyutping import is_cantonese_slang, CANTONESE_IMAGERY_WORDS
+from .jyutping import is_cantonese_slang, CANTONESE_SLANG_CHARS, CANTONESE_CORE_GRAMMAR, CANTONESE_IMAGERY_WORDS
 
 # 典型粤语/Cantopop 歌手白名单（强先验）
 CANTOPOP_ARTISTS = frozenset([
@@ -127,12 +127,35 @@ def probe_audio_cantonese_confidence(
             device = "cpu"
         model.eval()
 
-        info = sf.info(audio_path)
-        sr = info.samplerate
-        read_frames = int(min(probe_seconds, info.duration) * sr)
-        data, _ = sf.read(audio_path, frames=read_frames, dtype="float32")
-        if data.ndim > 1:
-            data = data.mean(axis=1)
+        ext = os.path.splitext(audio_path)[1].lower()
+        if ext in (".m4a", ".mp4", ".dsf"):
+            import torchaudio
+            waveform, sr = torchaudio.load(audio_path)
+            max_frames = int(min(probe_seconds * sr, waveform.shape[1]))
+            waveform = waveform[:, :max_frames]
+            if waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0)
+            else:
+                waveform = waveform.squeeze(0)
+            data = waveform.cpu().numpy()
+        else:
+            try:
+                info = sf.info(audio_path)
+                sr = info.samplerate
+                read_frames = int(min(probe_seconds, info.duration) * sr)
+                data, _ = sf.read(audio_path, frames=read_frames, dtype="float32")
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+            except Exception:
+                import torchaudio
+                waveform, sr = torchaudio.load(audio_path)
+                max_frames = int(min(probe_seconds * sr, waveform.shape[1]))
+                waveform = waveform[:, :max_frames]
+                if waveform.shape[0] > 1:
+                    waveform = waveform.mean(dim=0)
+                else:
+                    waveform = waveform.squeeze(0)
+                data = waveform.cpu().numpy()
 
         if sr != 16000:
             resampler = T.Resample(sr, 16000)
@@ -213,13 +236,19 @@ def detect_language(
         canto_score += 0.40
         details["artist_matched"] = True
 
-    # 2. 歌词口语字命中（仅加分，海阔天空等书面歌命中率为 0 不扣分）
+    # 2. 歌词口语字命中（P0-2：双门限复合判定，杜绝国语常用字误判）
+    core_matches = sum(1 for ch in lyrics_text if ch in CANTONESE_CORE_GRAMMAR)
+    details["core_slang_count"] = core_matches
     slang_matches = sum(1 for ch in lyrics_text if is_cantonese_slang(ch))
     details["slang_count"] = slang_matches
-    if slang_matches >= 2:
+    text_len = max(1, len(lyrics_text))
+    core_ratio = core_matches / text_len
+
+    # 门禁：core >= 3 恒高置信；core == 2 时要求占比 >= 0.01（杜绝长国语歌偶发误判）
+    if core_matches >= 3 or (core_matches >= 2 and core_ratio >= 0.01):
         canto_score += 0.50
-    elif slang_matches >= 1:
-        canto_score += 0.30
+    elif core_matches >= 1 and core_ratio >= 0.02:
+        canto_score += 0.25
 
     # 3. 粤歌书面意象词命中（解决书面粤语歌盲区）
     full_text = f"{title} {lyrics_text}"
@@ -238,7 +267,7 @@ def detect_language(
         details["audio_probe_conf"] = round(probe_conf, 3)
         if probe_conf >= 0.35:
             canto_score += 0.50
-        elif probe_conf < 0.15 and canto_score < 0.40:
+        elif probe_conf > 0.0 and probe_conf < 0.15 and canto_score < 0.40:
             canto_score = max(0.0, canto_score - 0.15)
 
     confidence = min(1.0, max(0.0, canto_score))

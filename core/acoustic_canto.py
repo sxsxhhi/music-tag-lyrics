@@ -12,7 +12,10 @@
 from __future__ import annotations
 
 import os
+import logging
 from typing import List, Dict, Any, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -21,6 +24,7 @@ except ImportError:
 
 from .utils.jyutping import to_jyutping, text_to_jyutping_tokens
 from .utils.text_utils import is_source_or_credit_line
+from .acoustic_aligner import absorb_punctuation_tokens
 
 # 入声字韵尾集合（-p, -t, -k）
 ENTERING_TONE_ENDINGS = ("p", "t", "k")
@@ -31,6 +35,100 @@ _MIN_CHAR_S = 0.060
 _RELEASE_THRESH = 0.020
 _MIN_SILENT_MS = 60
 _ENTERING_TONE_SILENT_MS = 120  # 入声字闭气截断容错
+
+
+def reconstruct_target_spans(
+    aligned_tokens_1d: "torch.Tensor",
+    scores_1d: "torch.Tensor",
+    target_syllable_ids: List[int]
+) -> List[Optional[Dict[str, Any]]]:
+    """从帧级路径中严格还原每个 target 音节的时间与分数，支持连续叠字切分（P1-21）。"""
+    raw_tokens = aligned_tokens_1d.tolist()
+    raw_scores = scores_1d.tolist()
+    T = len(raw_tokens)
+
+    # 1. 把帧路径压缩为 run 列表，blank(0) 仅作分隔，不作为有效 run
+    runs = []
+    f = 0
+    while f < T:
+        tk = raw_tokens[f]
+        if tk == 0:
+            f += 1
+            continue
+        st = f
+        while f < T and raw_tokens[f] == tk:
+            f += 1
+        runs.append((tk, st, f))
+
+    def build_span(s_frame: float, e_frame: float) -> Dict[str, Any]:
+        # v7：在唯一出口统一钳位，任何调用路径都不得产出 [0, T] 之外的帧区间。
+        # 极值保护：T <= 0 时直接安全返回
+        if T <= 0:
+            return {"start": 0.0, "end": 0.0, "score": 0.0}
+        s_frame = max(0.0, min(float(T - 1), s_frame))
+        e_frame = max(s_frame + 1.0, min(float(T), e_frame))
+        st_s = s_frame * 0.020
+        ed_s = e_frame * 0.020
+        s_int, e_int = int(s_frame), max(int(s_frame) + 1, int(e_frame))
+        seg_scores = raw_scores[s_int:e_int]
+        # v7：兜底置 0.0（对齐 acoustic_canto.py:301 占位分），绝不置负值（如 -1.0），
+        # 彻底杜绝 fallback 时负分被 P0-3 的 `w["score"] < 0` 过滤器误计入均值拉低熔断。
+        mean_sc = float(sum(seg_scores) / len(seg_scores)) if seg_scores else 0.0
+        return {"start": st_s, "end": ed_s, "score": mean_sc}
+
+    # 2. target 侧按连续同字分组并逐组映射
+    target_spans: List[Optional[Dict[str, Any]]] = []
+    u = 0
+    ri = 0
+    while u < len(target_syllable_ids):
+        sid = target_syllable_ids[u]
+        k = 1
+        while u + k < len(target_syllable_ids) and target_syllable_ids[u + k] == sid:
+            k += 1
+
+        grp = []
+        while ri < len(runs) and runs[ri][0] == sid and len(grp) < k:
+            grp.append(runs[ri])
+            ri += 1
+
+        if not grp:
+            # 帧路径中找不到该音节：剩余全部置 None，绝不合成伪时间
+            target_spans.extend([None] * (len(target_syllable_ids) - u))
+            break
+
+        if len(grp) == k:
+            # 独立 run：1:1 映射，绝对禁止切分
+            for _, s, e in grp:
+                target_spans.append(build_span(s, e))
+        elif len(grp) == 1 and k > 1:
+            # 无 blank 导致合并成 1 个 run：此时才允许按 k 等分
+            _, s, e = grp[0]
+            step = (e - s) / k
+            for r in range(k):
+                target_spans.append(build_span(s + r * step, s + (r + 1) * step))
+        else:
+            # run 数与 target 数不一致的退化情形：优先 1:1 用掉，剩余等分末 run
+            for r_idx in range(len(grp) - 1):
+                target_spans.append(build_span(grp[r_idx][1], grp[r_idx][2]))
+            rem_k = k - (len(grp) - 1)
+            _, s, e = grp[-1]
+            eff_e = min(float(T), max(s + rem_k, e))
+            avail = eff_e - s
+            if avail < rem_k:
+                # 帧数不足：整组 k 个 target 统一置 None，交由下游平滑插值
+                if len(grp) > 1:
+                    del target_spans[len(target_spans) - (len(grp) - 1):]
+                target_spans.extend([None] * k)
+            else:
+                step = avail / rem_k
+                for r in range(rem_k):
+                    sub_s = s + r * step
+                    sub_e = min(eff_e, s + (r + 1) * step)
+                    target_spans.append(build_span(sub_s, sub_e))
+
+        u += k
+
+    return target_spans
 
 
 class CantoneseCTCAligner:
@@ -265,9 +363,9 @@ class CantoneseCTCAligner:
             target_lengths = torch.tensor([len(target_syllable_ids)], dtype=torch.int32, device=self._device)
 
             aligned_tokens, scores = F.forced_align(log_probs, targets, input_lengths, target_lengths, blank=0)
-            spans = F.merge_tokens(aligned_tokens[0], scores[0], blank=0)
+            target_spans = reconstruct_target_spans(aligned_tokens[0], scores[0], target_syllable_ids)
 
-            # 4. 将 spans 时间戳回填到行与字结构中
+            # 4. 将 target_spans 时间戳回填到行与字结构中（v8：秒级单位契约，禁止二次乘 0.020）
             raw_aligned_lines: List[Dict[str, Any]] = []
             for line_idx, text in enumerate(clean_lines):
                 toks = line_parsed_tokens[line_idx]
@@ -275,31 +373,22 @@ class CantoneseCTCAligner:
 
                 for tok in toks:
                     t_idx = tok.get("target_idx")
-                    if t_idx is not None and t_idx < len(spans):
-                        span = spans[t_idx]
-                        st_s = span.start * 0.020
-                        ed_s = span.end * 0.020
-                        # 若跨度过窄，按单字最小保护
-                        if ed_s <= st_s:
-                            ed_s = st_s + _MIN_CHAR_S
+                    sp = target_spans[t_idx] if (t_idx is not None and t_idx < len(target_spans)) else None
+                    if sp is None:
                         line_words.append({
-                            "char": tok["char"],
-                            "start": st_s,
-                            "end": ed_s,
-                            "type": tok.get("type", "hanzi"),
-                            "is_entering": tok.get("jyutping", "").endswith(ENTERING_TONE_ENDINGS),
-                            "score": float(span.score),
+                            "char": tok["char"], "start": None, "end": None,
+                            "type": tok.get("type", "unknown"), "is_entering": False, "score": 0.0,
                         })
-                    else:
-                        # 英文单词或标点暂无 CTC 锚，先保留占位
-                        line_words.append({
-                            "char": tok["char"],
-                            "start": None,
-                            "end": None,
-                            "type": tok.get("type", "unknown"),
-                            "is_entering": False,
-                            "score": 0.0,
-                        })
+                        continue
+                    st_s, ed_s = sp["start"], sp["end"]      # 已是秒，禁止再乘 0.020
+                    if ed_s <= st_s:                         # T<=0 或退化零宽兜底
+                        ed_s = st_s + _MIN_CHAR_S
+                    line_words.append({
+                        "char": tok["char"], "start": st_s, "end": ed_s,
+                        "type": tok.get("type", "hanzi"),
+                        "is_entering": tok.get("jyutping", "").endswith(ENTERING_TONE_ENDINGS),
+                        "score": sp["score"],
+                    })
 
                 raw_aligned_lines.append({
                     "text": text,
@@ -453,17 +542,21 @@ class CantoneseCTCAligner:
                 line_start_s = words[0]["start"]
                 line_end_s = words[-1]["end"]
 
+                raw_words = [{
+                    "text": w["char"],
+                    "start": int(w["start"] * 1000),
+                    "end": int(w["end"] * 1000),
+                    "duration": max(_MIN_WORD_MS // 2, int((w["end"] - w["start"]) * 1000)),
+                    "score": w.get("score", 0.0),
+                } for w in words]
+                # P1-25: 标点符号吸收合并至前字（双路径同步实施）
+                merged_words = absorb_punctuation_tokens(raw_words, text)
                 output_lines.append({
                     "start": int(line_start_s * 1000),
                     "end": int(line_end_s * 1000),
                     "duration": max(_MIN_WORD_MS, int((line_end_s - line_start_s) * 1000)),
                     "text": text,
-                    "words": [{
-                        "text": w["char"],
-                        "start": int(w["start"] * 1000),
-                        "end": int(w["end"] * 1000),
-                        "duration": max(_MIN_WORD_MS // 2, int((w["end"] - w["start"]) * 1000)),
-                    } for w in words],
+                    "words": merged_words,
                 })
 
             # 7. 终局行间零重叠（铁律 19）与谷底锁定校准
@@ -551,6 +644,18 @@ class CantoneseCTCAligner:
                     ln["start"] = ws[0]["start"]
                     ln["end"] = ws[-1]["end"]
                     ln["duration"] = max(100, ln["end"] - ln["start"])
+
+            # P0-3: 粤语 CTC 质量硬熔断（mean_score < -1.80 或总时长覆盖比例 < 15% 放弃逐字安全回退）
+            all_words = [w for ln in output_lines for w in ln.get("words", [])]
+            scores = [w["score"] for w in all_words if w.get("score") is not None and w.get("score") < 0]
+            mean_score = sum(scores) / len(scores) if scores else -99.0
+            first_start_s = output_lines[0]["start"] / 1000.0 if output_lines else 0.0
+            last_end_s = output_lines[-1]["end"] / 1000.0 if output_lines else 0.0
+            span_ratio = (last_end_s - first_start_s) / max(1e-6, total_audio_s)
+
+            if mean_score < -1.80 or span_ratio < 0.15:
+                logger.warning("   ⚠️ [canto] 对齐声学置信度不足（mean=%.3f, ratio=%.3f），放弃逐字并安全回退", mean_score, span_ratio)
+                return None
 
             msg = (f"[CantoneseCTC] 粤语逐字声学对齐完成：{len(output_lines)} 行"
                    f"（torchaudio forced_align，入声闭气门控，行间 ≥{_LINE_GAP_MS}ms）")

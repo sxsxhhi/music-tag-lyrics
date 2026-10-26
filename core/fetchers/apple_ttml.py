@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Tuple, List, Set, NamedTuple
 
 from ..parsers.ttml_parser import parse_ttml
 from ..utils import http
+from ..utils.time_utils import compute_duration_axis
 from ..utils.text_utils import is_foreign_track, is_instrumental_placeholder
 from ..utils.text_match import (
     norm_title, artist_tokens, version_tokens, norm_album, GENERIC_ALBUMS,
@@ -15,6 +16,7 @@ from ..utils.text_match import (
 )
 from .amll_index import AmllIndex, Entry
 from .itunes_client import ITunesClient, itunes_durations
+from .kugou import PREVIEW_MIN_TRACK_MS, PREVIEW_MAX_LAST_END_MS, OVERRUN_TOLERANCE_MS
 
 logger = logging.getLogger(__name__)
 
@@ -261,13 +263,19 @@ class AppleTTMLFetcher:
                             target_apple_id = first_id
                             ttml_text = txt
                             resolved_mirror = meta.get("mirror", "")
-                        elif len(chosen_entry.ids) > 1:
-                            # 其余最多 3 个 id；403/timeout 视为未知，最多换 2 个镜像；404 才换下一个 id
+                        elif v != "UNREACHABLE" and len(chosen_entry.ids) > 1:
+                            # P1-5: alt-id 共享全局 6.0s deadline 与快速失败
+                            deadline = time.time() + 6.0
                             for alt_id in chosen_entry.ids[1:4]:
+                                if time.time() >= deadline:
+                                    break
                                 found_alt = False
                                 for m in MIRRORS[:2]:
+                                    if time.time() >= deadline:
+                                        break
+                                    rem_timeout = min(2.5, max(0.5, deadline - time.time()))
                                     alt_url = f"{m.base}{TTML_PATH.format(apple_id=alt_id)}"
-                                    alt_res = http.http_get_text_ex(alt_url, timeout=2.5)
+                                    alt_res = http.http_get_text_ex(alt_url, timeout=rem_timeout)
                                     if alt_res.status == 200 and "<tt" in (alt_res.text[:2000] if alt_res.text else "").lower():
                                         target_apple_id = alt_id
                                         ttml_text = alt_res.text
@@ -311,11 +319,11 @@ class AppleTTMLFetcher:
         # -------------------------------------------------------------
         # 结构门：只认真 span 词，整句兜底的 synthetic word 不算逐字
         if not _has_verbatim_words(lines):
-            logger.info("   ℹ️ [apple-ttml] 门禁丢弃：0 行逐字")
+            logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：0 行逐字")
             return None
 
         if is_instrumental_placeholder(lines, duration_ms):
-            logger.info("   ℹ️ [apple-ttml] 门禁丢弃：纯音乐占位")
+            logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：纯音乐占位")
             return None
 
         ttml_tags = data.get("tags") or {}
@@ -323,23 +331,23 @@ class AppleTTMLFetcher:
         ttml_artist = ttml_tags.get("ar") or ""
         ttml_album = ttml_tags.get("al") or ""
 
-        # ① 标题门
+        # ① 标题门 (P1-1: 补严空对空)
         t_strict = norm_title(title, keep_version=True)
         t_loose = norm_title(title, keep_version=False)
         ttml_t_strict = norm_title(ttml_title, keep_version=True)
         ttml_t_loose = norm_title(ttml_title, keep_version=False)
 
-        if t_loose != ttml_t_loose:
-            logger.info("   ℹ️ [apple-ttml] 门禁丢弃：标题不匹配 (%s vs %s)", t_loose, ttml_t_loose)
+        if not t_loose or not ttml_t_loose or t_loose != ttml_t_loose:
+            logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：标题不匹配 (%s vs %s)", t_loose, ttml_t_loose)
             return None
 
         title_strict_match = (t_strict == ttml_t_strict)
 
-        # ② 艺人门
+        # ② 艺人门 (P1-1: 双向交集守护)
         q_art = artist_tokens(artist)
         ttml_art = artist_tokens(ttml_artist)
-        if q_art and ttml_art and not (q_art & ttml_art):
-            logger.info("   ℹ️ [apple-ttml] 门禁丢弃：艺人无交集 (%s vs %s)", q_art, ttml_art)
+        if not (q_art & ttml_art):
+            logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：艺人无交集 (%s vs %s)", q_art, ttml_art)
             return None
 
         # ③ 版本门
@@ -347,31 +355,30 @@ class AppleTTMLFetcher:
         ttml_ver = version_tokens(ttml_title)
         ver_diff = (q_ver - ttml_ver) | (ttml_ver - q_ver)
         if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
-            logger.info("   ℹ️ [apple-ttml] 门禁丢弃：版本互斥冲突")
+            logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：版本互斥冲突")
             return None
 
-        # ④ 时长门禁与置信度判别 (4.4.1 & 4.4.2)
-        last_end = lines[-1].get("end", 0) if lines else 0
+        # ④ 时长门禁与置信度判别 (P1-3: 统一 axis 算法)
         body = data.get("duration_ms") or 0
-        axis = min(x for x in (body, last_end) if x > 0) if (body or last_end) else 0
+        axis = compute_duration_axis(lines, body)
         has_axis = duration_ms > 0 and axis > 0
 
         confidence = "loose"
         if not has_axis:
-            logger.info("   ℹ️ [apple-ttml] 时长证据不可用（body_dur 缺失 / 音频时长 0），本首降级")
+            logger.warning("   ⚠️ [apple-ttml] 时长证据不可用（body_dur 缺失 / 音频时长 0），本首降级")
             if is_zh:
                 return None  # 华语不接受无轴 loose，直接落酷狗
             confidence = "loose"
         else:
-            # E3a: 上界与预览门
-            is_preview = (duration_ms > 90000 and axis < 45000)
-            if axis > duration_ms + 8000 or is_preview:
-                logger.info("   ℹ️ [apple-ttml] 门禁丢弃：预览或冲轴 (axis=%d, duration=%d)", axis, duration_ms)
+            # E3a: 上界与预览门 (P2-10: 抽离统一常量)
+            is_preview = (duration_ms > PREVIEW_MIN_TRACK_MS and axis < PREVIEW_MAX_LAST_END_MS)
+            if axis > duration_ms + OVERRUN_TOLERANCE_MS or is_preview:
+                logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：预览或冲轴 (axis=%d, duration=%d)", axis, duration_ms)
                 return None
 
             # E3b_floor: 截断地板，始终必过
             if axis / duration_ms < 0.50:
-                logger.info("   ℹ️ [apple-ttml] 门禁丢弃：截断地板未过 (ratio=%.3f)", axis / duration_ms)
+                logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：截断地板未过 (ratio=%.3f)", axis / duration_ms)
                 return None
 
             # E1: iTunes trackTimeMillis
@@ -382,7 +389,7 @@ class AppleTTMLFetcher:
 
             if e1_available and not e1_pass:
                 # 硬规则 1：E1 有值但不合格，不得回落 E2，直接拒！
-                logger.info("   ℹ️ [apple-ttml] 门禁丢弃：iTunes 时长不对齐 (itunes=%d, local=%d)", itunes_track_ms, duration_ms)
+                logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：iTunes 时长不对齐 (itunes=%d, local=%d)", itunes_track_ms, duration_ms)
                 return None
 
             # E2: 专辑精确匹配
@@ -391,7 +398,7 @@ class AppleTTMLFetcher:
             e2_pass = bool(local_al_n and ttml_al_n and local_al_n == ttml_al_n and local_al_n not in GENERIC_ALBUMS)
 
             # E3b_strict: 尾差与比例
-            e3b_strict_pass = ((duration_ms - axis) <= 90000) and (axis / duration_ms >= 0.70)
+            e3b_strict_pass = ((duration_ms - axis) <= PREVIEW_MIN_TRACK_MS) and (axis / duration_ms >= 0.70)
 
             # strict 判定
             strict_evidence = e1_pass or (e2_pass and e3b_strict_pass)
@@ -399,7 +406,7 @@ class AppleTTMLFetcher:
 
             if is_zh:
                 if not is_strict:
-                    logger.info("   ℹ️ [apple-ttml] 华语未达 strict 门槛，交由酷狗处理")
+                    logger.warning("   ⚠️ [apple-ttml] 华语未达 strict 门槛，交由酷狗处理")
                     return None
                 confidence = "strict"
             else:

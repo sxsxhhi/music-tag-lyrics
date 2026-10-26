@@ -7,6 +7,10 @@ from ..parsers.ttml_parser import parse_ttml
 from .netease import NetEaseFetcher
 from ..utils.http import http_get_text, UA_DEFAULT
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 BASE_URL = "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main"
 
 class AMLLFetcher:
@@ -23,10 +27,12 @@ class AMLLFetcher:
             parsed = parse_ttml(content)
             if parsed and parsed.get("lines"):
                 parsed["source"] = "amll"
-                parsed["lyric_type"] = "word"
+                # P1-19: 依据行内是否含有 2 个以上有效 words 动态判定 lyric_type
+                has_verbatim = sum(1 for ln in parsed["lines"] if len(ln.get("words", [])) >= 2) >= 1
+                parsed["lyric_type"] = "word" if has_verbatim else "line"
                 return parsed
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[amll] 解析 TTML 失败 (ncm_id=%s): %s", ncm_id, exc)
         return None
 
     @classmethod

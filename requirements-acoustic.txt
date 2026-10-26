@@ -10,3 +10,5 @@ torchaudio>=2.0.0
 demucs>=4.0.0
 stable-whisper>=2.15.0
 soundfile>=0.12.0
+transformers>=4.36.0
+imageio-ffmpeg>=0.4.9
