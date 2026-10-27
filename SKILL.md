@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.5.1）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.5.2）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.5.1)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.5.2)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -133,7 +133,8 @@ flowchart TD
 - **铁律准则**：全曲歌词时间轴必须严格单向单调推进。任意歌词行必须满足 start(i+1) ≥ end(i) + 50ms，严禁产生任何时间重叠交错。声学切片、谷底搜索与和声延展均严禁侵占下一行的起振间隙（validator 零重叠防御自动缩拢前句，行长下限 500ms、单字下限 100ms）。
 
 ### 20. 【核心红线】声学真逐字硬门禁与伪对齐阻断铁律
-- **铁律准则**：调用声学对齐模块（`AcousticAligner.align_lyrics`）时，严禁使用固定除法伪造逐字。运行环境必须具备可用 GPU（CUDA 就绪）与 `stable_whisper` 依赖，缺失时立即抛出 `AcousticEnvironmentError` 显式阻断，坚决杜绝低质假逐字输出。仅在用户明确拒绝 GPU 时，才允许在外部降级分支进入标有 `synthesized_words: True` 的行级合成（产物标注「非酷狗逐字、非 GPU」）。
+- **铁律准则**：调用声学对齐模块（`AcousticAligner.align_lyrics`）时，严禁使用固定除法伪造逐字。运行环境必须具备可用 GPU（CUDA 就绪）与 `stable_whisper` 依赖，缺失时立即抛出 `AcousticEnvironmentError` 显式阻断，坚决杜绝低质假逐字输出。仅在用户明确拒绝 GPU 时，才允许在外部降级分支进入 numpy 行级合成——此路径 `synthesized_words=True`，控制台明确提示「非酷狗逐字、非 GPU」。
+- **记账语义（v1.5.2）**：`synthesized_words=True` 仅表示「整首没有任何真声学逐字」。两条声学路径都是真声学：粤语 CTC 逐字带分数（`gpu_acoustic`），普通话双引擎逐字是声学时间轴但引擎不产分数（`gpu_whisper`）——后者**不是**合成，不得因缺字段就标 True。该字段是内存记账（`words_source` / `acoustic_coverage` / `synthesized_ratio`），**不写进音频标签或 LRC 头**。
 - **双引擎流水线（v1.4.0）**：`DualEngineHybridAligner` = Demucs 人声 → 行级提示窗 Whisper Token 对齐 → 44.1kHz STFT 谱流单字拆分/±60ms 瞬态吸附 → 25ms/5ms RMS 换气谷底双向锁定（释放门限 RMS≤0.020，仅作用于行间场景）→ sustain 衰减门控（60ms 静默收束）→ 双声回音覆盖（tail ≤ next_start − 50ms）。行级时间轴提示为一等先验输入。
 
 ### 运行纪律（丢弃必须说清）
@@ -192,6 +193,6 @@ flowchart TD
 - 纯文本搜集：`core/plain_lyric_search.py`（双源 plain：网易+LRCLIB，+ GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`tests/test_canto_align.py`、`tests/test_jyutping.py`、`tests/test_lang_detect.py`、`tests/test_apple_ttml.py`、`tests/test_cover_art.py`、`tests/test_parsers.py`、`tests/test_pipeline.py`、`tests/test_m1_safety.py`、`tests/test_gpu_plain.py`、`tests/test_kugou_gates.py`、`tests/test_converter_prelude.py`、`tests/test_acoustic_pipeline.py`
+- 离线测：`python tests/run_all.py`（15 个套件 / 220 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`

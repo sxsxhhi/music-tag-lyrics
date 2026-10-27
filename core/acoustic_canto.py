@@ -67,18 +67,19 @@ def reconstruct_target_spans(
 
     def build_span(s_frame: float, e_frame: float) -> Dict[str, Any]:
         # v7：在唯一出口统一钳位，任何调用路径都不得产出 [0, T] 之外的帧区间。
-        # 极值保护：T <= 0 时直接安全返回
+        # 极值保护：T <= 0 时直接安全返回（该分支实测不可达，纯防御）。
+        # v1.5.2-D5：score 用 None 表达「没有分数」，不要用 0.0 —— 0.0 在语义上
+        # 是「满分上限」，会让下游误以为这是一个有效的满分，而不是缺分。
         if T <= 0:
-            return {"start": 0.0, "end": 0.0, "score": 0.0}
+            return {"start": 0.0, "end": 0.0, "score": None}
         s_frame = max(0.0, min(float(T - 1), s_frame))
         e_frame = max(s_frame + 1.0, min(float(T), e_frame))
         st_s = s_frame * 0.020
         ed_s = e_frame * 0.020
         s_int, e_int = int(s_frame), max(int(s_frame) + 1, int(e_frame))
         seg_scores = raw_scores[s_int:e_int]
-        # v7：兜底置 0.0（对齐 acoustic_canto.py:301 占位分），绝不置负值（如 -1.0），
-        # 彻底杜绝 fallback 时负分被 P0-3 的 `w["score"] < 0` 过滤器误计入均值拉低熔断。
-        mean_sc = float(sum(seg_scores) / len(seg_scores)) if seg_scores else 0.0
+        # 空切片 = 这一组没有可用分数 → None（同样不要用 0.0，见上）。
+        mean_sc = float(sum(seg_scores) / len(seg_scores)) if seg_scores else None
         return {"start": st_s, "end": ed_s, "score": mean_sc}
 
     # 2. target 侧按连续同字分组并逐组映射
@@ -798,8 +799,14 @@ class CantoneseCTCAligner:
                 "demoted_line_indices": [li for li, _ in demoted_idx],
                 "n_target": len(target_syllable_ids),
                 "n_target_unaligned": n_unaligned_targets,
+                "align_engine": "cantonese_ctc",
             }
-            finalize_word_source_flags(result, demoted_lines=[li for li, _ in demoted_idx])
+            # 粤语 CTC 是「有分域」引擎：整行无分 = 邻字内插，不是 whisper 型无分
+            finalize_word_source_flags(
+                result,
+                demoted_lines=[li for li, _ in demoted_idx],
+                engine_scored=True,
+            )
             return result
         finally:
             self.unload()

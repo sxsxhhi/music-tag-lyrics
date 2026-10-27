@@ -98,6 +98,13 @@ def test_is_source_or_credit_line():
     for line in ("傍晚六点下班", "换掉药厂的衣裳", "鼓楼", "键盘上的泪", "作词人", "曲终人散"):
         assert not is_source_or_credit_line(line), line
 
+    # v1.5.2-D1: 整行只有扩展 A/B 生僻字时，旧窄正则不命中 → 被误判为「无字母署名行」
+    assert not is_source_or_credit_line(chr(0x3400) * 4), "扩展 A 正文被误判为署名行"
+    assert not is_source_or_credit_line(chr(0x2EBF0) * 3), "扩展 I 正文被误判为署名行"
+    # 纯符号行仍按来源噪声处理
+    assert is_source_or_credit_line("...")
+    assert is_source_or_credit_line("♪ ♫")
+
 
 def test_is_instrumental_placeholder():
     """纯音乐占位：短行 + 关键词 + 与曲长严重不符才判占位。"""
@@ -145,33 +152,49 @@ def test_krc_xor_empty_and_invalid():
 
 
 def test_split_orig_tokens_cjk_ext_b_to_i():
-    """CJK 扩展 B~I 生僻汉字分词：绝不与相邻汉字或拉丁字母粘连。"""
+    """CJK 扩展 B~I 生僻汉字分词：绝不与相邻汉字或拉丁字母粘连（v1.5.2-D1）。"""
     from core.acoustic_aligner import split_orig_tokens, _is_cjk
+    from core.utils.text_utils import HANZI_RANGES, HANZI_RE, is_hanzi_char
 
-    # 1. 验证 _is_cjk 覆盖扩展 B~I、兼容字等典型生僻字，且对空串/长串健壮防崩溃
+    # 1. 区间表是唯一真相：每段首尾都必须命中原生谓词与派生正则
+    for lo, hi in HANZI_RANGES:
+        assert is_hanzi_char(chr(lo)), f"区间起点失配 U+{lo:04X}"
+        assert is_hanzi_char(chr(hi)), f"区间终点失配 U+{hi:04X}"
+        assert HANZI_RE.match(chr(lo)) and HANZI_RE.match(chr(hi))
+
+    # 2. 典型生僻字覆盖（含 v1.5.1 漏判的扩展 I）
     assert _is_cjk("𠮷")  # U+20BB7 (CJK Ext B)
     assert _is_cjk("𪚥")  # U+2A6A5 (CJK Ext B)
     assert _is_cjk("𫠠")  # U+2B820 (CJK Ext E)
     assert _is_cjk("﨎")  # U+FA0E (CJK Compatibility)
+    assert _is_cjk(chr(0x2EBF0))  # Ext I 首
+    assert _is_cjk(chr(0x2EE5D))  # Ext I 尾
+    assert _is_cjk(chr(0x31350))  # Ext H 首
+    assert not _is_cjk(chr(0x2EE5E))  # Ext I 之后的未分配码位
     assert not _is_cjk("")  # 防空串崩溃
     assert not _is_cjk("𠮷野家")  # 防多字符传参崩溃
 
-    # 2. 验证分词：生僻汉字「𠮷野家」按单字切分
+    # 3. 生僻汉字按单字切分
     m1, o1 = split_orig_tokens("𠮷野家")
     assert m1 == ["𠮷", "野", "家"], m1
     assert o1 == ["𠮷", "野", "家"], o1
 
-    # 3. 连续生僻字「𠮷𠮷」绝不粘连
+    # 4. 连续生僻字绝不粘连
     m2, o2 = split_orig_tokens("𠮷𠮷")
     assert m2 == ["𠮷", "𠮷"], m2
-    assert o2 == ["𠮷", "𠮷"], o2
 
-    # 4. 生僻字与英文相邻「𠮷ABC」切为 ['𠮷', 'ABC']
+    # 5. 扩展 I 与拉丁字母/相邻汉字都必须断开（v1.5.1 此处会粘成 ['a𮯰b']）
+    m2b, _ = split_orig_tokens("a" + chr(0x2EBF0) + "b")
+    assert m2b == ["a", chr(0x2EBF0), "b"], m2b
+    m2c, _ = split_orig_tokens(chr(0x2EBF0) + chr(0x2EBF1) + "一")
+    assert m2c == [chr(0x2EBF0), chr(0x2EBF1), "一"], m2c
+
+    # 6. 生僻字与英文相邻「𠮷ABC」切为 ['𠮷', 'ABC']
     m3, o3 = split_orig_tokens("𠮷ABC")
     assert m3 == ["𠮷", "ABC"], m3
     assert o3 == ["𠮷", "ABC"], o3
 
-    # 5. 常见歌词符号（省略号 …、分数 ½、商标 ™、合字 ﬃ）防 NFKC 展开 TypeError 崩溃
+    # 7. 常见歌词符号（省略号 …、分数 ½、商标 ™、合字 ﬃ）防 NFKC 展开 TypeError 崩溃
     m4, o4 = split_orig_tokens("Let it go…")
     assert m4 == ["Let", "it", "go", "..."], m4
     assert "".join(o4) == "Let it go…"

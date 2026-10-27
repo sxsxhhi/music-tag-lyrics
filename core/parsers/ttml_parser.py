@@ -4,6 +4,7 @@
 import re
 from typing import Any, Dict, List
 
+from ..utils.text_utils import is_fullwidth_char, is_hanzi_char, is_kana_char
 from ..utils.time_utils import parse_time_string_to_ms, apply_time_offset
 
 _ATTR_RE = re.compile(r'([\w:.\-]+)\s*=\s*"([^"]*)"')
@@ -15,19 +16,12 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _is_cjk(ch: str) -> bool:
-    """判断字符是否属于中日韩表意/假名/全角区（这些语言词间不加空格）。"""
-    if not ch or len(ch) != 1:
-        return False
-    o = ord(ch)
-    return (
-        0x3040 <= o <= 0x30FF        # 日文假名
-        or 0x3400 <= o <= 0x4DBF     # CJK 扩展 A
-        or 0x4E00 <= o <= 0x9FFF     # CJK 基本区
-        or 0xF900 <= o <= 0xFAFF     # CJK 兼容表意
-        or 0x20000 <= o <= 0x323AF   # CJK 扩展 B~I
-        or 0x2F800 <= o <= 0x2FA1F   # CJK 兼容表意补充
-        or 0xFF00 <= o <= 0xFFEF     # 全角标点/字母
-    )
+    """判断字符是否属于中日韩表意/假名/全角区（这些语言词间不加空格）。
+
+    v1.5.2-D1: 收敛到 text_utils 的单一区间表。**故意不含谚文** ——
+    TTML 里韩文按空格分词，把它当 CJK 反而会把 `안녕 하세요` 粘成一串。
+    """
+    return is_hanzi_char(ch) or is_kana_char(ch) or is_fullwidth_char(ch)
 
 
 def _gap_is_word_boundary(gap: str, prev_text: str, next_text: str) -> bool:

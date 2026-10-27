@@ -31,17 +31,17 @@ jobs:
         run: python tests/test_apple_ttml.py
       - name: Cover art ladder
         run: python tests/test_cover_art.py
-      - name: Acoustic pipeline v1.4.0
+      - name: Acoustic pipeline
         run: python tests/test_acoustic_pipeline.py
-      - name: Jyutping G2P v1.5.0
+      - name: Jyutping G2P
         run: python tests/test_jyutping.py
-      - name: Language routing v1.5.0
+      - name: Language routing
         run: python tests/test_lang_detect.py
-      - name: Cantonese CTC align v1.5.0
+      - name: Cantonese CTC align
         run: python tests/test_canto_align.py
-      - name: CLI & End-to-end v1.5.0
+      - name: CLI & End-to-end
         run: python tests/test_cli.py
-      - name: Text utils & KRC decrypt v1.5.1
+      - name: Text utils & KRC decrypt
         run: python tests/test_text_utils.py
-      - name: Process song orchestration v1.5.1
+      - name: Process song orchestration
         run: python tests/test_process_song.py

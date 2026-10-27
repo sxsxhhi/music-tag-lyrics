@@ -32,12 +32,27 @@ LINE_GAP_MS = 50          # 行间最小间隙（铁律 19）
 MIN_WORD_MS = 100         # 单字下限（铁律 4）
 MIN_CHAR_S = 0.060        # 行内字间最小推进
 
-# words_source 取值
-SRC_GPU_ACOUSTIC = "gpu_acoustic"
-SRC_GPU_LINEAR = "gpu_linear_fallback"
-SRC_NUMPY = "numpy_synth"
-SRC_GATE_DEMOTED = "gate_demoted"
-SRC_INTERPOLATED = "interpolated"
+# words_source 取值（v1.5.2-D2/D4 六态）
+SRC_GPU_ACOUSTIC = "gpu_acoustic"        # 真声学 + 引擎产出分数（粤语 CTC / forced-align）
+SRC_GPU_WHISPER = "gpu_whisper"          # 真声学时间轴，但引擎不产分数（普通话双引擎）
+SRC_GPU_LINEAR = "gpu_linear_fallback"   # GPU 路径内的线性均分保底（无声学锚点）
+SRC_NUMPY = "numpy_synth"                # 无 GPU 时的 numpy 行内均分
+SRC_GATE_DEMOTED = "gate_demoted"        # 质量门禁降级为行级
+SRC_INTERPOLATED = "interpolated"        # 引擎有分域，但行内只有部分字有分（邻字内插）
+SRC_LINE_LEVEL = "line_level"            # 原生行级歌词，本就没有逐字（不是合成）
+
+# 「真声学逐字」的判据：时间轴来自声学信号（有无置信度分都算）
+REAL_ACOUSTIC_SOURCES = frozenset({SRC_GPU_ACOUSTIC, SRC_GPU_WHISPER})
+
+
+def _is_scored_word(w: Dict[str, Any]) -> bool:
+    """该词是否带「真实对齐分数」。
+
+    与 `compute_track_stats` 的 `<0` 过滤同口径：`score=0.0` 是占位分
+    （acoustic_canto.build_span 在 T<=0 退化时返回），不算已打分。
+    """
+    s = w.get("score")
+    return isinstance(s, (int, float)) and float(s) < 0
 
 
 # ── 三态 ───────────────────────────────────────────────────────────────────
@@ -162,6 +177,9 @@ class TrackStats:
     first_start_s: float = 0.0
     last_end_s: float = 0.0
     hints_span_s: Optional[float] = None
+    # v1.5.2-D2: 引擎是否产出分数。False 时均值/中位/p10/unaligned 四个维度
+    # 都不可评（不是「质量差」，而是「没有度量」），门禁必须跳过而非误熔断。
+    scores_available: bool = True
 
     def summary(self) -> str:
         return (
@@ -195,6 +213,7 @@ def compute_track_stats(
     n_lines_evaluable: int = 0,
     n_lines_demoted: int = 0,
     hints_span_s: Optional[float] = None,
+    scores_available: bool = True,
 ) -> TrackStats:
     """汇总整曲统计。
 
@@ -243,6 +262,7 @@ def compute_track_stats(
         first_start_s=first_start_s,
         last_end_s=last_end_s,
         hints_span_s=hints_span_s,
+        scores_available=bool(scores_available),
     )
 
 
@@ -255,7 +275,9 @@ def evaluate_track_gate(stats: TrackStats, cfg: Optional[GateConfig] = None) -> 
     reasons: List[str] = []
 
     # 维度 A：样本量不足时不看均值（<30 样本的均值无统计意义）
-    if stats.n_scored >= cfg.track_min_scored:
+    # v1.5.2-D2：引擎不产分数时（普通话双引擎），这四个维度全部不可评 ——
+    # 跳过而不是拿 -99 / unaligned=1.0 去熔断。
+    if stats.scores_available and stats.n_scored >= cfg.track_min_scored:
         if stats.mean < cfg.track_mean_min:
             reasons.append(f"R_TRACK_MEAN({stats.mean:.3f} < {cfg.track_mean_min})")
         if stats.med < cfg.track_median_min:
@@ -264,7 +286,7 @@ def evaluate_track_gate(stats: TrackStats, cfg: Optional[GateConfig] = None) -> 
             reasons.append(f"R_TRACK_P10({stats.p10:.3f} < {cfg.track_p10_min})")
 
     # 维度 B：大量音节无跨度 = 错配/音频不符
-    if stats.unaligned_ratio > cfg.track_unaligned_max:
+    if stats.scores_available and stats.unaligned_ratio > cfg.track_unaligned_max:
         reasons.append(
             f"R_TRACK_UNALIGNED({stats.unaligned_ratio:.3f} > {cfg.track_unaligned_max})"
         )
@@ -330,64 +352,91 @@ def evaluate_line_gate(
     return LineDecision(demote=bool(reasons), reasons=reasons)
 
 
-# ── 记账：synthesized_words 语义 ───────────────────────────────────────────
+# ── 记账：words_source / synthesized_words 语义 ────────────────────────────
 def finalize_word_source_flags(
     data: Dict[str, Any],
     fallback_lines: Sequence[int] = (),
     demoted_lines: Sequence[int] = (),
     numpy_lines: Sequence[int] = (),
+    engine_scored: bool = True,
 ) -> Dict[str, Any]:
-    """写入 words_source / words_source_stats / synthesized_ratio / synthesized_words。
+    """写入 words_source / words_source_stats / synthesized_* / acoustic_coverage。
 
-    语义修正（C1）：`synthesized_words` 只在**整首没有任何真声学逐字**时为 True。
-    旧版双向失真 —— 线性均分仍报 False（假阴性）、整首只要一行缺词就全标 True（假阳性）。
+    语义（v1.5.2-D2/D4 修正）：
+
+    · `engine_scored=False`：该引擎**整条链路都不产出分数**（普通话双引擎
+      Whisper 路径）。这种行的时间轴来自声学锚点，属真声学，记 `gpu_whisper`
+      并计入 coverage 分子；不能因为「没有置信度分」就整首标成合成。
+    · `interpolated` 只留给「引擎有分域、但这一行只有部分字有分」的行。
+    · `line_level`（原生行级、本就没有逐字）**不是合成**：不计入
+      synthesized_ratio 分母，也不再让整首误报 synthesized_words=True。
+    · `synthesized_words` 仅当「有可评估的逐字行、且其中没有任何真声学行」时为 True。
+
+    参数：
+        fallback_lines / demoted_lines / numpy_lines：行号集合，优先级
+        demoted > numpy > fallback；重叠时只记优先级最高的一种（避免重复计数）。
+        engine_scored：引擎是否产出逐字分数（CTC=True，Whisper 双引擎=False）。
     """
     lines = data.get("lines") or []
     fb = set(fallback_lines)
     dm = set(demoted_lines)
     nb = set(numpy_lines)
 
-    stats = {SRC_GPU_ACOUSTIC: 0, SRC_GPU_LINEAR: 0, SRC_NUMPY: 0,
-             SRC_GATE_DEMOTED: 0, SRC_INTERPOLATED: 0}
-    n_total = 0
+    stats = {
+        SRC_GPU_ACOUSTIC: 0, SRC_GPU_WHISPER: 0, SRC_GPU_LINEAR: 0,
+        SRC_NUMPY: 0, SRC_GATE_DEMOTED: 0, SRC_INTERPOLATED: 0, SRC_LINE_LEVEL: 0,
+    }
+    n_wordable = 0
     for i, ln in enumerate(lines):
         words = ln.get("words") or []
         if i in dm:
-            # 质量门禁降级行：虽然 words 被清空，但明确属于降级来源
+            # 质量门禁降级行：words 已被清空，但来源明确，仍进「可评估行」分母
             ln["words_source"] = SRC_GATE_DEMOTED
-            stats[SRC_GATE_DEMOTED] = stats.get(SRC_GATE_DEMOTED, 0) + 1
-            n_total += 1
+            stats[SRC_GATE_DEMOTED] += 1
+            n_wordable += 1
             continue
 
         if not words:
-            # 原生行级歌词（非门禁降级）：不算进合成比例
-            ln["words_source"] = "line_level"
+            # 原生行级歌词（非门禁降级）：没有逐字，但也不是合成
+            ln["words_source"] = SRC_LINE_LEVEL
+            stats[SRC_LINE_LEVEL] += 1
             continue
 
-        n_total += 1
+        n_wordable += 1
         if i in nb:
             src = SRC_NUMPY
         elif i in fb:
             src = SRC_GPU_LINEAR
-        elif any(w.get("score") is None for w in words):
-            src = SRC_INTERPOLATED
         else:
-            src = SRC_GPU_ACOUSTIC
+            n_scored = sum(1 for w in words if _is_scored_word(w))
+            if n_scored == 0:
+                # 整行无分：引擎声明无分域 → 真声学时间轴；有分域 → 邻字内插
+                src = SRC_INTERPOLATED if engine_scored else SRC_GPU_WHISPER
+            elif n_scored < len(words):
+                src = SRC_INTERPOLATED
+            else:
+                src = SRC_GPU_ACOUSTIC
         ln["words_source"] = src
-        stats[src] = stats.get(src, 0) + 1
+        stats[src] += 1
 
-    n_real = stats[SRC_GPU_ACOUSTIC]
-    synth = n_total - n_real
-    ratio = (synth / n_total) if n_total else 1.0
+    n_real = sum(stats[s] for s in REAL_ACOUSTIC_SOURCES)
+    synth = n_wordable - n_real
+    ratio = (synth / n_wordable) if n_wordable else 0.0
 
     data["words_source_stats"] = stats
+    data["n_wordable_lines"] = n_wordable
     data["synthesized_ratio"] = round(ratio, 4)
-    data["linear_fallback_lines"] = len(fb)
-    data["synthesized_words"] = (n_real == 0)   # 仅当整首没有真声学逐字
-    data["acoustic_coverage"] = round((n_real / n_total) if n_total else 0.0, 4)
+    data["linear_fallback_lines"] = stats[SRC_GPU_LINEAR]   # 与 stats 同源，去重
+    data["synthesized_words"] = (n_wordable > 0 and n_real == 0)
+    data["no_word_level"] = (n_wordable == 0)               # 全行级曲目显式标记
+    data["acoustic_coverage"] = round((n_real / n_wordable) if n_wordable else 0.0, 4)
+    # 诊断字段：真声学行里「带分数」的比例（粤语=1.0，Whisper=0.0）
+    data["scored_coverage"] = round(
+        (stats[SRC_GPU_ACOUSTIC] / n_wordable) if n_wordable else 0.0, 4
+    )
 
     logger.debug(
-        "  [quality] 记账：%s | synthesized_ratio=%.3f synthesized_words=%s",
-        stats, ratio, data["synthesized_words"],
+        "  [quality] 记账：%s | synthesized_ratio=%.3f synthesized_words=%s coverage=%.3f",
+        stats, ratio, data["synthesized_words"], data["acoustic_coverage"],
     )
     return data

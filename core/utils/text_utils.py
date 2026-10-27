@@ -3,15 +3,82 @@
 
 import re
 
-CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U000323af\uf900-\ufaff\U0002f800-\U0002fa1f\u3040-\u30ff\uac00-\ud7af]")
+# ---- v1.5.2-D1: 字符判定单一真相 ----------------------------------------
+# 区间表是唯一真相，正则由表派生 —— 避免「表改了、正则没改」的二次漂移。
+# 每个区间都取 Unicode 已分配区块；**不要**改回 0x20000-0x323AF 这类整片宽
+# 区间：它会把 0x2EE5E-0x2F7FF 等未分配码位也判成汉字（v1.5.1 的 HANZI_RE
+# 就是这个毛病），也让「漏了哪个扩展」无法从代码上看出来。
+HANZI_RANGES = (
+    (0x3400, 0x4DBF),    # CJK 扩展 A
+    (0x4E00, 0x9FFF),    # CJK 统一表意文字（基本区）
+    (0xF900, 0xFAFF),    # CJK 兼容表意文字
+    (0x20000, 0x2A6DF),  # CJK 扩展 B
+    (0x2A700, 0x2B73F),  # CJK 扩展 C
+    (0x2B740, 0x2B81F),  # CJK 扩展 D
+    (0x2B820, 0x2CEAF),  # CJK 扩展 E
+    (0x2CEB0, 0x2EBEF),  # CJK 扩展 F
+    (0x2EBF0, 0x2EE5D),  # CJK 扩展 I（Unicode 15.1，v1.5.1 唯一漏判区）
+    (0x30000, 0x3134F),  # CJK 扩展 G
+    (0x31350, 0x323AF),  # CJK 扩展 H
+    (0x2F800, 0x2FA1F),  # CJK 兼容表意文字补充
+)
+KANA_RANGES = ((0x3040, 0x309F), (0x30A0, 0x30FF))   # 平假名 / 片假名（含长音符 ー）
+HANGUL_RANGES = ((0xAC00, 0xD7AF),)                  # 谚文音节
+FULLWIDTH_RANGE = (0xFF00, 0xFFEF)                   # 全角标点/字母（TTML 词边界用）
+
+
+def _ranges_to_class(ranges) -> str:
+    """把区间表拼成正则字符类内容（供 re.compile 使用）。"""
+    return "".join(f"{re.escape(chr(a))}-{re.escape(chr(b))}" for a, b in ranges)
+
+
+def _in_ranges(ch: str, ranges) -> bool:
+    """单字符是否落在任一闭区间内。空串/多字符传参一律 False（防崩溃）。"""
+    if not isinstance(ch, str) or len(ch) != 1:
+        return False
+    o = ord(ch)
+    return any(a <= o <= b for a, b in ranges)
+
+
+def is_hanzi_char(ch: str) -> bool:
+    """是否为汉字（基本区 + 扩展 A~I + 兼容区）。"""
+    return _in_ranges(ch, HANZI_RANGES)
+
+
+def is_kana_char(ch: str) -> bool:
+    """是否为日文平/片假名。"""
+    return _in_ranges(ch, KANA_RANGES)
+
+
+def is_hangul_char(ch: str) -> bool:
+    """是否为韩文谚文音节。"""
+    return _in_ranges(ch, HANGUL_RANGES)
+
+
+def is_fullwidth_char(ch: str) -> bool:
+    """是否为全角字符（FF00-FFEF）。"""
+    return _in_ranges(ch, (FULLWIDTH_RANGE,))
+
+
+def is_cjk_char(ch: str) -> bool:
+    """是否为「词间不加空格」的 CJK 字符：汉字 | 假名 | 谚文。"""
+    return is_hanzi_char(ch) or is_kana_char(ch) or is_hangul_char(ch)
+
+
+CJK_RE = re.compile("[" + _ranges_to_class(HANZI_RANGES + KANA_RANGES + HANGUL_RANGES) + "]")
 
 # LRC 元数据行（[ti:] [ar:] [al:] [by:] [offset:]）——lyric_validator 与
 # plain_lyric_search 共用同一份（A2 去重，两处正则曾逐字重复）。
 LRC_META_LINE_RE = re.compile(r"^\[(ti|ar|al|by|offset):", re.IGNORECASE)
-# 汉字判定统一到 CJK 统一表意全集（涵盖基本区、扩展 A~I 与兼容区）
-HANZI_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U000323af\uf900-\ufaff\U0002f800-\U0002fa1f]")
-KANA_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
-HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+# 汉字判定统一到 CJK 统一表意全集（由 HANZI_RANGES 派生，含扩展 I）
+HANZI_RE = re.compile("[" + _ranges_to_class(HANZI_RANGES) + "]")
+KANA_RE = re.compile("[" + _ranges_to_class(KANA_RANGES) + "]")
+HANGUL_RE = re.compile("[" + _ranges_to_class(HANGUL_RANGES) + "]")
+
+# 故意的**窄口径**：只用于「这段文本像不像歌词」的体量启发式
+# （plain_lyric_search 的 ≥20 汉字判定 / krc_parser 的译文有效性），
+# 不是字符契约。不要把它当成汉字判定的真相 —— 要判字符请用 is_hanzi_char。
+LOOSE_BMP_HANZI_RE = re.compile(r"[\u4e00-\u9fff]")
 
 def has_hanzi(text: str) -> bool:
     """Checks if text contains Chinese characters."""
@@ -58,7 +125,9 @@ SOURCE_LINE_RE = re.compile(
     r"|歌词来源|来源\s*[:：]|由.{0,12}提供|powered\s+by|歌词由.{0,12}制作"
 )
 
-_HAS_ALNUM_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+# v1.5.2-D1: 旧实现用窄正则 `[0-9A-Za-z\u4e00-\u9fff...]`，整行只有扩展 A/B
+# 生僻字（如全部用 𠀀 区书写）时会被判成「无字母 → 署名行」。改用
+# str.isalnum()（按 Unicode L*/N* 判定），天然覆盖扩展 A~I 与所有文字系统。
 
 # v1.5.1: 署名行判定的单一出处（原先 lyric_validator 里有一份等价实现，两边漂移）。
 # 语义与 validator 完全一致：多字关键词必须跟冒号/空白/行尾（否则「作词人」「鼓楼」
@@ -103,7 +172,8 @@ def is_source_or_credit_line(text: str) -> bool:
         return True
     if is_credit_line(t):
         return True
-    return not _HAS_ALNUM_RE.search(t)
+    # 整行没有任何字母/数字（含 CJK 全扩展区）才判为来源标注类噪声
+    return not any(ch.isalnum() for ch in t)
 
 
 def is_instrumental_placeholder(lines, target_duration_ms: int = 0, max_lines: int = 6) -> bool:

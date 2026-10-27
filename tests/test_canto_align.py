@@ -587,15 +587,20 @@ def test_words_source_demoted_accounting():
     assert lines[1]["words_source"] == SRC_GATE_DEMOTED
     assert lines[2]["words_source"] == "line_level"
 
-    # 断言统计字典：gate_demoted 为 1，acoustic 为 1
+    # 断言统计字典：gate_demoted 为 1，acoustic 为 1，line_level 也入账
     assert stats[SRC_GATE_DEMOTED] == 1, stats
     assert stats[SRC_GPU_ACOUSTIC] == 1, stats
+    assert stats["line_level"] == 1, stats
+    # v1.5.2-D4: stats 必须覆盖全部行，不允许有「没入账」的行
+    assert sum(stats.values()) == len(lines), stats
 
-    # 断言覆盖率分母闭环：总计评估行数应为 2（第 0 行 + 第 1 行；第 2 行是原生行级不进分母）
-    # n_real = 1, n_total = 2 -> acoustic_coverage = 0.5, synthesized_ratio = 0.5
+    # 断言覆盖率分母闭环：可评估行数 2（第 0 行 + 第 1 行；第 2 行是原生行级不进分母）
+    # n_real = 1, n_wordable = 2 -> acoustic_coverage = 0.5, synthesized_ratio = 0.5
+    assert out["n_wordable_lines"] == 2, out["n_wordable_lines"]
     assert out["acoustic_coverage"] == 0.5000, out["acoustic_coverage"]
     assert out["synthesized_ratio"] == 0.5000, out["synthesized_ratio"]
     assert out["synthesized_words"] is False
+    assert out["no_word_level"] is False
 
 
 def test_track_gate_span_smart_exemption():
@@ -657,6 +662,25 @@ def test_track_gate_span_smart_exemption():
     )
     reasons_e = evaluate_track_gate(stats_e, cfg)
     assert any("R_TRACK_SPAN" in r for r in reasons_e)
+
+
+def test_span_score_none_when_scores_empty():
+    """v1.5.2-D5: 没有可用分数时 span.score 必须是 None，不能是 0.0（伪满分）。"""
+    try:
+        import torch
+    except ImportError:
+        _testkit.skip("无 torch")
+
+    from core.acoustic_canto import reconstruct_target_spans
+
+    # 两帧都是 token 12，target 只有一个 12；scores 为空 → 整段无分
+    spans = reconstruct_target_spans(
+        torch.tensor([12, 12], dtype=torch.int32),
+        torch.tensor([], dtype=torch.float32),
+        [12],
+    )
+    assert spans and spans[0] is not None, spans
+    assert spans[0]["score"] is None, f"空分数应记 None，实际 {spans[0]['score']!r}"
 
 
 def main():

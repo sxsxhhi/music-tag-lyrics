@@ -231,13 +231,26 @@ def last_align_status() -> Tuple["AlignStatus", List[str]]:
     return _LAST_ALIGN_STATUS, list(_LAST_ALIGN_REASONS)
 
 
+def _coverage_of(data: Optional[Dict[str, Any]]) -> float:
+    """读取真声学逐字占比；缺失/非数值一律 0.0（两侧同口径）。"""
+    v = (data or {}).get("acoustic_coverage", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
 def _better_align(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """两次打轴择优：按「真声学逐字占比」取高，平手时保留首次。"""
+    """两次打轴择优：按「真声学逐字占比」取高，平手时保留首次（a）。
+
+    v1.5.2-D5: 旧实现默认值不对称（a 缺字段当 1.0、b 缺字段当 0.0），
+    同一份数据换个参数位置就得出相反结论。现在两侧统一走 `_coverage_of`。
+
+    注：当前控制流下 `_align_with_policy` 一旦 `status is OK` 就 return best，
+    本函数实际只在「两次都非 OK」时才会被调用，属**防御性保留**。
+    """
     if not a:
         return b
     if not b:
         return a
-    return a if a.get("acoustic_coverage", 1.0) >= b.get("acoustic_coverage", 0.0) else b
+    return a if _coverage_of(a) >= _coverage_of(b) else b
 
 
 def _align_with_policy(

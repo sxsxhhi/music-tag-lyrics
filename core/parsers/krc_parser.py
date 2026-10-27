@@ -6,6 +6,7 @@ import base64
 import json
 from typing import Dict, List, Any, Optional
 
+from ..utils.text_utils import LOOSE_BMP_HANZI_RE
 from ..utils.time_utils import apply_time_offset
 from ._common import parse_offset_tag
 
@@ -50,9 +51,9 @@ def extract_krc_language_translation(krc_text: str, tags: Optional[Dict[str, str
                         lines.append(item.strip())
                     else:
                         lines.append("")
-                # Validate semantic validity: must contain genuine Chinese characters
                 combined = "".join(lines)
-                if re.search(r"[\u4e00-\u9fff]", combined):
+                # 故意用窄口径（基本区）判「是否含中文」的体量启发式；见 text_utils
+                if LOOSE_BMP_HANZI_RE.search(combined):
                     return lines
     except Exception as exc:
         logging.getLogger(__name__).debug("提取 KRC 内嵌翻译异常: %s", exc)

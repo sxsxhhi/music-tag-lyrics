@@ -145,6 +145,26 @@ def test_process_single_song_missing_and_unsupported():
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_better_align_symmetric_default():
+    """v1.5.2-D5: 择优缺字段时两侧同口径（旧实现 a 默认 1.0 / b 默认 0.0，位置决定结论）。"""
+    # 两侧都缺字段 → 平手 → 保留首次 a
+    a = {"lines": [{"text": "a"}]}
+    b = {"lines": [{"text": "b"}]}
+    assert ps._better_align(a, b) is a
+    assert ps._better_align(b, a) is b  # 交换参数也保留「首次」，不再因默认值翻盘
+
+    # 正常比较：高覆盖胜
+    hi = {"acoustic_coverage": 0.9}
+    lo = {"acoustic_coverage": 0.8}
+    assert ps._better_align(hi, lo) is hi
+    assert ps._better_align(lo, hi) is hi
+
+    # 非数值覆盖按 0.0 处理，不抛异常
+    bad = {"acoustic_coverage": None}
+    assert ps._better_align(hi, bad) is hi
+    assert ps._better_align(bad, hi) is hi
+
+
 def main():
     """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
     return _testkit.run(globals())

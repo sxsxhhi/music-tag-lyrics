@@ -40,7 +40,7 @@ try:
 except ImportError:  # C-01: numpy 只在声学/合成路径需要，缺失时不让抓词链路崩
     np = None
 
-from .utils.text_utils import CJK_RE, is_source_or_credit_line
+from .utils.text_utils import CJK_RE, is_cjk_char, is_source_or_credit_line
 
 # ffmpeg 桥：声学环境自带 imageio-ffmpeg 二进制，自动挂入 PATH（供 Demucs/Torch 使用）
 try:
@@ -401,26 +401,13 @@ _NO_HINT_MAX_ADV = 12          # 无提示最多前移次数
 # ==========================================
 
 def _is_cjk(ch: str) -> bool:
-    """判定是否为中日韩文字（CJK 汉字全集 Ext A~I、兼容字、平/片假名、长音符、谚文）。"""
-    if not ch or len(ch) != 1:
-        return False
-    c = ord(ch)
-    return (
-        (0x4E00 <= c <= 0x9FFF) or       # CJK 统一表意文字基本集
-        (0x3400 <= c <= 0x4DBF) or       # CJK 扩展 A
-        (0x20000 <= c <= 0x2A6DF) or     # CJK 扩展 B
-        (0x2A700 <= c <= 0x2B73F) or     # CJK 扩展 C
-        (0x2B740 <= c <= 0x2B81F) or     # CJK 扩展 D
-        (0x2B820 <= c <= 0x2CEAF) or     # CJK 扩展 E
-        (0x2CEB0 <= c <= 0x2EBEF) or     # CJK 扩展 F
-        (0x30000 <= c <= 0x3134F) or     # CJK 扩展 G
-        (0x31350 <= c <= 0x323AF) or     # CJK 扩展 H / I
-        (0xF900 <= c <= 0xFAFF) or       # CJK 兼容表意文字
-        (0x2F800 <= c <= 0x2FA1F) or     # CJK 兼容表意文字补充
-        (0x3040 <= c <= 0x309F) or       # 日文平假名
-        (0x30A0 <= c <= 0x30FF) or       # 日文片假名（含长音符 \u30fc「ー」）
-        (0xAC00 <= c <= 0xD7AF)          # 韩文谚文音节
-    )
+    """判定是否为中日韩文字（汉字全集 Ext A~I、兼容字、平/片假名、长音符、谚文）。
+
+    v1.5.2-D1: 区间表收敛到 `core.utils.text_utils` 单一真相。旧实现在这里
+    逐块枚举，Ext F（止 0x2EBEF）与 Ext G（起 0x30000）之间的
+    Ext I（U+2EBF0–U+2EE5D）被整段漏掉，生僻字因此被当拉丁词字符粘连。
+    """
+    return is_cjk_char(ch)
 
 
 def _is_word_char(ch: str) -> bool:
@@ -1012,7 +999,10 @@ class DualEngineHybridAligner:
             print(f"✅ {msg}")
         except Exception:
             print(f"[OK] {msg}")
-        # v1.5.1-C1: 按行记账。线性保底（均分）不是声学，不能对外宣称「GPU 声学逐字」。
+        # v1.5.1-C1 / v1.5.2-D2: 按行记账。线性保底（均分）不是声学；
+        # 而 Whisper 双引擎**不产出逐字分数**，其时间轴仍是真声学（声学锚点 +
+        # 谱流拆分 + 谷底锁定），因此必须显式声明 engine_scored=False，
+        # 否则每行都会被误记成 interpolated → 整首 synthesized_words=True。
         from .acoustic_quality import finalize_word_source_flags
         result = {
             "source": "demucs_gpu_alignment",
@@ -1020,8 +1010,11 @@ class DualEngineHybridAligner:
             "synthesized_words": False,
             "time_precision": 3,
             "lines": output_lines,
+            "align_engine": "dual_whisper",
         }
-        finalize_word_source_flags(result, fallback_lines=fallback_line_idx)
+        finalize_word_source_flags(
+            result, fallback_lines=fallback_line_idx, engine_scored=False
+        )
         return result
 
     # ------------------------------------------------------------------

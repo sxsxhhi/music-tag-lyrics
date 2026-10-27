@@ -375,7 +375,7 @@ def test_14_quality_gate_line_and_modes():
 
 
 def test_15_synthesized_word_accounting():
-    """v1.5.1-C1 synthesized_words 语义：只有整首无真声学逐字才为 True。"""
+    """v1.5.2-D2/D4 synthesized_words 语义：只有「有逐字行、且无任何真声学行」才为 True。"""
     from core.acoustic_quality import finalize_word_source_flags
 
     def mk():
@@ -395,15 +395,93 @@ def test_15_synthesized_word_accounting():
     assert d["synthesized_words"] is False
     assert d["synthesized_ratio"] == 0.5
     assert d["words_source_stats"]["gpu_linear_fallback"] == 1
+    assert d["linear_fallback_lines"] == 1
 
     # 两行都线性保底 → 才算整首合成
     d = finalize_word_source_flags(mk(), fallback_lines=[0, 1])
     assert d["synthesized_words"] is True
     assert d["synthesized_ratio"] == 1.0
 
-    # 空歌词按「无真声学」处理
-    d = finalize_word_source_flags({"lines": [{"text": "x", "words": []}]})
-    assert d["synthesized_words"] is True
+    # 全行级歌词（没有任何逐字）：既没有声学、也没有合成 → 不是「合成」
+    d = finalize_word_source_flags({"lines": [{"text": "x", "words": []}, {"text": "y", "words": []}]})
+    assert d["no_word_level"] is True
+    assert d["n_wordable_lines"] == 0
+    assert d["synthesized_words"] is False, "无逐字 ≠ 合成"
+    assert d["synthesized_ratio"] == 0.0
+    assert d["acoustic_coverage"] == 0.0
+    assert d["words_source_stats"]["line_level"] == 2
+
+
+def test_16_finalize_engine_unscored_marks_gpu_whisper():
+    """v1.5.2-D2: 普通话双引擎（engine_scored=False）的逐字是真声学，不得记成 interpolated。"""
+    from core.acoustic_quality import (
+        finalize_word_source_flags, SRC_GPU_WHISPER, SRC_INTERPOLATED,
+    )
+
+    data = {"lines": [
+        {"text": "傍晚六点下班", "words": [
+            {"text": "傍", "start": 1000, "end": 1200},
+            {"text": "晚", "start": 1200, "end": 1400},
+        ]},
+        {"text": "换掉药厂的衣裳", "words": [
+            {"text": "换", "start": 2000, "end": 2200},
+            {"text": "掉", "start": 2200, "end": 2400},
+        ]},
+    ]}
+    out = finalize_word_source_flags(data, engine_scored=False)
+    assert out["words_source_stats"][SRC_GPU_WHISPER] == 2, out["words_source_stats"]
+    assert out["words_source_stats"][SRC_INTERPOLATED] == 0, out["words_source_stats"]
+    assert out["acoustic_coverage"] == 1.0
+    assert out["scored_coverage"] == 0.0
+    assert out["synthesized_words"] is False
+    assert all(l["words_source"] == SRC_GPU_WHISPER for l in out["lines"])
+
+
+def test_17_finalize_mixed_score_is_interpolated():
+    """v1.5.2-D2: 同一行内「有分 + 无分」混合 = 邻字内插，才记 interpolated。"""
+    from core.acoustic_quality import finalize_word_source_flags, SRC_INTERPOLATED
+
+    data = {"lines": [{"text": "abc", "words": [
+        {"text": "a", "score": -1.0},
+        {"text": "b", "score": None},
+        {"text": "c", "score": -1.2},
+    ]}]}
+    out = finalize_word_source_flags(data, engine_scored=True)
+    assert out["lines"][0]["words_source"] == SRC_INTERPOLATED
+    assert out["acoustic_coverage"] == 0.0
+    assert out["synthesized_words"] is True
+
+
+def test_18_finalize_stats_sum_equals_lines_and_no_double_count():
+    """v1.5.2-D4: stats 覆盖全部行；fallback∩demoted 不重复计数。"""
+    from core.acoustic_quality import finalize_word_source_flags
+
+    data = {"lines": [
+        {"text": "a", "words": [{"text": "a", "score": -1.0}]},
+        {"text": "b", "words": [{"text": "b", "score": -1.0}]},
+        {"text": "c", "words": []},
+    ]}
+    # 第 1 行同时出现在 fallback 与 demoted：只记优先级最高的 demoted
+    out = finalize_word_source_flags(data, fallback_lines=[1], demoted_lines=[1])
+    stats = out["words_source_stats"]
+    assert sum(stats.values()) == len(data["lines"]), stats
+    assert stats["gate_demoted"] == 1
+    assert stats["gpu_linear_fallback"] == 0
+    assert out["linear_fallback_lines"] == 0, "与 stats 不一致即为重复计数"
+
+
+def test_19_track_gate_skips_score_dims_when_unscored():
+    """v1.5.2-D2: 引擎不产分时，均值/unaligned 维度跳过（不拿 -99/1.0 误熔断）。"""
+    from core.acoustic_quality import compute_track_stats, evaluate_track_gate, GateConfig
+
+    lines = [{"start": 1000, "end": 3000, "words": [{"text": "a"}]}]
+    stats = compute_track_stats(
+        lines, total_audio_s=300.0, n_target=60, n_target_unaligned=60,
+        scores_available=False, hints_span_s=None,
+    )
+    assert stats.unaligned_ratio == 1.0  # 没有分数时算出来必然 1.0
+    reasons = evaluate_track_gate(stats, GateConfig())
+    assert not any(r.startswith(("R_TRACK_MEAN", "R_TRACK_MEDIAN", "R_TRACK_P10", "R_TRACK_UNALIGNED")) for r in reasons), reasons
 
 
 def main():

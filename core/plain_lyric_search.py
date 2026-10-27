@@ -10,7 +10,7 @@ from typing import List, Optional
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
 from .utils.http import http_get_text, UA_DESKTOP
-from .utils.text_utils import LRC_META_LINE_RE
+from .utils.text_utils import LRC_META_LINE_RE, LOOSE_BMP_HANZI_RE
 from .utils.time_utils import strip_timing_tags
 from .utils.version_guard import is_title_fuzzy_match, is_live_version, matches_version_policy
 
@@ -51,7 +51,8 @@ def looks_like_lyrics(text: str, title: str = "") -> bool:
     if len(lines) < 4:
         return False
     joined = "".join(lines)
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", joined))
+    # 故意用窄口径（基本区）做体量启发式，不是字符契约；见 text_utils 注释
+    cjk = len(LOOSE_BMP_HANZI_RE.findall(joined))
     latin = len(re.findall(r"[A-Za-z]", joined))
     if cjk < 20 and latin < 40:
         return False
