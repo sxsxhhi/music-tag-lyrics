@@ -3,7 +3,7 @@ name: music-tag-lyrics
 description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.5.2）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.5.2)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.6.0)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -196,3 +196,39 @@ flowchart TD
 - 离线测：`python tests/run_all.py`（15 个套件 / 221 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
+
+## 二十、声学对齐 v1.6.0：zh CTC 通道 / 行轴校准 / 质检闭环
+
+**国语新通道（默认开启，`MTL_ZH_CTC=0` 回退双引擎）**：中文 wav2vec2 CTC **逐行窗**
+强制对齐（每行独立窗，免疫全局漂移与「长字吞停顿」）。模型
+`jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`（1.2GB）一律
+`local_files_only` 加载，缺失即抛 `AcousticEnvironmentError`，**绝不静默联网**；
+失败自动回落 Whisper 双引擎。词表只有大写 A–Z（无数字/标点）→ 英文走 `upper()`
+回退、数字与标点吸附为 `no_ctc` 间隙词；**逐字只借时间，绝不改词**（断言兜底）。
+
+**逐行闸（`core/acoustic/gate.py`）**：字宽软限 1200ms（字内停顿 ≥250ms 判「吞停顿」）、
+硬限 1600ms（真实长音实测 1537ms 必须放行）、跨度 `max(2s, 字数×0.8s)`；
+位移 >600ms 且非短句（≤2 字放行）时要求分数 >−9 且新起点 ±150ms 内有起振。
+不合格**整行回退**（旧值优先，否则线性保底）并计入 `gate_reverts`。
+
+**行轴校准（`core/utils/line_axis.py`，`MTL_LINE_AXIS=keep` 关闭）**：
+行级 LRC 的行标签是「整行显示时间」（实测早 0.88s），逐字化后必须下沉到起唱点：
+`tag = 首字 − 60ms`，三档裁决（收缩上一行末字 → 退到 0 间隙 → 整行后推 ≤99ms），
+**绝不 `min(tag, first)` 硬压**（会造行间重叠）。TTML/KRC/官方逐字永不改写；
+同时间戳译文行跟随主行位移。判定门：`−150ms ≤ tag − 首字 ≤ 0` 全量通过。
+
+**质检闭环（`core/acoustic/qc.py`）**：`python -m core.acoustic.qc --lrc x.lrc --audio x.flac`
+可独立跑（仅 numpy）；L1 单调自动修复（含 ≥50ms 短字）、L2 节奏只告警分诊、
+L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/闸门汇总。
+
+**zh 出货验货（`MTL_ZH_GATE=on`）**：原判粤语、熔断后由 zh 出货时，用**粤语** CTC
+模型给 zh 跨度打分，中位数 < `MTL_ZH_MIN_SCORE`（−8.0）即拒收回落行级
+（只做同曲横向比较，绝不跨模型设绝对阈值）。
+
+**开关总表（全部可独立回退）**：`MTL_ALIGN_MODE=windowed|global`、`MTL_ZH_CTC=1|0`、
+`MTL_ZH_GATE=on|off`、`MTL_ZH_MIN_SCORE=-8.0`、`MTL_LINE_AXIS=calibrate|keep`、
+`MTL_DEVICE=auto|cpu`、`MTL_DEMUCS=on|off`、`MTL_QC_L3=on|off`、`MTL_GATE_MODE=strict|warn|off`。
+
+**离线测试**：15+4 个套件 / **271 条**全绿（三态 runner，SKIP 不计）；
+一键 `python tests/run_all.py`；`tests/audit_acoustic_baseline.py` 为 Golden **只读审计**
+（跑引擎、逐行比对、出 diff 与初判，**禁止用引擎输出回填夹具**）。

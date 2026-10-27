@@ -35,6 +35,12 @@ _RELEASE_THRESH = 0.020
 _MIN_SILENT_MS = 60
 _ENTERING_TONE_SILENT_MS = 120  # 入声字闭气截断容错
 
+# v1.6.0: 逐行窗对齐的窗口余量。**不要加大**：hint 区间本身已完整覆盖本句演唱，
+# 左右各 60ms 只为防边界截断。实测把左侧放宽到 0.6s 会把上一行尾音吸进窗，
+# 导致本行被压到窗口开头（与"窗口回退 −1.5s"同源的坑）。
+_WIN_PAD_S = 0.060
+
+
 # v1.5.1-A1: 双侧重同步的前瞻窗口。判定「多余 run」时向前看这么多个 target，
 # 若该 run 的音节 id 出现在窗口内，就认定当前 target 缺失而非 run 多余。
 # 取 12 是因为一句歌词通常不超过 12 个音节，超过则宁可丢弃该 run（影响更轻）。
@@ -365,6 +371,86 @@ class CantoneseCTCAligner:
         full_log_probs = torch.cat(window_log_probs, dim=1)
         return full_log_probs
 
+    # ------------------------------------------------------------------
+    def _windowed_spans(
+        self,
+        log_probs: "torch.Tensor",
+        line_tokens: List[List[Dict[str, Any]]],
+        hints: List[Tuple[float, str]],
+        F: Any,
+        torch: Any,
+        frame_s: float,
+    ) -> List[Dict[int, Optional[Dict[str, Any]]]]:
+        """按行切窗各自 forced_align，返回 per-line {tok_idx: span|None}（绝对秒）。
+
+        与「全曲单次对齐」的本质区别：每个音节只能在**本行窗口内**分配帧，
+        前奏静音与上一句尾音都被挡在窗外 —— 这是 20s 漂移的根治手法。
+        单行失败只把该行标 None（交给下游兜底），不牵连整首。
+        """
+        T = int(log_probs.shape[1])
+        k_scale = frame_s / 0.020          # reconstruct 以 50fps 为标度，按实际帧率校正
+        per_line: List[Dict[int, Optional[Dict[str, Any]]]] = []
+        drift_warn = 0
+
+        for i, toks in enumerate(line_tokens):
+            ids: List[int] = []
+            idx_map: List[int] = []
+            for k, tok in enumerate(toks):
+                jp = tok.get("jyutping")
+                if jp and jp in self._syllable_to_id:
+                    ids.append(self._syllable_to_id[jp])
+                    idx_map.append(k)
+            span_map: Dict[int, Optional[Dict[str, Any]]] = {}
+
+            if not ids:
+                per_line.append(span_map)
+                continue
+
+            h0 = float(hints[i][0])
+            h1 = float(hints[i + 1][0]) if i + 1 < len(hints) else h0 + 8.0
+            f0 = max(0, int((h0 - _WIN_PAD_S) / frame_s))
+            f1 = min(T, int((h1 + _WIN_PAD_S) / frame_s))
+            need = max(12, len(ids) * 2)
+            if f1 - f0 < need:
+                f1 = min(T, f0 + need)
+            if f1 <= f0 or (f1 - f0) < len(ids):
+                for kk in idx_map:
+                    span_map[kk] = None
+                per_line.append(span_map)
+                continue
+
+            lp = log_probs[:, f0:f1, :]
+            tgt = torch.tensor([ids], dtype=torch.int32, device=self._device)
+            il = torch.tensor([f1 - f0], dtype=torch.int32, device=self._device)
+            tl = torch.tensor([len(ids)], dtype=torch.int32, device=self._device)
+            try:
+                al, sc = F.forced_align(lp, tgt, il, tl, blank=0)
+                spans = reconstruct_target_spans(al[0], sc[0], ids)
+            except Exception as e:                       # 单行失败不影响其他行
+                logger.warning("   ⚠️ [yue-ctc] 行 %d 窗内对齐失败：%s", i + 1, e)
+                spans = [None] * len(ids)
+
+            for kk, sp in zip(idx_map, spans):
+                if sp is None:
+                    span_map[kk] = None
+                    continue
+                span_map[kk] = {
+                    "start": f0 * frame_s + float(sp["start"]) * k_scale,
+                    "end": f0 * frame_s + float(sp["end"]) * k_scale,
+                    "score": sp.get("score"),
+                }
+
+            first = next((span_map[kk] for kk in idx_map if span_map.get(kk)), None)
+            if first and abs(float(first["start"]) - h0) > 1.5:
+                drift_warn += 1
+            per_line.append(span_map)
+
+        if drift_warn:
+            logger.warning(
+                "   ⚠️ [yue-ctc] %d 行的窗内首字与提示差 >1.5s（已记录，交由逐行闸）", drift_warn
+            )
+        return per_line
+
     def align_cantonese_lines(
         self,
         audio_16k: "np.ndarray",
@@ -421,28 +507,54 @@ class CantoneseCTCAligner:
             if not target_syllable_ids:
                 raise ValueError("粤语对齐拦截：提供的歌词未解析出任何有效粤拼音节！")
 
-            # 3. 执行 torchaudio.functional.forced_align
-            targets = torch.tensor([target_syllable_ids], dtype=torch.int32, device=self._device)
-            input_lengths = torch.tensor([t_total_frames], dtype=torch.int32, device=self._device)
-            target_lengths = torch.tensor([len(target_syllable_ids)], dtype=torch.int32, device=self._device)
+            # 3. 强制对齐：windowed（默认：逐行窗）或 global（v1.5.2 旧行为）
+            #    实测全曲一次对齐在前奏静音区累积 20s 漂移（首行 3.1s，应 23.2s）。
+            mode = (os.environ.get("MTL_ALIGN_MODE", "windowed") or "windowed").strip().lower()
+            use_windowed = (mode != "global") and bool(hints) and len(hints) == len(clean_lines)
+            target_spans: List[Any] = []
+            line_spans: Optional[List[Dict[int, Optional[Dict[str, Any]]]]] = None
+            if use_windowed:
+                frame_s = (total_audio_s / t_total_frames) if t_total_frames else 0.020
+                line_spans = self._windowed_spans(
+                    log_probs, line_parsed_tokens, hints, F, torch, frame_s
+                )
+                print(f"   🎯 [yue-ctc] 逐行窗对齐：{len(line_spans)} 行"
+                      f"（窗宽 ±{int(_WIN_PAD_S * 1000)}ms）")
+            else:
+                targets = torch.tensor([target_syllable_ids], dtype=torch.int32, device=self._device)
+                input_lengths = torch.tensor([t_total_frames], dtype=torch.int32, device=self._device)
+                target_lengths = torch.tensor([len(target_syllable_ids)], dtype=torch.int32, device=self._device)
 
-            aligned_tokens, scores = F.forced_align(log_probs, targets, input_lengths, target_lengths, blank=0)
-            target_spans = reconstruct_target_spans(aligned_tokens[0], scores[0], target_syllable_ids)
+                aligned_tokens, scores = F.forced_align(
+                    log_probs, targets, input_lengths, target_lengths, blank=0
+                )
+                target_spans = reconstruct_target_spans(
+                    aligned_tokens[0], scores[0], target_syllable_ids
+                )
+                if mode == "global":
+                    print("   ⚠️ [yue-ctc] MTL_ALIGN_MODE=global：全曲单次对齐（v1.5.2 行为，可能漂移）")
+                else:
+                    print("   ⚠️ [yue-ctc] 无可用行级提示，退化为全曲单次对齐（可能漂移）")
 
-            # 4. 将 target_spans 时间戳回填到行与字结构中（v8：秒级单位契约，禁止二次乘 0.020）
+            # 4. 将 spans 回填到行与字结构中（v8：秒级单位契约，禁止二次乘 0.020）
             raw_aligned_lines: List[Dict[str, Any]] = []
             n_unaligned_targets = 0   # v1.5.1-B: 供 unaligned_ratio（分母 = target 音节数）
             for line_idx, text in enumerate(clean_lines):
                 toks = line_parsed_tokens[line_idx]
                 line_words: List[Dict[str, Any]] = []
 
-                for tok in toks:
-                    t_idx = tok.get("target_idx")
-                    sp = target_spans[t_idx] if (t_idx is not None and t_idx < len(target_spans)) else None
+                for tok_idx, tok in enumerate(toks):
+                    if use_windowed:
+                        sp = line_spans[line_idx].get(tok_idx) if line_spans else None
+                        is_target = tok.get("jyutping") in self._syllable_to_id
+                    else:
+                        t_idx = tok.get("target_idx")
+                        sp = target_spans[t_idx] if (t_idx is not None and t_idx < len(target_spans)) else None
+                        is_target = t_idx is not None
                     if sp is None:
-                        if t_idx is not None:
+                        if is_target:
                             # 只有「本该有跨度的 target 音节」才计入未对齐；
-                            # 拉丁词（t_idx=None）从来不是 target，不进分母也不进分子。
+                            # 拉丁词从来不是 target，不进分母也不进分子。
                             n_unaligned_targets += 1
                         line_words.append({
                             "char": tok["char"], "start": None, "end": None,
@@ -583,13 +695,14 @@ class CantoneseCTCAligner:
                 raw_st = words[0]["start"]
                 raw_ed = words[-1]["end"]
 
-                # 6.1 结合提示轴（若存在）进行边界保护
+                # 6.1 提示轴只做**单向钳制**（v1.6.0）
+                # 旧实现 `raw = 0.6*raw + 0.4*hint` 会把首字往「显示提前量」方向拉
+                # （0.4×0.88 ≈ 0.35s）；而 hint 常见为「整行显示时间」，本就偏早，
+                # 偏早的 hint 不该有约束力。改成 max 后：偏早无害、偏晚才生效。
                 if hints and i < len(hints):
-                    hint_st = hints[i][0]
-                    # CTC 行锚与提示行轴在 ±0.9s 带内融合
-                    if abs(raw_st - hint_st) <= 0.90:
-                        raw_st = 0.6 * raw_st + 0.4 * hint_st
-                        words[0]["start"] = raw_st
+                    hint_st = float(hints[i][0])
+                    if raw_st < hint_st:
+                        words[0]["start"] = hint_st
 
                 # 6.2 首字物理起振精修（反向扫描相对阈值）
                 prev_end_s = output_lines[-1]["end"] / 1000.0 if output_lines else 0.0

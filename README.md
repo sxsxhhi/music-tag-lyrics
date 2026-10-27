@@ -12,7 +12,7 @@
   <a href="https://github.com/sxsxhhi/music-tag-lyrics"><img src="https://img.shields.io/github/stars/sxsxhhi/music-tag-lyrics?style=social" alt="GitHub Stars"></a>
 </p>
 
-> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索、专辑封面三级梯级补全与 Demucs v4 GPU 双引擎（国语/粤语）声学对齐引擎 (v1.5.2)。**  
+> **纯原生内聚、零外部可执行软件依赖的音乐音频元数据标准化清洗、下架孤品双端声学咬合打轴、多源逐字歌词检索、专辑封面三级梯级补全与 Demucs v4 GPU 双引擎（国语/粤语）声学对齐引擎 (v1.6.0)。**  
 > 
 > **核心调度体系**：Apple TTML (`am-lyrics` 4-origin Quorum) → 酷狗 (KRC) → AMLL (NCM) → 网易云 (tlyric) → LRCSHARE → LRCLIB → Demucs v4 GPU 双引擎（国语 Whisper / 粤语 Wav2Vec2 CTC）兜底。  
 > **铁律守护**：恪守**【双核心红线：绝不语音听写 · 绝不机械机翻】**与**【20 大避坑铁律】**（全文见 [`SKILL.md`](SKILL.md)）。外语原文与译文必须同一源整包；逐字只打原文，译文为标准 ELRC 官方精修副行。
@@ -228,7 +228,7 @@ python tests/test_canto_align.py
 ```
 
 - 测试为**三态 runner**（PASS / SKIP / FAIL）：SKIP 不计 PASS、也不算失败；无 torch/CUDA 时 GPU 用例自动 SKIP。
-- 基准：**15 个套件 / 221 条用例**。
+- 基准：**19 个套件 / 271 条用例**（v1.6.0 新增 line_axis / acoustic_zh / gate / qc 四套件）。
 - ⚠️ **不要用** `python -m unittest discover tests`：本仓用例是函数式而非 `unittest.TestCase`，该命令会输出 `NO TESTS RAN` 并返回 0（**假绿**）。
 - GPU 回归（可选，需真实母带 + CUDA）：`python tests/run_cantonese_baseline.py`（粤语《焚情》）、`python tests/run_acoustic_baseline.py`（国语《那么骄傲》）。
 
@@ -258,6 +258,7 @@ python tests/test_canto_align.py
 
 | 版本号 | 发布日期 | 里程碑主题 | 核心升级与修复要点 | 协议与兼容性 |
 | :---: | :---: | :--- | :--- | :---: |
+| **v1.6.0** | `2026-10-27` | **zh CTC 逐行窗通道 · 行轴校准 · 逐行闸与质检闭环** |• **国语新通道（P0-3）**：`core/acoustic/zh.py` —— 中文 wav2vec2 CTC **逐行窗**强制对齐，免疫全局漂移与「长字吞停顿」（实测 20→8）；模型 `local_files_only` 加载、缺失显式阻断；词表仅大写 A–Z → 英文 `upper()` 回退、数字/标点吸附为 `no_ctc`；**逐字只借时间绝不改词**（断言兜底）<br/>• **行轴校准（P0-1）**：`core/utils/line_axis.py` —— 行标签从「显示轴」下沉到起唱轴（`首字−60ms`），三档裁决保证不造行间重叠；TTML/KRC 永不改写；译文行成对跟随<br/>• **逐行闸（P0-5）**：`core/acoustic/gate.py` —— 宽度软/硬双判据（1200+停顿 / 1600）、短句放行、整行回退并记 `gate_reverts`<br/>• **zh 验货（P0-4）**：yue 熔断后由 zh 出货时用粤语模型横向打分，中位数 < −8.0 拒收<br/>• **质检闭环**：`core/acoustic/qc.py`（L1 自动修复 / L2 分诊 / L3 三窗复检，仅依赖 numpy）；`--qc-report` 输出 JSON；`tests/audit_acoustic_baseline.py` Golden **只读审计**（禁止回填夹具）<br/>• **粤语逐行窗（P0-2）**：`align_cantonese_lines` 默认 windowed，hint 融合改单向钳制；`find_onset_backward` 上界 0.3→0.6s<br/>• **测试**：221 → **271**（+50），GPU 双基线 + 熔断链全过 | 生产级 · 通道补全 |
 | **v1.5.2** | `2026-10-27` | **字符判定单源化 · gpu_whisper 真声学记账 · 文档/CI 治理** | • **汉字判定单源（`core/utils/text_utils.py`）**：`HANZI_RANGES` 区间表为唯一真相，正则由表派生，覆盖扩展 A~I（补上 v1.5.1 漏判的 **Ext I = U+2EBF0–U+2EE5D**）与兼容区；`acoustic_aligner` / `ttml_parser` 改为委托，`plain_lyric_search` / `krc_parser` 保留显式窄口径<br/>• **记账修正（D2/D4）**：新增 `gpu_whisper` 态 —— 普通话双引擎逐字是**真声学时间轴**（只是引擎不产分数），计入 `acoustic_coverage`（实测 0.0 → **0.926**）；`interpolated` 只留给行内分数混合；`line_level` 不再被算作合成（`synthesized_words` 语义纠正）；`linear_fallback_lines` 与 stats 同源去重<br/>• **门禁防御**：`TrackStats.scores_available` —— 引擎不产分时跳过均值/unaligned 维度，不把「没有度量」当「质量差」；`score` 占位分 `0.0` → `None`<br/>• **工程治理**：新增 `tests/run_all.py` 一键跑 15 套件（**221 条**；明确禁止 `unittest discover` 的假绿用法）；CI step 名去版本号；`_better_align` 默认值对称化<br/>• **文档**：徽章去数字化、补全 `MTL_GATE_*` / `MTL_ALIGN_*` 环境变量表、测试清单 12 → 15 | 生产级 · 契约修正 |
 | **v1.5.1** | `2026-10-26` | **双层质量门禁 · 三态熔断与 zh 重试 · 34 项缺陷修复** | • **`core/acoustic_quality.py`（新增）**：双层门禁——整曲宽门限（`mean/median/p10/unaligned_ratio/span/demote_ratio` 六维）防「整体不可用」+ 分行严门限把说唱桥段/念白降级为行级；阈值由本机 GPU 双样本实测标定（焚情 mean=-1.936 / 那么骄傲强入 yue mean=-8.279），`MTL_GATE_*` 环境变量可覆盖，`MTL_GATE_MODE=off` 一键回 v1.5.0 行为<br/>• **三态熔断（`AcousticQualityError` / `AlignStatus`）**：熔断与环境失败严格区分；粤语熔断时**自动回落 zh 双引擎重试一次**（人声缓存免二次 Demucs），仍不足才落 numpy<br/>• **`synthesized_words` 语义修正**：逐行 `words_source` 记账（`gpu_acoustic` / `gpu_linear_fallback` / `numpy_synth` / `gate_demoted` / `interpolated`），只有整首无真声学逐字才置 True——消除「线性均分仍报声学」与「一行缺词整首标合成」双向失真<br/>• **声学链路 5 项 P0**：`reconstruct_target_spans` 双侧重同步（消除单音节缺失级联置 None）；validator 零重叠绝对优先（500ms 行下限让位，恒等式 `line.end == words[-1].end`）；`to_jyutping` NFKC 仅用于查表（消除 `…`→`...` 导致整行丢逐字）；简体多音字首读音校准（种/台/着/叶/行）；`hop<=0` 死循环守卫<br/>• **TTML 源 3 项**：Apple ID 格式收口 `^\d{1,16}$`（防注入）；alt-id 与主链共用 deadline（单曲最坏 30.5s→8.5s）；iTunes 429 冷却按用途分桶（search/lookup 互不拖累）<br/>• **测试网补强**：runner 三态化（`SKIP` 不计 PASS，消除 5 条空转）；4 条自证式用例改为驱动真实引擎；`text_utils`/`krc_xor`/`process_single_song` 补零覆盖测试；熔断补 **pass 侧边界**用例；离线测试 189 → **214 条全绿**<br/>• **实测回归**：《焚情》粤语 32 行 0% 降级全绿；《那么骄傲》国语 51 行最大偏差 1200ms（容差 1500ms）；粤拼音节表 729→**703**（实测）；纯文本检索实为**双源**（网易+LRCLIB），文档与命名同步 | 生产级 · 质量门禁加固 |
 | [**v1.5.0**](https://github.com/sxsxhhi/music-tag-lyrics/releases/tag/v1.5.0) | `2026-10-26` | **粤语声学逐字对齐引擎与智能语种探测路由** | • **CantoneseCTCAligner**：原生收编粤语逐字声学对齐引擎，基于 `wav2vec2-large-xlsr-cantonese` + 703 类无调粤拼 CTC 映射桥梁，20s 窗 + 2s 交叉淡化兼顾 6GB VRAM 上限；原生 `torchaudio.functional.forced_align` Viterbi DP 动态规划实现毫秒级咬合；入声韵尾（-p/-t/-k）120ms 闭气保护；西文单词等比内插；铁律 19 零重叠硬门禁<br/>• **语种多级启发式路由探测（`lang_detect`）**：Cantopop 白名单歌手库 + 粤语经典歌词意象 N-gram 库（40+ 词条）+ 粤语方言特征字频统计 + 未剥离混合音频首窗预探；CLI 新增 `--lang auto/zh/yue` 显式控制<br/>• **离线粤拼字典（`jyutping.py`）**：内聚 30,286 字符与 165,682 词汇紧凑字典（`jyutping_dict.tsv`），自动简繁对齐，最长前缀匹配消歧多音字，阿拉伯数字音译，全离线零外部调用<br/>• **回归验证**：《焚情 - 黄凯芹》粤语实战回归 32/32 行单调全绿通过；《那么骄傲》母盘普通话双引擎回归 51/51 行零回退；离线单元测试 13 组 / 189 条全部全绿 | 生产级 · 粤语声学引擎升级 |

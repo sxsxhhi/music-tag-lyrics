@@ -190,3 +190,28 @@ def is_instrumental_placeholder(lines, target_duration_ms: int = 0, max_lines: i
     joined = " ".join(str(l.get("text", "")) for l in lines)
     low = joined.lower()
     return any(kw.lower() in low for kw in INSTRUMENTAL_KEYWORDS)
+
+_TITLE_SEP = r"[-–—－]"
+
+
+def is_title_line(text: str, title: str = "", artist: str = "") -> bool:
+    """是否为「歌名 - 歌手」这类标题行（v1.6.0）。
+
+    现状缺口：`is_source_or_credit_line` 认「作词 : 某某」，**不认**「歌名 - 歌手」
+    （实测返回 False），于是片头标题行会进对齐目标序列，把若干合成音节摊进前奏。
+    本函数只做「标题行」这一件事，判定从严：必须带分隔符且（给了 title 时）以它开头。
+    """
+    from core.utils.time_utils import strip_timing_tags
+
+    t = strip_timing_tags(text or "").strip()
+    if not t:
+        return False
+    m = re.match(r"^(.{1,40}?)\s*" + _TITLE_SEP + r"\s*(.{1,40})$", t)
+    if not m:
+        return False
+    left, right = m.group(1).strip(), m.group(2).strip()
+    if not left or not right:
+        return False
+    if title:
+        return left == title.strip()
+    return True

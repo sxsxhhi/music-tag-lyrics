@@ -771,6 +771,23 @@ class DualEngineHybridAligner:
         total_len = len(v_mono) / sr
         t16 = torch.from_numpy(v_mono.astype(np.float32)).unsqueeze(0)
         v16 = torchaudio.functional.resample(t16, sr, 16000).squeeze(0).numpy()
+
+        # 3a. v1.6.0：优先走「中文 CTC 逐行窗」（真声学时间轴，免疫长字吞停顿）。
+        #     失败/模型缺失 → 回落下面的 Whisper 双引擎（MTL_ZH_CTC=0 可强制回落）。
+        if os.environ.get("MTL_ZH_CTC", "1").strip().lower() not in ("0", "false", "off"):
+            try:
+                from .acoustic.qc import Env as _QcEnv
+                from .acoustic.zh import align_zh_windowed
+
+                _env = _QcEnv.from_vocals(v_mono, sr)
+                _ctc = align_zh_windowed(
+                    v16, clean_lines, hints=hints, env=_env, device=self._device
+                )
+                if _ctc and _ctc.get("lines"):
+                    return _ctc
+            except Exception as _e:
+                logger.warning("   ⚠️ [zh-ctc] 通道不可用，回落 Whisper 双引擎：%s", _e)
+
         wmodel = self.whisper_model
 
         # 3. 行级切片由抗咬窗梯在逐行循环内构建（hint 锚定 / cursor 游标）
@@ -1209,7 +1226,7 @@ class AcousticAligner:
         Line-Head Onset Gate: Scans backward in vocals.mono with 15ms step to pinpoint true acoustic entry.
         """
         search_start = max(orig_start_s - 1.2, prev_line_end_s + 0.05, 0.0)
-        search_end = min(word_end_s, orig_start_s + 0.3)
+        search_end = min(word_end_s, orig_start_s + 0.6)
         if search_start >= search_end:
             return orig_start_s
 

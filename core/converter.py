@@ -88,7 +88,8 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
                 "duration": 3000,
                 "end": et,
                 "text": text,
-                "words": make_char_words(text, st, et)
+                "words": make_char_words(text, st, et),
+                "synthetic": True,      # v1.6.0: 合成署名行，禁止进对齐目标/门禁/精度评价
             })
             curr_cursor = et + 100
         if composer:
@@ -100,7 +101,8 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
                 "duration": 3000,
                 "end": et,
                 "text": text,
-                "words": make_char_words(text, st, et)
+                "words": make_char_words(text, st, et),
+                "synthetic": True,      # v1.6.0: 同上
             })
             curr_cursor = et + 100
         # 链条不得压迫首唱（数学上在 enrich 定义域 first_sing≥12000 恒成立，保底断言）

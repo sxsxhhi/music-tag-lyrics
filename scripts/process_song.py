@@ -39,6 +39,11 @@ from core.acoustic_quality import (
     AlignStatus, AcousticQualityError, finalize_word_source_flags,
 )
 from core.utils.io_safe import atomic_write_many, read_text_guess_encoding
+from core.utils.line_axis import mark_line_axis, calibrate_line_axis, check_line_axis
+from core.acoustic.qc import (
+    qc_l1_monotonic, build_report as build_qc_report,
+    write_report as write_qc_report,
+)
 from core.utils.text_utils import is_foreign_track
 from core.utils.version_guard import is_live_version, matches_version_policy
 
@@ -267,6 +272,7 @@ def _align_with_policy(
       · attempts 写死为 [yue, zh]（仅 lang=yue 时），最多 2 次
       · MTL_ALIGN_MAX_PASSES（默认 2）与 MTL_ALIGN_BUDGET_S（默认 600s）硬限
     """
+    global _LAST_ALIGN_STATUS, _LAST_ALIGN_REASONS
     resolved = (lang or "auto").lower().strip()
     attempts = ["yue", "zh"] if resolved == "yue" else [resolved]
     max_passes = int(os.environ.get("MTL_ALIGN_MAX_PASSES", "2") or "2")
@@ -287,6 +293,23 @@ def _align_with_policy(
         best = _better_align(best, result)
         status, reasons = last_align_status()
         if status is AlignStatus.OK:
+            # v1.6.0 P0-4: 原判粤语、实际由 zh 出货时必须验货。
+            # 只做「同一首歌内横向比较」：用粤语 CTC 模型给 zh 跨度打分，
+            # 绝不跨模型设绝对阈值（实测 whisper 跨度 −15~−17，逐行 CTC −2.6~−5.1）。
+            if best and resolved == "yue" and best.get("align_engine") == "dual_whisper":
+                if os.environ.get("MTL_ZH_GATE", "on").strip().lower() not in ("0", "off", "false"):
+                    try:
+                        from core.acoustic.zh import verify_zh_delivery
+                        med = verify_zh_delivery(best, filepath, device="cuda")
+                        limit = float(os.environ.get("MTL_ZH_MIN_SCORE", "-8.0") or "-8.0")
+                        if med is not None and med < limit:
+                            print(f"   🛑 zh 出货验货未通过（{med:.2f} < {limit}），"
+                                  f"拒收并回落行级/numpy")
+                            _LAST_ALIGN_STATUS = AlignStatus.LOW_QUALITY
+                            _LAST_ALIGN_REASONS = [f"zh 品控得分={med:.2f} < {limit}"]
+                            return None
+                    except Exception as e:
+                        print(f"   ⚠️ zh 验货异常（跳过，不阻断）：{e}")
             return best
         if status is AlignStatus.LOW_QUALITY and i + 1 < len(attempts):
             print(f"   ↻ [{try_lang}] 熔断，改用 {attempts[i + 1]} 双引擎重试一次…")
@@ -460,6 +483,7 @@ def process_single_song(
     enable_apple: bool = True,
     no_cover: bool = False,
     lang: str = "auto",
+    qc_report: Optional[str] = None,
 ) -> bool:
     try:
         return _process_single_song_impl(
@@ -473,6 +497,7 @@ def process_single_song(
             enable_apple=enable_apple,
             no_cover=no_cover,
             lang=lang,
+            qc_report=qc_report,
         )
     finally:
         try:
@@ -493,6 +518,7 @@ def _process_single_song_impl(
     enable_apple: bool = True,
     no_cover: bool = False,
     lang: str = "auto",
+    qc_report: Optional[str] = None,
 ) -> bool:
     """
     Processes a single audio file:
@@ -688,6 +714,16 @@ def _process_single_song_impl(
             )
         return False
 
+    # v1.6.0 P0-1: 行轴语义必须在**对齐前**打标。
+    # zh 路径会把 line.start 改写成首字起点（lead=0），对齐后再推断恒为 sing，
+    # 校准就永远空转 —— 这正是《那么骄傲》51 行 lead 全 0 的成因。
+    axis = ""
+    try:
+        axis = mark_line_axis(validated_data, source=source)
+        print(f"   🧭 行轴语义：{axis}")
+    except Exception as e:
+        print(f"   ⚠️ 行轴判定失败（跳过校准）：{e}")
+
     # P0-2: 逐字必须在校验之后。先让 validator 用「没有 words」完成双语配对，
     # 再处理仍然没有逐字的行：精度优先问 GPU（带行窗），拒绝/非交互才 numpy。
     if lang_auto and resolved_lang != "yue":
@@ -712,6 +748,21 @@ def _process_single_song_impl(
         non_interactive=non_interactive,
         lang=resolved_lang,
     )
+    # v1.6.0 P0-1: 行标签下沉到起唱点（只对 display 源生效；幂等）
+    if axis:
+        validated_data["line_axis"] = axis
+    if axis == "display" and os.environ.get("MTL_LINE_AXIS", "calibrate").strip().lower() != "keep":
+        try:
+            calibrate_line_axis(validated_data)
+        except Exception as e:
+            print(f"   ⚠️ 行轴校准失败（保留原轴）：{e}")
+
+    # v1.6.0 P1-1/P2-3: 内置单调 + 短字修复（每字 ≥50ms），不再依赖 validator 事后裁剪
+    try:
+        qc_l1_monotonic(validated_data)
+    except Exception as e:
+        print(f"   ⚠️ L1 单调修复失败：{e}")
+
     # P1-15: 打轴生成新数据结构后，再次调用 validate_and_fix_lyrics 执行时序与单调性二次确认
     is_valid_post, validated_data, post_warnings = validate_and_fix_lyrics(
         validated_data,
@@ -737,6 +788,30 @@ def _process_single_song_impl(
             lyricist = extracted_ly
         if not composer:
             composer = extracted_co
+
+    # v1.6.0: QC 报告（--qc-report）
+    if qc_report:
+        try:
+            ok_axis, bad_axis = check_line_axis(validated_data)
+            rep = build_qc_report(
+                validated_data,
+                engine=validated_data.get("align_engine") or source,
+                audio=filepath,
+                duration_s=(duration_ms / 1000.0) if duration_ms else None,
+                gate={"reverts": validated_data.get("gate_reverts") or []},
+                axis={
+                    "from": axis,
+                    "to": validated_data.get("line_axis"),
+                    "shifted": int(validated_data.get("line_axis_shifted_lines", 0) or 0),
+                    "violations": len(bad_axis),
+                },
+            )
+            if not ok_axis:
+                print(f"   ⚠️ 行标签一致性违规 {len(bad_axis)} 行（已写入报告）")
+            write_qc_report(qc_report, rep)
+            print(f"   📄 QC 报告：{qc_report}")
+        except Exception as e:
+            print(f"   ⚠️ QC 报告写出失败：{e}")
 
     # 5. Generate .spl and .lrc (with prelude credit enrichment & whitelist protection)
     spl_content = lrc_content = to_spl(validated_data, title=cleaned_title, artist=normalized_artist, lyricist=lyricist, composer=composer)
@@ -830,6 +905,8 @@ def main():
                         help="跳过专辑封面补全（已有封面本来也绝不覆盖）")
     parser.add_argument("--lang", default="auto", choices=["auto", "zh", "yue"],
                         help="声学打轴语种分支：auto (自动检测) / zh (普通话) / yue (粤语)")
+    parser.add_argument("--qc-report", default=None,
+                        help="写出质检报告 JSON（L1/L2/行轴/闸门回退汇总；不带则不写）")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, os.environ.get("MTL_LOG_LEVEL", "INFO").upper(), logging.INFO), format="%(message)s")
 
@@ -850,6 +927,7 @@ def main():
             enable_apple=enable_apple,
             no_cover=args.no_cover,
             lang=args.lang,
+            qc_report=args.qc_report,
         )
         return 0 if ok else 1
     elif os.path.isdir(target):
@@ -874,6 +952,7 @@ def main():
                             enable_apple=enable_apple,
                             no_cover=args.no_cover,
                             lang=args.lang,
+                            qc_report=args.qc_report,
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")
