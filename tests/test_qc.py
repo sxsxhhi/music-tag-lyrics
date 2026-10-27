@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """质检器单测（v1.6.0）——Env / L1 / L2 / L3，纯 numpy，不需要模型。"""
 import sys
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

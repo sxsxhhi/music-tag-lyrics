@@ -45,3 +45,11 @@ jobs:
         run: python tests/test_text_utils.py
       - name: Process song orchestration
         run: python tests/test_process_song.py
+      - name: Line axis calibration
+        run: python tests/test_line_axis.py
+      - name: Mandarin CTC align
+        run: python tests/test_acoustic_zh.py
+      - name: Acoustic gate
+        run: python tests/test_gate.py
+      - name: Quality control
+        run: python tests/test_qc.py

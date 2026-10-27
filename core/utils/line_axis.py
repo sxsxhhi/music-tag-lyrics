@@ -165,7 +165,11 @@ def calibrate_line_axis(
     leads = [int(ln["words"][0]["start"]) - int(ln["start"])
              for ln in (data.get("lines") or []) if ln.get("words")]
     p50 = sorted(leads)[len(leads) // 2] if leads else 0
-    print(f"   📐 行轴已校准到起唱点：{len(leads)} 行，lead p50={p50}ms，后推 {shifted} 行")
+    msg = f"行轴已校准到起唱点：{len(leads)} 行，lead p50={p50}ms，后推 {shifted} 行"
+    try:
+        print(f"   📐 {msg}")
+    except UnicodeEncodeError:
+        print(f"   [axis] {msg}")
     return data
 
 

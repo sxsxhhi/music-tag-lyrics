@@ -536,10 +536,12 @@ def test_vocal_cache_hit_and_clear():
     AcousticAligner._vocal_cache = (norm_path, mock_vocals, sr)
 
     # 二次调用相同路径：必须命中缓存直接返回，不走实际分离逻辑
-    with mock.patch("soundfile.read") as mock_sf, mock.patch.object(AcousticAligner, "get_models") as mock_get_models:
+    # 采用 sys.modules 字典注入，避免在未安装 soundfile 的轻量 CI 环境中因直接 import 触发 ModuleNotFoundError
+    mock_sf = mock.MagicMock()
+    with mock.patch.dict(sys.modules, {"soundfile": mock_sf}), \
+         mock.patch.object(AcousticAligner, "get_models", side_effect=AssertionError("命中缓存时不应加载模型")):
         v_out, sr_out = AcousticAligner.extract_vocals_mono(fake_audio)
-        assert mock_sf.call_count == 0, "命中缓存时不应调用音频读取"
-        assert mock_get_models.call_count == 0, "命中缓存时不应加载模型"
+        assert mock_sf.read.call_count == 0, "命中缓存时不应调用音频读取"
         assert np.array_equal(v_out, mock_vocals)
         assert sr_out == sr
 

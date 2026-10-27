@@ -378,7 +378,11 @@ def align_zh_windowed(
         fallback_lines=gate["fallback_lines"],
         engine_scored=True,
     )
-    print(f"   🎯 [zh-ctc] 逐行窗对齐完成：{len(lines)} 行，回退 {len(gate['reverts'])} 行")
+    msg = f"[zh-ctc] 逐行窗对齐完成：{len(lines)} 行，回退 {len(gate['reverts'])} 行"
+    try:
+        print(f"   🎯 {msg}")
+    except UnicodeEncodeError:
+        print(f"   {msg}")
     return result
 
 
@@ -456,7 +460,11 @@ def verify_zh_delivery(
     if len(per_line) < 3:
         return None
     med = float(np.median(per_line))
-    print(f"   🔎 [zh-gate] 粤语模型给 zh 跨度打分中位数 = {med:.2f}（{len(per_line)} 行）")
+    msg = f"[zh-gate] 粤语模型给 zh 跨度打分中位数 = {med:.2f}（{len(per_line)} 行）"
+    try:
+        print(f"   🔎 {msg}")
+    except UnicodeEncodeError:
+        print(f"   {msg}")
     return med
 
 

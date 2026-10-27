@@ -7,6 +7,11 @@
   · 硬上限 1600：1537 过、2306 拦；取 1500 会误杀 1537
 """
 import sys
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
