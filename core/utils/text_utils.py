@@ -25,6 +25,7 @@ HANZI_RANGES = (
 KANA_RANGES = ((0x3040, 0x309F), (0x30A0, 0x30FF))   # 平假名 / 片假名（含长音符 ー）
 HANGUL_RANGES = ((0xAC00, 0xD7AF),)                  # 谚文音节
 FULLWIDTH_RANGE = (0xFF00, 0xFFEF)                   # 全角标点/字母（TTML 词边界用）
+FULLWIDTH_RANGES = (FULLWIDTH_RANGE,)
 
 
 def _ranges_to_class(ranges) -> str:
@@ -57,7 +58,7 @@ def is_hangul_char(ch: str) -> bool:
 
 def is_fullwidth_char(ch: str) -> bool:
     """是否为全角字符（FF00-FFEF）。"""
-    return _in_ranges(ch, (FULLWIDTH_RANGE,))
+    return _in_ranges(ch, FULLWIDTH_RANGES)
 
 
 def is_cjk_char(ch: str) -> bool:

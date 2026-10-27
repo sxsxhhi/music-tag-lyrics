@@ -23,7 +23,6 @@ except ImportError:
     np = None
 
 from .utils.jyutping import to_jyutping, text_to_jyutping_tokens
-from .utils.text_utils import is_source_or_credit_line
 from .acoustic_aligner import absorb_punctuation_tokens
 
 # 入声字韵尾集合（-p, -t, -k）
@@ -733,9 +732,9 @@ class CantoneseCTCAligner:
             #   · unaligned_ratio 用 n_target 做分母，单独拦「大量音节无跨度」
             #   · 熔断抛 AcousticQualityError（与环境错误严格区分），上层可做 zh 重试
             from .acoustic_quality import (
-                GateConfig, load_gate_config, compute_track_stats,
+                load_gate_config, compute_track_stats,
                 evaluate_track_gate, evaluate_line_gate,
-                AcousticQualityError, AlignStatus, SRC_GATE_DEMOTED,
+                AcousticQualityError, AlignStatus,
                 finalize_word_source_flags,
             )
 

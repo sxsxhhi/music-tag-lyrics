@@ -551,7 +551,7 @@ def test_vocal_cache_hit_and_clear():
 def test_words_source_demoted_accounting():
     """验证 finalize_word_source_flags 对门禁降级行（words为空）的准确记账与分母闭环。"""
     from core.acoustic_quality import (
-        finalize_word_source_flags, SRC_GPU_ACOUSTIC, SRC_GATE_DEMOTED,
+        finalize_word_source_flags, SRC_GPU_ACOUSTIC, SRC_GATE_DEMOTED, SRC_LINE_LEVEL,
     )
 
     data = {
@@ -585,12 +585,12 @@ def test_words_source_demoted_accounting():
     # 断言行级标签
     assert lines[0]["words_source"] == SRC_GPU_ACOUSTIC
     assert lines[1]["words_source"] == SRC_GATE_DEMOTED
-    assert lines[2]["words_source"] == "line_level"
+    assert lines[2]["words_source"] == SRC_LINE_LEVEL
 
     # 断言统计字典：gate_demoted 为 1，acoustic 为 1，line_level 也入账
     assert stats[SRC_GATE_DEMOTED] == 1, stats
     assert stats[SRC_GPU_ACOUSTIC] == 1, stats
-    assert stats["line_level"] == 1, stats
+    assert stats[SRC_LINE_LEVEL] == 1, stats
     # v1.5.2-D4: stats 必须覆盖全部行，不允许有「没入账」的行
     assert sum(stats.values()) == len(lines), stats
 

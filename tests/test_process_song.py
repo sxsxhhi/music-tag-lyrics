@@ -165,6 +165,35 @@ def test_better_align_symmetric_default():
     assert ps._better_align(bad, hi) is hi
 
 
+def test_numpy_reentry_preserves_engine_and_demotions():
+    """v1.5.2 复审：gpu_aligned 重入时，whisper 行保持 gpu_whisper，门禁降级行不被复活。"""
+    data = {
+        "align_engine": "dual_whisper",
+        "gpu_aligned": True,
+        "lines": [
+            {"start": 1000, "end": 3000, "duration": 2000, "text": "第一句有真逐字",
+             "words": [{"text": "第", "start": 1000, "end": 1500},
+                       {"text": "一", "start": 1500, "end": 2000},
+                       {"text": "句", "start": 2000, "end": 2500},
+                       {"text": "有", "start": 2500, "end": 2800},
+                       {"text": "真", "start": 2800, "end": 2900},
+                       {"text": "逐", "start": 2900, "end": 2950},
+                       {"text": "字", "start": 2950, "end": 3000}]},
+            {"start": 3000, "end": 5000, "duration": 2000, "text": "第二句缺逐字", "words": []},
+            {"start": 5000, "end": 7000, "duration": 2000, "text": "第三句被门禁降级", "words": []},
+        ],
+        "demoted_line_indices": [2],
+    }
+    out = ps.apply_numpy_word_synth(data)
+    lines = out["lines"]
+    assert lines[0]["words_source"] == "gpu_whisper", lines[0]["words_source"]
+    assert lines[1]["words_source"] == "numpy_synth", lines[1]["words_source"]
+    assert lines[2]["words_source"] == "gate_demoted", lines[2]["words_source"]
+    assert lines[2]["words"] == [], "门禁降级行不得被 numpy 复活"
+    assert out["synthesized_words"] is False
+    assert sum(out["words_source_stats"].values()) == len(lines)
+
+
 def main():
     """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
     return _testkit.run(globals())

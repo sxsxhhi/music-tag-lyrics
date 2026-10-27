@@ -375,8 +375,8 @@ def test_14_quality_gate_line_and_modes():
 
 
 def test_15_synthesized_word_accounting():
-    """v1.5.2-D2/D4 synthesized_words 语义：只有「有逐字行、且无任何真声学行」才为 True。"""
-    from core.acoustic_quality import finalize_word_source_flags
+    """v1.5.2-D2/D4 synthesized_words 语义：只有「有逐字行、且无任何真声学证据」才为 True。"""
+    from core.acoustic_quality import finalize_word_source_flags, SRC_LINE_LEVEL
 
     def mk():
         return {"lines": [
@@ -397,7 +397,7 @@ def test_15_synthesized_word_accounting():
     assert d["words_source_stats"]["gpu_linear_fallback"] == 1
     assert d["linear_fallback_lines"] == 1
 
-    # 两行都线性保底 → 才算整首合成
+    # 两行都线性保底 → 才算整首合成（保底行里即便残留旧分数，也不算声学证据）
     d = finalize_word_source_flags(mk(), fallback_lines=[0, 1])
     assert d["synthesized_words"] is True
     assert d["synthesized_ratio"] == 1.0
@@ -409,7 +409,7 @@ def test_15_synthesized_word_accounting():
     assert d["synthesized_words"] is False, "无逐字 ≠ 合成"
     assert d["synthesized_ratio"] == 0.0
     assert d["acoustic_coverage"] == 0.0
-    assert d["words_source_stats"]["line_level"] == 2
+    assert d["words_source_stats"][SRC_LINE_LEVEL] == 2
 
 
 def test_16_finalize_engine_unscored_marks_gpu_whisper():
@@ -438,7 +438,11 @@ def test_16_finalize_engine_unscored_marks_gpu_whisper():
 
 
 def test_17_finalize_mixed_score_is_interpolated():
-    """v1.5.2-D2: 同一行内「有分 + 无分」混合 = 邻字内插，才记 interpolated。"""
+    """v1.5.2-D2: 行内「有分 + 无分」混合 = 邻字内插，才记 interpolated。
+
+    复审补正：`synthesized_words` 按**逐字证据**判定 —— 行内已有真分逐字，
+    即使整行不是「全真声学行」，也不能把整首标成合成。
+    """
     from core.acoustic_quality import finalize_word_source_flags, SRC_INTERPOLATED
 
     data = {"lines": [{"text": "abc", "words": [
@@ -448,8 +452,18 @@ def test_17_finalize_mixed_score_is_interpolated():
     ]}]}
     out = finalize_word_source_flags(data, engine_scored=True)
     assert out["lines"][0]["words_source"] == SRC_INTERPOLATED
-    assert out["acoustic_coverage"] == 0.0
-    assert out["synthesized_words"] is True
+    assert out["acoustic_coverage"] == 0.0      # 行级覆盖率：无「全真」行
+    assert out["synthesized_words"] is False, "行内已有真分逐字，不是整首合成"
+
+    # 整首每一行都是「混合分数」→ 行级 coverage 仍 0，但逐字证据充分
+    data2 = {"lines": [
+        {"text": "ab", "words": [{"text": "a", "score": -1.0}, {"text": "b", "score": None}]},
+        {"text": "cd", "words": [{"text": "c", "score": None}, {"text": "d", "score": -1.1}]},
+    ]}
+    out2 = finalize_word_source_flags(data2, engine_scored=True)
+    assert out2["acoustic_coverage"] == 0.0
+    assert out2["synthesized_words"] is False
+    assert out2["words_source_stats"][SRC_INTERPOLATED] == 2
 
 
 def test_18_finalize_stats_sum_equals_lines_and_no_double_count():

@@ -193,6 +193,6 @@ flowchart TD
 - 纯文本搜集：`core/plain_lyric_search.py`（双源 plain：网易+LRCLIB，+ GitHub/raw + 必应/DDG）
 - 解析：`core/parsers/`
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`python tests/run_all.py`（15 个套件 / 220 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
+- 离线测：`python tests/run_all.py`（15 个套件 / 221 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`

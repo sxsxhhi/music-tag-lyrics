@@ -311,8 +311,19 @@ def apply_numpy_word_synth(validated_data: Dict[str, Any]) -> Dict[str, Any]:
     out = enrich_track_with_acoustic_words(validated_data)
     # enrich_track_with_acoustic_words 只给「原本缺词」的行合成，
     # 所以这些行就是本轮的 numpy 来源
-    numpy_lines = sorted(before_missing)
-    finalize_word_source_flags(out, numpy_lines=numpy_lines)
+    # v1.5.2 复审：重入路径（gpu_aligned 已为 True）必须延续上游引擎语义，
+    # 否则 whisper（无分域）的行会被重新误判成 interpolated；
+    # 同时门禁降级行不得被 numpy 「复活」，否则门禁决定被静默推翻。
+    lines = out.get("lines") or []
+    demoted = [int(i) for i in (out.get("demoted_line_indices") or [])]
+    for i in demoted:
+        if 0 <= i < len(lines):
+            lines[i]["words"] = []
+    numpy_lines = sorted(before_missing - set(demoted))
+    engine_scored = out.get("align_engine") != "dual_whisper"
+    finalize_word_source_flags(
+        out, numpy_lines=numpy_lines, demoted_lines=demoted, engine_scored=engine_scored
+    )
     print("   🎼 已降级：按行时长合成逐字时间戳（numpy，非酷狗逐字、非 GPU）")
     return out
 

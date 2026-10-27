@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""声学对齐质量门禁与记账（v1.5.1-B）。
+"""声学对齐质量门禁与记账（v1.5.1-B / v1.5.2-D2+D4 记账语义补正）。
 
 为什么单独成模块：
   · 门禁必须能被离线测试**正反双向**断言（无 torch 的 CI 也要能跑），
@@ -23,7 +23,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from statistics import median
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,8 @@ def finalize_word_source_flags(
     · `interpolated` 只留给「引擎有分域、但这一行只有部分字有分」的行。
     · `line_level`（原生行级、本就没有逐字）**不是合成**：不计入
       synthesized_ratio 分母，也不再让整首误报 synthesized_words=True。
-    · `synthesized_words` 仅当「有可评估的逐字行、且其中没有任何真声学行」时为 True。
+    · `synthesized_words` 仅当「有可评估的逐字行、且**逐字层面没有任何真声学证据**」
+      时为 True（行内部分字有分也算有证据；保底/合成/降级行里的残留分数不算）。
 
     参数：
         fallback_lines / demoted_lines / numpy_lines：行号集合，优先级
@@ -423,11 +424,25 @@ def finalize_word_source_flags(
     synth = n_wordable - n_real
     ratio = (synth / n_wordable) if n_wordable else 0.0
 
+    # v1.5.2 复审补正：`synthesized_words` 的契约是「整首没有任何真声学**逐字**」，
+    # 不是「没有任何整行真声学」。若整首都是「行内部分字有分」的 interpolated 行，
+    # 逐字层面明明有真声学证据，不能标 True。因此这里按**词级证据**判定：
+    #   · 任一词带负分（CTC / forced-align 真分）→ 有真声学逐字
+    #   · 或有任意 gpu_whisper 行（真声学时间轴，引擎不产分）→ 有真声学逐字
+    # 证据只从「未被保底/合成/降级覆盖」的行里取 —— 线性均分行即使残留旧分数，
+    # 也不能当作声学证据（那是上游数据，不是本次对齐产物）。
+    has_acoustic_word = stats[SRC_GPU_WHISPER] > 0 or any(
+        _is_scored_word(w)
+        for i, ln in enumerate(lines)
+        if i not in fb and i not in dm and i not in nb
+        for w in (ln.get("words") or [])
+    )
+
     data["words_source_stats"] = stats
     data["n_wordable_lines"] = n_wordable
     data["synthesized_ratio"] = round(ratio, 4)
     data["linear_fallback_lines"] = stats[SRC_GPU_LINEAR]   # 与 stats 同源，去重
-    data["synthesized_words"] = (n_wordable > 0 and n_real == 0)
+    data["synthesized_words"] = (n_wordable > 0 and not has_acoustic_word)
     data["no_word_level"] = (n_wordable == 0)               # 全行级曲目显式标记
     data["acoustic_coverage"] = round((n_real / n_wordable) if n_wordable else 0.0, 4)
     # 诊断字段：真声学行里「带分数」的比例（粤语=1.0，Whisper=0.0）
