@@ -17,6 +17,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Parsers
         run: python tests/test_parsers.py
+      - name: NetEase YRC verbatim
+        run: python tests/test_netease_yrc.py
       - name: Pipeline
         run: python tests/test_pipeline.py
       - name: Safety

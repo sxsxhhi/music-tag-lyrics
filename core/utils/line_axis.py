@@ -42,8 +42,9 @@ AXIS_SING = "sing"            # 已对齐到起唱点（幂等：不再改）
 AXIS_OFFICIAL = "official"    # TTML / KRC 官方逐字（行首天然 == 首字）
 AXIS_UNKNOWN = "unknown"      # 判不准 → 不改写，只告警
 
-# 官方逐字源（aggregator 实况取值）：kugou 命中 KRC 时返回 verbatim
-_WORD_LEVEL_SOURCES = {"apple-ttml", "amll", "kugou-krc", "krc", "kugou"}
+# 官方逐字源（aggregator 实况取值）：kugou 命中 KRC 时返回 verbatim；
+# v1.6.1 起 netease 命中 YRC 也返回 word（行首 == 首字，lead 恒为 0）。
+_WORD_LEVEL_SOURCES = {"apple-ttml", "amll", "kugou-krc", "krc", "kugou", "netease"}
 
 
 def infer_from_words(
@@ -77,6 +78,9 @@ def mark_line_axis(data: Dict[str, Any], source: Optional[str] = None) -> str:
     has_words = any(ln.get("words") for ln in (data.get("lines") or []))
 
     if src == "apple-ttml" or src == "amll":
+        axis = AXIS_OFFICIAL
+    elif src == "netease" and has_words:
+        # netease 的 YRC 逐字行首天然等于首字；但其**行级 lrc 候选**仍须留在 display
         axis = AXIS_OFFICIAL
     elif has_words:
         axis = infer_from_words(data)

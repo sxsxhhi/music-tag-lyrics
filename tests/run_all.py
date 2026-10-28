@@ -7,7 +7,7 @@
     python -m unittest discover tests     # ← 错误用法！
 
 会输出 `NO TESTS RAN` 并返回 0（假绿）或 5/1，取决于具体调用形式。
-CI（`.github/workflows/tests.yml`）走的是 15 条独立 `python tests/test_xxx.py`，
+CI（`.github/workflows/tests.yml`）走的是 20 条独立 `python tests/test_xxx.py`，
 本脚本用**同样的方式**逐个跑一遍再汇总，保证「本地一条命令 = CI 全量」。
 
 用法：

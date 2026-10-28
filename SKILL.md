@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.5.2）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易 → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.6.1）。调度：Apple TTML(am-lyrics) → 酷狗 → AMLL(ncm) → 网易（含 YRC 逐字）→ LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖六源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、YRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.6.0)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.6.1)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -65,7 +65,7 @@ flowchart TD
 
 ### 5. 外文经典金曲 Apple Music 官方母带逐字直连铁律
 - **铁律准则（v1.3.0 重构）**：Apple TTML 升为调度第 1 档（`am-lyrics/{appleId}.ttml`）。
-- **实际调度**：所有曲目先试 Apple TTML；华语只认 `strict` 门槛；外语 `strict` / `loose` 均可；旧 AMLL（`ncm-lyrics/`）仍在酷狗之后作为第 3 档；执行**等级单调（D6）**原则，彻底消除无条件降级顶替。
+- **实际调度**：所有曲目先试 Apple TTML；华语只认 `strict` 门槛；外语 `strict` / `loose` 均可；旧 AMLL（`ncm-lyrics/`）仍在酷狗之后作为第 3 档；执行**等级单调（D6）**原则，彻底消除无条件降级顶替。第 4 档网易自 v1.6.1 起可用 YRC 逐字（`yv=1`），无 YRC 时回落行级 LRC，行为与旧版一致。
 
 ### 6. 三位一体国际标准 Enhanced LRC 与 100% SHA-256 镜像铁律
 - **铁律准则**：内嵌 lyrics == 同级 `.spl` == 同级 `.lrc`，统一 Enhanced LRC：`[mm:ss.xxx]<mm:ss.xxx>w1<t2>...<tend>`。
@@ -104,7 +104,7 @@ flowchart TD
 - **铁律准则**：短窗隔离 ≥2.5s 间奏；行首 15ms 逆向 Onset；行末 20ms 正向 Offset（RMS < 0.015）；字间停顿 ≥300ms 插入闭合标签。
 
 ### 13. 【核心红线】绝不机械机翻铁律
-- **铁律准则**：**禁止机翻补译文。** 只采纳官方/人工审校文本（网易 `tlyric` 等）。无官方译文则纯原文。译文必须与原文同一源同一版。
+- **铁律准则**：**禁止机翻补译文。** 只采纳官方/人工审校文本（网易 `tlyric` / 与逐字同轴的 `ytlrc` 等）。无官方译文则纯原文。译文必须与原文同一源同一版。
 
 ### 14. 外文词界空格与 `\xa0` 消融铁律
 - **铁律准则**：西文词间保留 ASCII 空格；全流程 `replace('\xa0', ' ')`；标点紧随词末。
@@ -191,9 +191,9 @@ flowchart TD
 - 语种路由：`core/utils/lang_detect.py`（歌手/意象/俚语/首窗声学探针）
 - 粤拼转换：`core/utils/jyutping.py`、`core/data/jyutping_dict.tsv`（简繁离线词典与多音字前缀消歧）
 - 纯文本搜集：`core/plain_lyric_search.py`（双源 plain：网易+LRCLIB，+ GitHub/raw + 必应/DDG）
-- 解析：`core/parsers/`
+- 解析：`core/parsers/`（`lrc_parser.py`、`ttml_parser.py`、`krc_parser.py`、`yrc_parser.py`）
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`python tests/run_all.py`（15 个套件 / 221 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
+- 离线测：`python tests/run_all.py`（20 个套件 / 298 条，三态 PASS/SKIP/FAIL）。套件：`test_parsers`、`test_pipeline`、`test_m1_safety`、`test_gpu_plain`、`test_kugou_gates`、`test_converter_prelude`、`test_apple_ttml`、`test_cover_art`、`test_acoustic_pipeline`、`test_jyutping`、`test_lang_detect`、`test_canto_align`、`test_cli`、`test_text_utils`、`test_process_song`、`test_line_axis`、`test_acoustic_zh`、`test_gate`、`test_qc`、`test_netease_yrc`。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
 
@@ -229,6 +229,27 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 `MTL_ZH_GATE=on|off`、`MTL_ZH_MIN_SCORE=-8.0`、`MTL_LINE_AXIS=calibrate|keep`、
 `MTL_DEVICE=auto|cpu`、`MTL_DEMUCS=on|off`、`MTL_QC_L3=on|off`、`MTL_GATE_MODE=strict|warn|off`。
 
-**离线测试**：15+4 个套件 / **271 条**全绿（三态 runner，SKIP 不计）；
+## 二十一、网易 YRC 逐字通道（v1.6.1）
+
+- **接口**：`/api/song/lyric?id=…&lv=1&kv=1&tv=-1&yv=1&rv=1`。只有 `yv=1` 才返回 `yrc`（逐字）；
+  `ytlrc` 是逐字轨配套的行级译文，与 yrc 行戳同轴（实测最近邻 0ms），优先于 `tlyric`。
+- **格式**：`[行起,行时长](字起,字时长,标志)字…`，**字时间是绝对毫秒**（KRC 是相对行偏移）。
+- **解析**（`core/parsers/yrc_parser.py`）：
+  1. **位置切片**取字文本：先定位所有 `(数字,数字,数字)`，相邻参数之间的原文才是字文本，
+     `母带 : … (FR) …` 这类括号不会打断；
+  2. 三类异常块归一 —— 空文本块丢弃（不延长末字）、纯空白块与零时长块并入前一字文本；
+  3. 行 `start` 取首字、`end` 取末字，源头即满足 `start == words[0].start`、`end == words[-1].end`；
+  4. `time_precision` 恒为 3（`detect_time_precision` 对 YRC 会误判为 2，必须显式给）。
+- **尾部名单截断**：网易把制作名单按每行 1000ms 等距铺排到曲末之后（实测《那么骄傲(重遇版)》
+  末行 268230ms / 曲长 245239ms），会触发六源统一 overrun 门禁而整包丢弃。
+  只在「末行确实已冲轴」时，按「曲末 15% 内 + 连续 ≥3 行 + 每行 800~1200ms + 首尾相接」四重判据
+  从尾部向前截断；识别失败一律返回空、回落 lrc，**绝不硬砍真实歌词**。
+- **降级契约**：无 `yrc` / 解析 0 行 / 截断后不足 4 行 / 抛异常 → 回落原行级 lrc 路径，
+  与升级前逐字节一致；`fetch` 参数表一个字都不加（保护显式关键字签名的调度假体）。
+- **行轴**：`source="netease"` 且带词 → `official`（不参与 −60ms 校准）；网易的行级 lrc 候选仍为 `display`。
+- **调度不变**：仍是第 4 档。华语酷狗/AMLL 已出逐字时 `rank 3 == 3`，`_adopt` 要求严格更高，
+  故仍用酷狗；网易只在「前三档全空」「酷狗门禁丢弃」「外语缺译文」等场景真正生效。
+
+**离线测试**：20 个套件 / **298 条**全绿（三态 runner，SKIP 不计）；
 一键 `python tests/run_all.py`；`tests/audit_acoustic_baseline.py` 为 Golden **只读审计**
 （跑引擎、逐行比对、出 diff 与初判，**禁止用引擎输出回填夹具**）。

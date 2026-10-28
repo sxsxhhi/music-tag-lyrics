@@ -41,11 +41,14 @@ def test_mark_axis_ttml_is_official():
 
 
 def test_mark_axis_word_level_sing_inferred():
-    # lead 全 0 → sing；且 krc 这类带词源升格为 official
+    # lead 全 0 → sing；krc 与 netease(YRC) 这类官方带词源升格为 official
     data = _mk_lines((1000, [("那", 1000, 1200)]), (2000, [("么", 2000, 2200)]))
-    assert mark_line_axis(data, source="netease") == AXIS_SING
+    assert mark_line_axis(data, source="netease") == AXIS_OFFICIAL
     data2 = _mk_lines((1000, [("那", 1000, 1200)]))
     assert mark_line_axis(data2, source="kugou") == AXIS_OFFICIAL
+    # 非官方逐字源保持 sing：证明升格不是无条件发生的
+    data3 = _mk_lines((1000, [("那", 1000, 1200)]))
+    assert mark_line_axis(data3, source="lrcshare") == AXIS_SING
 
 
 def test_mark_axis_display_inferred_by_median():

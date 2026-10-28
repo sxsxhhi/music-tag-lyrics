@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-271%20passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-298%20passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20%7C%20OGG%20%7C%20DSF-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
@@ -31,12 +31,12 @@
 
 | 日常痛点 | 之前遇到的尴尬 | music-tag-lyrics 怎么帮你解决？ |
 | :--- | :--- | :--- |
-| **找歌词难** | 只有整行歌词、或者四处翻找不到好歌词 | **直连 6 大曲库**：优先从 Apple Music (am-lyrics)、酷狗、AMLL、网易云等梯级匹配，自动挑选最高清晰度的逐字版本。 |
+| **找歌词难** | 只有整行歌词、或者四处翻找不到好歌词 | **直连 6 大曲库**：优先从 Apple Music (am-lyrics)、酷狗、AMLL、网易云 YRC 等梯级匹配，自动挑选最高清晰度的逐字版本；网易只有逐字没有行级歌词时也能用。 |
 | **绝版歌没逐字** | 下架孤品、冷门老歌全网只有纯文本歌词 | **本地 AI 声学打轴**：内置粤语 + 国语双专用 CTC 模型，逐行卡准人声；**坚持“绝不听写盲猜”**，字字基于原词精准卡点。 |
 | **播放器抽搐抢跑** | 歌词在椒盐音乐、Folia 里提前抢跑、上下跳动 | **行标签自动下沉校准**：自动对齐歌手开口前 60ms 刚好亮起；双语翻译行成对跟随，告别播放器跳屏抽搐。 |
 | **歌曲标签乱七八糟** | 歌手名带怪符号、年份变成当天、作词作曲缺失 | **安全规范化清洗**：合唱歌手统一用 `/` 分隔、年份标准化为 4 位、自动补齐作词作曲；**原地更新，绝不重命名或移动音频**。 |
 | **封面模糊一片黑** | 导入播放器没有封面，或者只有几百像素缩略图 | **三级高清封面补全**：自动从 iTunes 抓取 `1000x1000` 原图无损写入；已有封面 100% 绝对保护不覆盖。 |
-| **生硬机翻毁意境** | 外语歌词被直译大模型机翻成莫名其妙的话 | **坚决拒绝机械机翻**：只采用网易云/官方精修的人工翻译，译文时间戳严格继承原唱，听歌赏词两不误。 |
+| **生硬机翻毁意境** | 外语歌词被直译大模型机翻成莫名其妙的话 | **坚决拒绝机械机翻**：只采用网易云/官方精修的人工翻译（含与逐字轨同轴的 `ytlrc`），译文时间戳严格继承原唱，听歌赏词两不误。 |
 
 ---
 
@@ -159,7 +159,7 @@ python scripts/process_song.py "歌曲.flac" --lyrics-file "我的歌词.txt"
 本项目配备了极其严苛的工程测试用例网络，涵盖各种奇怪歌词格式、字符集、连读念白与边界条件：
 
 ```bash
-# 一键运行全部 19 个离线测试套件（271 项用例全部离线通过）
+# 一键运行全部 20 个离线测试套件（298 项用例全部离线通过）
 python tests/run_all.py
 
 # 快速运行指定模块测试
@@ -194,6 +194,7 @@ python tests/run_all.py -k canto
 
 | 版本 | 发布日期 | 亮点概述 |
 | :---: | :---: | :--- |
+| **v1.6.1** | `2026-10-28` | **网易云 YRC 逐字通道 · 同轴译文 ytlrc · 298 项测试全绿**<br/>• 网易云从「只能出整行」升级为可出逐字（`yv=1`）；「只有逐字、没有行级歌词」的曲目从六源无候选变为直接拿到逐字；<br/>• 新增位置切片解析，歌词里的 `(FR)` 之类括号不再截断文本、不再触发整行降级；<br/>• 自动识别并截除尾部等距铺排的制作名单（原本会冲出曲末 23 秒被门禁整包丢弃）；<br/>• 无 YRC 的曲目行为与升级前逐字节一致；六源优先级与调度顺序不变。 |
 | **v1.6.0** | `2026-10-27` | **国语专用 CTC 逐行窗 · 行轴校准下沉 (−60ms) · 软硬双闸门 · 271 项测试全绿**<br/>• 引入中文专用 `wav2vec2-chinese` CTC 引擎，彻底消灭「长字吞停顿」；<br/>• 行标签语义从显示轴下沉至歌手起唱点前 60ms，彻底解决播放器抽搐跳屏问题；<br/>• 软硬双阈值字宽闸门（放行 1400~1537ms 真实长音，拦截假字并回退）；<br/>• GitHub Actions CI 离线自动化测试修复，19 套件全绿。 |
 | **v1.5.2** | `2026-10-27` | 规范 Unicode 16.0 扩展 A~I 生僻字识别，修正 `gpu_whisper` 声学记账，新增 `tests/run_all.py` 一键离线测试 runner。 |
 | **v1.5.1** | `2026-10-26` | 落地双层声学质量门禁体系（整曲宽门限 + 分行严门限），完善粤语熔断自动重试机制，修复 34 项工业级边界缺陷。 |

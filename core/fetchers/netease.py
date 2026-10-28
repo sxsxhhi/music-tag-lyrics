@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
-"""网易云歌词：检索、Live 互斥、时长门禁、官方 tlyric。"""
+"""网易云歌词：检索、Live 互斥、时长门禁、YRC 逐字、官方译文。
 
+v1.6.1：接口追加 `yv=1&rv=1` 后返回 `yrc`（逐字）与 `ytlrc`（与逐字同轴的译文）。
+`fetch` 优先走 YRC；YRC 缺失、解析失败或尾部名单截断后不可用时，**原样回落**
+行级 LRC 路径，保证没有 YRC 的曲目行为与升级前逐字节一致。
+"""
+
+import logging
 import time
 from typing import Dict, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
+from ..parsers.yrc_parser import parse_yrc
 from ..utils.http import http_post_json, http_get_json, UA_DESKTOP
 from ..utils.version_guard import (
     is_live_version,
@@ -14,6 +21,17 @@ from ..utils.version_guard import (
     is_title_fuzzy_match,
     album_match_score,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _lyric_field(data: Dict[str, Any], key: str) -> str:
+    """安全取 `{key: {lyric: ...}}`。接口异常时该节点可能是 None / 字符串。"""
+    node = data.get(key)
+    if not isinstance(node, dict):
+        return ""
+    return node.get("lyric") or ""
+
 
 class NetEaseFetcher:
     """Fetcher for NetEase Cloud Music lyrics with Version Guard."""
@@ -105,27 +123,64 @@ class NetEaseFetcher:
 
     @classmethod
     def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, str]]:
-        """同一首歌的 lrc / tlyric 原文（可无时间戳）。供同步解析与 GPU 纯文本共用。"""
+        """同一首歌的 lrc / tlyric / yrc / ytlrc 原文。供同步解析与 GPU 纯文本共用。
+
+        `yrc` 必须显式带 `yv=1` 才会返回；`ytlrc` 是逐字轨配套的行级译文。
+        """
         song_id = cls.search_song_id(title, artist, duration_ms, album=album)
         if not song_id:
             return None
 
-        lyric_url = f"https://music.163.com/api/song/lyric?id={song_id}&lv=1&kv=1&tv=-1"
+        lyric_url = (
+            f"https://music.163.com/api/song/lyric"
+            f"?id={song_id}&lv=1&kv=1&tv=-1&yv=1&rv=1"
+        )
         headers = {"Referer": "https://music.163.com"}
         data = http_get_json(lyric_url, headers=headers, user_agent=UA_DESKTOP, timeout=6)
         if not data or not isinstance(data, dict):
             return None
-        lrc_text = (data.get("lrc") or {}).get("lyric") or ""
-        tlyric_text = (data.get("tlyric") or {}).get("lyric") or ""
-        if not lrc_text and not tlyric_text:
+        lrc_text = _lyric_field(data, "lrc")
+        tlyric_text = _lyric_field(data, "tlyric")
+        yrc_text = _lyric_field(data, "yrc")
+        ytlrc_text = _lyric_field(data, "ytlrc")
+        if not any((lrc_text, tlyric_text, yrc_text, ytlrc_text)):
             return None
-        return {"lrc": lrc_text, "tlyric": tlyric_text}
+        return {
+            "lrc": lrc_text,
+            "tlyric": tlyric_text,
+            "yrc": yrc_text,
+            "ytlrc": ytlrc_text,
+        }
 
     @classmethod
     def fetch(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, Any]]:
-        """Retrieves and parses LRC lyrics for the specified song."""
+        """Retrieves and parses lyrics. YRC 逐字优先，缺失/失败回落行级 LRC。"""
         raw = cls.fetch_raw_lyrics(title, artist, duration_ms, album=album)
-        if not raw or not raw.get("lrc"):
+        if not raw:
+            return None
+
+        # v1.6.1 YRC 通道：解析异常、尾部名单截断失败（返回空 lines）都走回落分支，
+        # 绝不因为新增通道而丢掉原本能拿到的 lrc。
+        if raw.get("yrc"):
+            try:
+                word_data = parse_yrc(raw["yrc"], duration_ms=duration_ms)
+            except Exception as exc:  # noqa: BLE001 - 任何解析异常都不许吞掉 lrc 兜底
+                logger.warning("[netease] YRC 解析失败，回落 lrc: %s", exc)
+                word_data = {"lines": []}
+            if word_data.get("lines"):
+                word_data["source"] = "netease"
+                word_data["lyric_type"] = "word"
+                word_data.setdefault("tags", {})["ti"] = title
+                word_data.setdefault("tags", {})["ar"] = artist
+                # ytlrc 与 yrc 同轴（实测最近邻 0ms），优先于 lrc 轴的 tlyric。
+                # 挂载统一由 aggregator.attach_same_source_translation 负责，此处只传键。
+                ytlrc_text = raw.get("ytlrc") or ""
+                trans_text = ytlrc_text if ytlrc_text.strip() else (raw.get("tlyric") or "")
+                if trans_text:
+                    word_data["tlyric"] = trans_text
+                return word_data
+
+        if not raw.get("lrc"):
             return None
 
         parsed = parse_lrc(raw["lrc"])
