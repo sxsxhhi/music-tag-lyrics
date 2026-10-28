@@ -125,12 +125,12 @@ python scripts/process_song.py "歌曲.flac" --lyrics-file "我的歌词.txt"
 
 ## 🏗️ 架构拓扑：它是如何稳定工作的？
 
-### 1. 全景调度与双引擎声学打轴流程 (v1.6.0)
+### 1. 全景调度与双引擎声学打轴流程 (v1.6.1)
 
 从左侧音频读取、中间多源检索、右侧声学对齐到最终交付的全链路示意图：
 
 <p align="center">
-  <img src="docs/images/lyric_engine_architecture.svg" alt="v1.6.0 全景调度与双引擎声学打轴架构" width="100%">
+  <img src="docs/images/lyric_engine_architecture.svg" alt="v1.6.1 全景调度与双引擎声学打轴架构" width="100%">
 </p>
 
 ### 2. 三级超清专辑封面自动匹配

@@ -72,8 +72,8 @@
   <rect width="960" height="480" rx="12" fill="var(--bg)"/>
 
   <!-- Header -->
-  <text x="32" y="34" class="title">🎵 music-tag-lyrics v1.6.0 全景调度与双引擎声学打轴架构</text>
-  <text x="32" y="52" class="subtitle">六源梯级智能搜词 → 国语/粤语双专用 CTC 逐行窗声学打轴 → 逐行合理性闸 → 起唱点校准 (−60ms) → 三位一体交付</text>
+  <text x="32" y="34" class="title">🎵 music-tag-lyrics v1.6.1 全景调度与双引擎声学打轴架构</text>
+  <text x="32" y="52" class="subtitle">六源梯级智能搜词（网易 YRC 逐字）→ 国语/粤语双专用 CTC 逐行窗声学打轴 → 逐行合理性闸 → 起唱点校准 (−60ms) → 三位一体交付</text>
 
   <!-- ==================== Section 1: Input & Tag Clean (x=28, w=136) ==================== -->
   <rect x="28" y="72" width="136" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
@@ -161,17 +161,17 @@
 
   <!-- ROW 2 (Fallback Tiers 4-6) -->
   <rect x="198" y="272" width="364" height="142" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-dasharray="3 3"/>
-  <text x="208" y="290" class="badge-text" fill="var(--accent-orange)">🔄 官方精修翻译与全球开源兜底 (Tier 4 ~ 6)</text>
+  <text x="208" y="290" class="badge-text" fill="var(--accent-orange)">🔄 官方翻译 / 逐字兜底与全球开源 (Tier 4 ~ 6)</text>
 
   <!-- T4: Netease -->
   <g transform="translate(206, 300)">
     <rect width="108" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
     <text x="6" y="18" class="card-title">T4: 网易云音乐</text>
-    <text x="6" y="36" class="card-desc">• 官方精修 tlyric</text>
-    <text x="6" y="52" class="card-desc">• 杜绝生硬机械机翻</text>
-    <text x="6" y="68" class="card-desc">• 行级时间戳完整</text>
+    <text x="6" y="36" class="card-desc">• YRC 原生逐字</text>
+    <text x="6" y="52" class="card-desc">• 官方 tlyric</text>
+    <text x="6" y="68" class="card-desc">• 杜绝机械机翻</text>
     <rect x="6" y="78" width="96" height="16" rx="3" fill="var(--accent-purple-bg)"/>
-    <text x="10" y="90" class="badge-text" fill="var(--accent-purple)">官方人工翻译源</text>
+    <text x="10" y="90" class="badge-text" fill="var(--accent-purple)">逐字 + 行级兜底</text>
   </g>
 
   <path d="M 314 351 L 326 351" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -207,16 +207,16 @@
   <path d="M 572 351 L 584 351 L 584 270 L 590 270" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="548" y="340" class="branch-lbl">有行无字</text>
 
-  <!-- ==================== Section 3: v1.6.0 Acoustic Engine & QC (x=592, w=256) ==================== -->
+  <!-- ==================== Section 3: v1.6.1 Acoustic Engine & QC (x=592, w=256) ==================== -->
   <rect x="592" y="72" width="256" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--accent-purple)" stroke-width="1.5"/>
-  <text x="604" y="96" class="sect-title" fill="var(--accent-purple)">⚡ 1.6.0 声学打轴 · 闸门 · 质检中枢</text>
+  <text x="604" y="96" class="sect-title" fill="var(--accent-purple)">⚡ 1.6.1 声学打轴 · 闸门 · 质检中枢</text>
 
   <!-- 3.1 Dual-Engine Windowed CTC -->
   <g transform="translate(602, 112)">
     <rect width="236" height="104" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
     <text x="8" y="18" class="card-title">🎤 双专用 CTC 逐行切窗打轴</text>
-    <text x="8" y="34" class="card-desc">• 粤语：wav2vec2-cantonese (703类粤拼)</text>
-    <text x="8" y="50" class="card-desc">• 国语：wav2vec2-chinese (3503词表)</text>
+    <text x="8" y="34" class="card-desc">• 粤语：wav2vec2-cantonese</text>
+    <text x="8" y="50" class="card-desc">• 国语：wav2vec2-chinese</text>
     <text x="8" y="66" class="card-desc">• 逐行窗对齐：彻底消灭全局漂移与吞停顿</text>
     <rect x="8" y="76" width="220" height="18" rx="3" fill="var(--accent-purple-bg)"/>
     <text x="14" y="89" class="badge-text" fill="var(--accent-purple)">绝不改词 · 英文大小写回退 · 标点间隙吸附</text>
@@ -229,9 +229,9 @@
   <g transform="translate(602, 230)">
     <rect width="236" height="96" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
     <text x="8" y="18" class="card-title">🛡️ 逐行合理性闸 (Gate) · 自动回退</text>
-    <text x="8" y="34" class="card-desc">• 宽度双阈值：1200ms+停顿拦截 / 1600ms 硬限</text>
-    <text x="8" y="50" class="card-desc">• 真实长音安全放行（停顿&lt;250ms）/ 吞停顿拦截</text>
-    <text x="8" y="66" class="card-desc">• 异常行整行还原旧值或保底，记录 gate_reverts</text>
+    <text x="8" y="34" class="card-desc">• 双阈值 1200ms / 硬限 1600ms</text>
+    <text x="8" y="50" class="card-desc">• 长音放行(&lt;250ms) / 吞停顿拦截</text>
+    <text x="8" y="66" class="card-desc">• 异常行还原旧值，记 gate_reverts</text>
     <rect x="8" y="72" width="220" height="16" rx="3" fill="var(--accent-green-bg)"/>
     <text x="14" y="84" class="badge-text" fill="var(--accent-green)">粤语熔断转普通话 · zh 出货横向验货门禁</text>
   </g>
@@ -243,9 +243,9 @@
   <g transform="translate(602, 340)">
     <rect width="236" height="106" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
     <text x="8" y="18" class="card-title">📐 起唱轴校准与闭环质检 (Line Axis &amp; QC)</text>
-    <text x="8" y="34" class="card-desc">• 行标签下沉：对齐歌手开口前 60ms，绝不抢跑</text>
-    <text x="8" y="50" class="card-desc">• 三段裁决防重叠：后推≤99ms，行间严格≥50ms</text>
-    <text x="8" y="66" class="card-desc">• QC 闭环：L1 单调自动修复 / L2 节奏分诊 / L3 复检</text>
+    <text x="8" y="34" class="card-desc">• 行标签下沉：开口前 60ms，绝不抢跑</text>
+    <text x="8" y="50" class="card-desc">• 防重叠：后推≤99ms，间距≥50ms</text>
+    <text x="8" y="66" class="card-desc">• QC 闭环：L1 修复 / L2 分诊 / L3 复检</text>
     <rect x="8" y="78" width="220" height="18" rx="3" fill="var(--accent-blue-bg)"/>
     <text x="14" y="91" class="badge-text" fill="var(--accent-blue)">双语译文成对跟随 · 彻底告别播放器抽搐跳屏</text>
   </g>
