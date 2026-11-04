@@ -714,11 +714,21 @@ def test_e2_apple_none_falls_back_to_kugou():
                 "lines": [{"start": 1000, "end": 4000, "text": "酷狗歌词", "words": [{"text": "酷"}]}]
             }
 
+    class FakeNone:
+        @classmethod
+        def fetch(cls, *a, **k):
+            return None
+
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "KugouFetcher": agg.KugouFetcher,
     }
     agg.AppleTTMLFetcher = FakeAppleNone
+    # v1.7.0：网易升到 T2、QQ 插在 T3，Apple 未命中后必须先被这两档兜住
+    agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.KugouFetcher = FakeKugou
     try:
         cand = agg.LyricAggregator.fetch_best_lyrics("歌名", "歌手", duration_ms=0)
@@ -754,6 +764,7 @@ def test_e3_apple_verbatim_no_trans_amll_no_trans_keeps_apple():
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -766,6 +777,7 @@ def test_e3_apple_verbatim_no_trans_amll_no_trans_keeps_apple():
     agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeAMLL
     agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
@@ -804,10 +816,15 @@ def test_e4_apple_verbatim_no_trans_amll_with_trans_replaces():
 
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
     }
     agg.AppleTTMLFetcher = FakeApple
+    # v1.7.0：外语逐字无译文时 need_more 为真，会依次探网易 T2 / QQ T3 / 酷狗 T4
+    agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeAMLLWithTrans
     try:
@@ -878,6 +895,7 @@ def test_e6_kugou_verbatim_no_trans_not_replaced_by_amll_no_trans():
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -885,6 +903,7 @@ def test_e6_kugou_verbatim_no_trans_not_replaced_by_amll_no_trans():
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeAMLL
     agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
@@ -926,12 +945,14 @@ def test_e7_lrcshare_with_trans_replaces_apple_verbatim_no_trans():
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
     }
     agg.AppleTTMLFetcher = FakeApple
     agg.KugouFetcher = FakeNone
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeLrcShare
     try:
         cand = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=0)
@@ -975,6 +996,7 @@ def test_e8_foreign_apple_no_trans_kugou_with_trans_replaces():
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -982,6 +1004,7 @@ def test_e8_foreign_apple_no_trans_kugou_with_trans_replaces():
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
@@ -1012,6 +1035,7 @@ def test_e9_kugou_receives_album_from_aggregator():
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -1025,6 +1049,7 @@ def test_e9_kugou_receives_album_from_aggregator():
     agg.KugouFetcher = FakeKugouCapture
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
@@ -1062,6 +1087,7 @@ def test_e10_netease_receives_album_from_aggregator():
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
         "KugouFetcher": agg.KugouFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -1073,6 +1099,8 @@ def test_e10_netease_receives_album_from_aggregator():
 
     agg.AppleTTMLFetcher = FakeAppleNone
     agg.KugouFetcher = FakeKugouNone
+    agg.AMLLFetcher = FakeNone
+    agg.QQFetcher = FakeNone
     agg.NetEaseFetcher = FakeNeteaseCapture
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone

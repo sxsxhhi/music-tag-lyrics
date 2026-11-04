@@ -19,6 +19,8 @@ jobs:
         run: python tests/test_parsers.py
       - name: NetEase YRC verbatim
         run: python tests/test_netease_yrc.py
+      - name: QQ QRC verbatim
+        run: python tests/test_qq_qrc.py
       - name: Pipeline
         run: python tests/test_pipeline.py
       - name: Safety

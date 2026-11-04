@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""多源歌词调度：Apple TTML → 酷狗 → AMLL → 网易 → LRCSHARE → LRCLIB。外语原文与译文必须同一源整包。"""
+"""多源歌词调度：Apple TTML → 网易 → QQ → 酷狗 → AMLL → LRCSHARE → LRCLIB。外语原文与译文必须同一源整包。"""
 
 import logging
 from typing import Dict, List, Any, Optional, Callable
@@ -10,6 +10,7 @@ from .fetchers.kugou import KugouFetcher, parsed_duration_reject_reason
 from .fetchers.lrcshare import LrcShareFetcher
 from .fetchers.lrclib import LRCLIBFetcher
 from .fetchers.netease import NetEaseFetcher
+from .fetchers.qq import QQFetcher
 from .parsers.lrc_parser import parse_lrc
 from .utils.time_utils import compute_duration_axis
 from .utils.lyric_attach import attach_translations_by_nearest
@@ -98,14 +99,20 @@ def enrich_foreign_translation(
     return candidate
 
 
+def _is_word_level(cand: Optional[Dict[str, Any]]) -> bool:
+    """候选是否逐字：声明 word/verbatim，或任一行真的带 words。"""
+    if not cand:
+        return False
+    if cand.get("lyric_type") in ("word", "verbatim"):
+        return True
+    return any(bool(l.get("words")) for l in cand.get("lines") or [])
+
+
 def _rank(cand: Optional[Dict[str, Any]], is_foreign: bool) -> int:
     """外语：译文是硬前提；华语：只要逐字。返回 -1..3。"""
     if not cand:
         return -1
-    # 优化 1: cand.get("lyric_type") in ("word", "verbatim")
-    is_word = cand.get("lyric_type") in ("word", "verbatim") or any(
-        l.get("words") for l in cand.get("lines") or []
-    )
+    is_word = _is_word_level(cand)
     # P1-2: 消费 match["confidence"] 区分 strict/loose
     if is_word and cand.get("match", {}).get("confidence") == "loose":
         word = 0
@@ -145,7 +152,7 @@ def _adopt(
 
 
 class LyricAggregator:
-    """Apple TTML → Kugou → AMLL → NetEase → LRCSHARE → LRCLIB。Demucs 在 process_song 失败分支。"""
+    """Apple TTML → NetEase → QQ → Kugou → AMLL → LRCSHARE → LRCLIB。Demucs 在 process_song 失败分支。"""
 
     @classmethod
     def fetch_best_lyrics(
@@ -162,7 +169,12 @@ class LyricAggregator:
         trace: List[str] = []
 
         def need_more(c: Optional[Dict[str, Any]]) -> bool:
-            return (not c) or (is_foreign and not candidate_has_translation(c))
+            # v1.7.0：判据从「有候选即停」改成「非逐字就继续」。
+            # 否则网易（T2）返回行级后会立刻锁死，永远探不到 QQ（T3）的逐字。
+            # 外语仍保留「逐字但缺译文」时继续探测的旧策略。
+            return (not _is_word_level(c)) or (
+                is_foreign and not candidate_has_translation(c)
+            )
 
         def _probe(fetch_fn: Callable[[], Optional[Dict[str, Any]]], source: str = "") -> Optional[Dict[str, Any]]:
             try:
@@ -171,7 +183,7 @@ class LyricAggregator:
                     return None
                 if is_instrumental_placeholder(res["lines"], duration_ms):
                     return None
-                # 六源统一时长门禁：只拒预览与冲轴
+                # 七源统一时长门禁：只拒预览与冲轴
                 if duration_ms > 0:
                     axis = compute_duration_axis(res.get("lines", []), res.get("duration_ms", 0))
                     reject = parsed_duration_reject_reason(axis, duration_ms)
@@ -190,37 +202,36 @@ class LyricAggregator:
                 title, artist=artist, duration_ms=duration_ms, album=album), "apple-ttml")
             candidate = _adopt(candidate, apple_cand, is_foreign, trace)
 
-        # T2 酷狗 —— 无候选，或外语缺译文时探（华语 Apple 已命中则 need_more 为假）
-        if need_more(candidate):
-            kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms, album=album), "kugou")
-            candidate = _adopt(candidate, kg_cand, is_foreign, trace)
-
-        # T3 AMLL(ncm) —— need_more 时进；仅 rank 提升才采纳
-        if need_more(candidate):
-            amll_cand = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms), "amll")
-            if amll_cand:
-                candidate = _adopt(candidate, amll_cand, is_foreign, trace)
-
-        # T4 网易 —— 整包替换必须自带可用 tlyric，且 rank 严格提升
+        # T2 网易 —— 行级也能落地，但 need_more 会继续往下找逐字；整包替换交给 _adopt 判定
         if need_more(candidate):
             ne_res = _probe(lambda: NetEaseFetcher.fetch(title, artist, duration_ms, album=album), "netease")
             if ne_res:
                 entries = _hanzi_tlyric_entries(ne_res.get("tlyric", ""))
-                attached = False
                 if entries:
-                    attached = attach_same_source_translation(ne_res, entries, "netease")
-                if not candidate:
-                    candidate = ne_res
-                elif attached:
-                    candidate = _adopt(candidate, ne_res, is_foreign, trace)
+                    attach_same_source_translation(ne_res, entries, "netease")
+                candidate = _adopt(candidate, ne_res, is_foreign, trace)
 
-        # T5 LRCSHARE —— 缺主词，或外语缺译文且该源自身带译文整包，且 rank 提升
+        # T3 QQ —— 只交逐字（行级由 fetcher 直接返回 None）
+        if need_more(candidate):
+            qq_cand = _probe(lambda: QQFetcher.fetch(title, artist, duration_ms, album=album), "qq")
+            candidate = _adopt(candidate, qq_cand, is_foreign, trace)
+
+        # T4 酷狗
+        if need_more(candidate):
+            kg_cand = _probe(lambda: KugouFetcher.fetch(title, artist, duration_ms, album=album), "kugou")
+            candidate = _adopt(candidate, kg_cand, is_foreign, trace)
+
+        # T5 AMLL(ncm)
+        if need_more(candidate):
+            amll_cand = _probe(lambda: AMLLFetcher.fetch(title, artist, duration_ms), "amll")
+            candidate = _adopt(candidate, amll_cand, is_foreign, trace)
+
+        # T6 LRCSHARE —— 不再用 has_translation 守卫（会拒绝华语逐字），交给 _rank 裁决
         if need_more(candidate):
             ls_res = _probe(lambda: LrcShareFetcher.fetch(title, artist, duration_ms), "lrcshare")
-            if ls_res and (not candidate or ls_res.get("has_translation")):
-                candidate = _adopt(candidate, ls_res, is_foreign, trace)
+            candidate = _adopt(candidate, ls_res, is_foreign, trace)
 
-        # T6 LRCLIB —— 仅完全无候选
+        # T7 LRCLIB —— 仅完全无候选
         if not candidate:
             candidate = _probe(lambda: LRCLIBFetcher.fetch(title, artist, album, duration_ms), "lrclib")
 

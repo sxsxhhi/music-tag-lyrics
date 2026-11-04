@@ -608,7 +608,7 @@ def _process_single_song_impl(
             lyrics_text=initial_lyrics_text,
             title=cleaned_title,
             artist=normalized_artist,
-            audio_path=None,  # P1-22: 严禁在六源商业检索前执行音频探针，仅用文本与先验
+            audio_path=None,  # P1-22: 严禁在七源商业检索前执行音频探针，仅用文本与先验
             interactive=not non_interactive,
         )
         resolved_lang = det.get("lang", "zh")
@@ -630,7 +630,7 @@ def _process_single_song_impl(
             lang="auto" if lang_auto else resolved_lang,
         )
     else:
-        print("🔍 Fetching lyrics across multi-engines (AppleTTML/Kugou/AMLL/NetEase/LRCSHARE/LRCLIB)...")
+        print("🔍 Fetching lyrics across multi-engines (AppleTTML/NetEase/QQ/Kugou/AMLL/LRCSHARE/LRCLIB)...")
         lyric_data = LyricAggregator.fetch_best_lyrics(
             title=cleaned_title,
             artist=normalized_artist,
@@ -673,10 +673,10 @@ def _process_single_song_impl(
     if not lyric_data or not lyric_data.get("lines"):
         from core.fetchers.kugou import last_kugou_status
         if last_kugou_status() == "gated":
-            print(f"❌ 有候选被门禁丢掉，六源未交出可用歌词：{cleaned_title} - {normalized_artist}")
+            print(f"❌ 有候选被门禁丢掉，七源未交出可用歌词：{cleaned_title} - {normalized_artist}")
             print("   （上方应有预览/冲轴/版本互斥原因；禁止说「酷狗没有」）")
         else:
-            print(f"❌ 六源均无候选：{cleaned_title} - {normalized_artist}")
+            print(f"❌ 七源均无候选：{cleaned_title} - {normalized_artist}")
         if update_tags and not lyrics_only:
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,

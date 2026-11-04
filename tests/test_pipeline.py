@@ -264,16 +264,17 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
         def fetch(cls, *a, **k):
             return {"source": "netease", "lyric_type": "line", "lines": [dict(x) for x in ne_lines], "tlyric": tlyric}
 
-    class BoomLS:
+    class FakeQQ:
         @classmethod
         def fetch(cls, *a, **k):
-            raise AssertionError("LRCSHARE should not run after NetEase whole-package attach")
+            return None
 
     reals = {
         "AppleTTMLFetcher": agg.AppleTTMLFetcher,
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -281,7 +282,10 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNE
-    agg.LrcShareFetcher = BoomLS
+    agg.QQFetcher = FakeQQ
+    # v1.7.0：need_more 改成「非逐字就继续」，网易行级命中后仍会继续探后面的源，
+    # 所以 LRCSHARE 不能再是 Boom，必须是能安全返回 None 的假体。
+    agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
         out = agg.LyricAggregator.fetch_best_lyrics("Hello", "Western Artist")
@@ -303,6 +307,7 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
     agg.NetEaseFetcher = FakeNENoTrans
+    agg.QQFetcher = FakeQQ
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:
@@ -315,15 +320,26 @@ def test_netease_same_version_package_replaces_kugou_without_trans():
     assert not any((l.get("translation") or "").strip() for l in out2["lines"])
 
 
-def test_chinese_kugou_not_replaced_by_netease_tlyric():
-    """华语：酷狗已命中时网易即使带 tlyric 也不得覆盖。"""
+def test_chinese_netease_line_does_not_block_kugou_verbatim():
+    """华语：网易（T2）先返回行级后，need_more 仍为真，酷狗（T4）的逐字必须能把它换掉。
+
+    v1.7.0 顺序把网易提到 T2、酷狗降到 T4，这条用例是新 `need_more` 的核心回归：
+    如果判据还是「有候选即停」，网易行级会锁死，酷狗永远轮不到。
+    """
     import core.aggregator as agg
 
+    ne_lines = [
+        {"start": 1100, "end": 4100, "duration": 3000, "text": "焚情如火", "words": []},
+        {"start": 4100, "end": 7100, "duration": 3000, "text": "第二句", "words": []},
+        {"start": 8100, "end": 11100, "duration": 3000, "text": "第三句", "words": []},
+        {"start": 12100, "end": 15100, "duration": 3000, "text": "第四句", "words": []},
+    ]
     kugou = {
         "source": "kugou",
         "lyric_type": "verbatim",
         "lines": [
-            {"start": 1000, "end": 4000, "duration": 3000, "text": "焚情如火", "words": [{"text": "焚", "start": 1000, "end": 1500}]},
+            {"start": 1000, "end": 4000, "duration": 3000, "text": "焚情如火",
+             "words": [{"text": "焚", "start": 1000, "end": 1500}]},
             {"start": 4000, "end": 7000, "duration": 3000, "text": "第二句", "words": []},
             {"start": 8000, "end": 11000, "duration": 3000, "text": "第三句", "words": []},
             {"start": 12000, "end": 15000, "duration": 3000, "text": "第四句", "words": []},
@@ -335,29 +351,30 @@ def test_chinese_kugou_not_replaced_by_netease_tlyric():
         def fetch(cls, *a, **k):
             return {**kugou, "lines": [dict(x) for x in kugou["lines"]]}
 
-    class BoomNE:
+    class FakeNE:
         @classmethod
         def fetch(cls, *a, **k):
-            raise AssertionError("华语酷狗已命中时不应再探网易")
-
-    reals = {
-        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
-        "KugouFetcher": agg.KugouFetcher,
-        "AMLLFetcher": agg.AMLLFetcher,
-        "NetEaseFetcher": agg.NetEaseFetcher,
-        "LrcShareFetcher": agg.LrcShareFetcher,
-        "LRCLIBFetcher": agg.LRCLIBFetcher,
-    }
+            return {"source": "netease", "lyric_type": "line", "lines": [dict(x) for x in ne_lines]}
 
     class FakeNone:
         @classmethod
         def fetch(cls, *a, **k):
             return None
 
+    reals = {
+        "AppleTTMLFetcher": agg.AppleTTMLFetcher,
+        "KugouFetcher": agg.KugouFetcher,
+        "AMLLFetcher": agg.AMLLFetcher,
+        "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
+        "LrcShareFetcher": agg.LrcShareFetcher,
+        "LRCLIBFetcher": agg.LRCLIBFetcher,
+    }
     agg.AppleTTMLFetcher = FakeNone
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeNone
-    agg.NetEaseFetcher = BoomNE
+    agg.NetEaseFetcher = FakeNE
+    agg.QQFetcher = FakeNone
     agg.LrcShareFetcher = FakeNone
     agg.LRCLIBFetcher = FakeNone
     try:

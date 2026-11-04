@@ -29,7 +29,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.time_utils import apply_time_offset
-from ._common import parse_offset_tag
+from ._common import normalize_word_blocks, parse_offset_tag
 
 logger = logging.getLogger(__name__)
 
@@ -67,39 +67,6 @@ def _split_blocks(body: str) -> List[Block]:
         end = params[i + 1].start() if i + 1 < len(params) else len(text)
         blocks.append((int(m.group(1)), int(m.group(2)), text[m.end():end]))
     return blocks
-
-
-def _normalize_blocks(blocks: List[Block]) -> List[Dict[str, Any]]:
-    """三类异常块归一，保证 text 非空、duration > 0、起点非递减。"""
-    words: List[Dict[str, Any]] = []
-    pending = ""
-    for start, dur, text in blocks:
-        if text == "":
-            # 空文本块：纯静音占位。留着会在 converter 里生成「<t> 后无字」的畸形标签
-            continue
-        if dur <= 0 or not text.strip():
-            # 纯空白块 / 零时长块：文本并入前一字，不做独立 word
-            if words:
-                prev = words[-1]
-                prev["text"] += text
-                if dur > 0:
-                    prev["end"] = max(prev["end"], start + dur)
-                    prev["duration"] = prev["end"] - prev["start"]
-            else:
-                pending += text
-            continue
-        if pending:
-            text = pending + text
-            pending = ""
-        if words and start < words[-1]["end"]:
-            start = words[-1]["end"]          # 防御：源内轻微回退时钳成非递减
-        words.append({
-            "start": start,
-            "duration": dur,
-            "end": start + dur,
-            "text": text,
-        })
-    return words
 
 
 def trim_tail_staff(
@@ -180,7 +147,7 @@ def parse_yrc(yrc_text: str, adjust: int = 0, duration_ms: int = 0) -> Dict[str,
 
     lines: List[Dict[str, Any]] = []
     for body in bodies:
-        words = _normalize_blocks(_split_blocks(body))
+        words = normalize_word_blocks(_split_blocks(body))
         if not words:
             continue                       # 整行无有效块：丢弃，不产幽灵行
         if total_offset:

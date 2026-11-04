@@ -228,7 +228,7 @@ def test_tail_trim_still_overrun_returns_empty():
 
 
 def test_overrun_tolerance_matches_kugou():
-    """与六源统一门禁的容忍值必须一致（防两处常量漂移）。"""
+    """与七源统一门禁的容忍值必须一致（防两处常量漂移）。"""
     assert OVERRUN_TOL_MS == OVERRUN_TOLERANCE_MS
 
 
@@ -384,6 +384,12 @@ def _fake_foreign_setup(calls):
             calls.append("netease")
             return {**ne_data, "lines": [dict(ln) for ln in ne_data["lines"]]}
 
+    class FakeQQ:
+        @classmethod
+        def fetch(cls, *a, **k):
+            calls.append("qq")
+            return None
+
     class FakeLS:
         @classmethod
         def fetch(cls, *a, **k):
@@ -401,6 +407,7 @@ def _fake_foreign_setup(calls):
         "KugouFetcher": agg.KugouFetcher,
         "AMLLFetcher": agg.AMLLFetcher,
         "NetEaseFetcher": agg.NetEaseFetcher,
+        "QQFetcher": agg.QQFetcher,
         "LrcShareFetcher": agg.LrcShareFetcher,
         "LRCLIBFetcher": agg.LRCLIBFetcher,
     }
@@ -408,13 +415,14 @@ def _fake_foreign_setup(calls):
     agg.KugouFetcher = FakeKugou
     agg.AMLLFetcher = FakeAMLL
     agg.NetEaseFetcher = FakeNE
+    agg.QQFetcher = FakeQQ
     agg.LrcShareFetcher = FakeLS
     agg.LRCLIBFetcher = FakeLRCLIB
     return agg, reals
 
 
-def test_aggregator_t4_adopts_netease_verbatim():
-    """外语：酷狗逐字无译文(rank1) → 网易逐字+译文(rank3) 整包替换，LRCSHARE 不再探。"""
+def test_aggregator_t2_adopts_netease_verbatim():
+    """外语：网易在 v1.7.0 升到 T2，逐字+译文一命中即满足 need_more，酷狗不再被调用。"""
     calls = []
     agg, reals = _fake_foreign_setup(calls)
     try:
@@ -427,11 +435,13 @@ def test_aggregator_t4_adopts_netease_verbatim():
     assert out["source"] == "netease", out.get("source")
     assert out.get("translation_source") == "netease"
     assert all(ln["words"] for ln in out["lines"]), out["lines"]
-    assert "lrcshare" not in calls and "lrclib" not in calls, calls
+    # 网易已是 T2：逐字 + 译文同时满足，后面的源一个都不该被调用
+    assert calls == ["netease"], calls
+    assert "kugou" not in calls and "lrcshare" not in calls and "lrclib" not in calls, calls
 
 
-def test_aggregator_chinese_tie_keeps_kugou():
-    """华语：酷狗已出逐字(rank3) 与网易(rank3) 同级，顺序不变 → 仍用酷狗，且不再探网易。"""
+def test_aggregator_chinese_netease_verbatim_preempts_kugou():
+    """华语：网易（T2）逐字命中后 rank=3，酷狗（T4）不再被探测。"""
     calls = []
     agg, reals = _fake_foreign_setup(calls)
     try:
@@ -441,8 +451,8 @@ def test_aggregator_chinese_tie_keeps_kugou():
             setattr(agg, name, real)
 
     assert out is not None
-    assert out["source"] == "kugou", out.get("source")
-    assert "netease" not in calls, calls
+    assert out["source"] == "netease", out.get("source")
+    assert "kugou" not in calls, calls
 
 
 def main():

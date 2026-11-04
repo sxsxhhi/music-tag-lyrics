@@ -152,6 +152,24 @@ def test_check_line_axis_tolerances():
     assert not ok and len(bad) == 1
 
 
+def test_qq_word_level_is_official():
+    """v1.7.0：qq 的 QRC 逐字行首 == 首字，必须判成 official，不能落到 sing 再被 −60ms 校准。"""
+    data = _mk_lines((1000, [("甲", 1000, 1500)]))
+    assert mark_line_axis(data, source="qq") == AXIS_OFFICIAL
+    # 无字轴时仍按纯行级处理
+    data2 = _mk_lines((1000, None))
+    assert mark_line_axis(data2, source="qq") == AXIS_DISPLAY
+
+
+def test_qq_lead_zero_never_calibrated():
+    """qq 官方逐字即使 lead 为 0，也不需要走 display 校准。"""
+    data = _mk_lines((1000, [("甲", 1000, 1500)]), (2000, [("乙", 2000, 2500)]))
+    mark_line_axis(data, source="qq")
+    before = [(ln["start"], ln["words"][0]["start"]) for ln in data["lines"]]
+    calibrate_line_axis(data)
+    assert [(ln["start"], ln["words"][0]["start"]) for ln in data["lines"]] == before
+
+
 def test_env_free_and_fast():
     # 自检：整套流程不应触发任何模型/包络加载
     import core.utils.line_axis as la

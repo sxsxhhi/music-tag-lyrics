@@ -69,6 +69,41 @@ def http_post_json(
         return None
 
 
+def http_post_json_body(
+    url: str,
+    payload: Any = None,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: int = 8,
+    user_agent: str = UA_DESKTOP
+) -> Optional[Union[Dict[str, Any], list]]:
+    """Performs HTTP POST with a **JSON request body** and returns parsed JSON.
+
+    与 ``http_post_json`` 的区别：那个走 form-encoded（``a=1&b=2``），
+    QQ 音乐 musicu 接口要求 ``Content-Type: application/json`` 且 body 是 JSON 文本，
+    用 form-encoded 会被服务端判成非法请求。
+    """
+    req_headers = {
+        "User-Agent": user_agent,
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json",
+    }
+    if headers:
+        req_headers.update(headers)
+
+    try:
+        body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+
+    req = urllib.request.Request(url, data=body, headers=req_headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw_text = resp.read().decode("utf-8", errors="ignore")
+            return json.loads(raw_text)
+    except Exception:
+        return None
+
+
 def http_get_bytes(
     url: str,
     timeout: float = 10.0,
