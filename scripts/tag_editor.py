@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import mutagen
 from mutagen.flac import FLAC, Picture as FlacPicture
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT, APIC
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT, APIC, TSRC
 from mutagen.wave import WAVE
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
@@ -232,6 +232,7 @@ def _extract_id3_dict(id3: Any, info: Dict[str, Any]) -> None:
     _take("composer", "TCOM")
     _take("lyricist", "TEXT")
     _take("tracknumber", "TRCK")
+    _take("isrc", "TSRC")
 
     # P1-11: 不再只认 eng/XXX/chi 三个固定键。优先 eng，否则取任意一帧
     # （jpn/kor 或多 desc 的歌词帧以前一律读不到，表现为"明明有内嵌歌词却显示空"）
@@ -259,6 +260,7 @@ class TagSet:
     lyricist: Optional[str] = None
     lyrics: Optional[str] = None
     albumartist: Optional[str] = None
+    isrc: Optional[str] = None
 
     def normalized(self) -> "TagSet":
         """D-04：空串/纯空白视为「未提供」。albumartist 空串表示删除，lyrics 允许显式清空。"""
@@ -267,6 +269,7 @@ class TagSet:
             year=_yr(self.year), tracknumber=_txt(self.tracknumber),
             composer=_txt(self.composer), lyricist=_txt(self.lyricist),
             lyrics=self.lyrics, albumartist=self.albumartist,
+            isrc=_txt(self.isrc),
         )
 
 
@@ -280,6 +283,7 @@ _FIELD_SPEC = (
     ("tracknumber", "TRCK", "tracknumber", TRCK, str),
     ("composer", "TCOM", "composer", TCOM, str.strip),
     ("lyricist", "TEXT", "lyricist", TEXT, str.strip),
+    ("isrc", "TSRC", "isrc", TSRC, str.strip),
 )
 
 
@@ -324,6 +328,8 @@ def _apply_vorbis_tags(audio: Any, tags: TagSet) -> None:
             audio["albumartist"] = [normalize_artist_string(tags.albumartist)]
     if tags.lyrics is not None:
         audio["lyrics"] = [tags.lyrics]
+    if tags.isrc is not None:
+        audio["isrc"] = [tags.isrc.strip()]
 
 
 def _mp4_track(audio: Any) -> str:
@@ -357,6 +363,7 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         # 统一在初始化里给出，保证任何格式返回的键集合都一致。
         "albumartist": "",
         "tracknumber": "",
+        "isrc": "",
         "duration": None
     }
     if not os.path.exists(filepath):
@@ -390,6 +397,7 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
         _take("lyricist", lambda: audio.get("lyricist", [""])[0])
         _take("tracknumber", lambda: audio.get("tracknumber", [""])[0])
         _take("lyrics", lambda: audio.get("lyrics", [""])[0])
+        _take("isrc", lambda: (audio.get("isrc") or audio.get("ISRC") or [""])[0])
     elif isinstance(audio, MP4):
         _take("title", lambda: audio.get("\xa9nam", [""])[0])
         _take("artist", lambda: "/".join(audio.get("\xa9ART", [""])))
@@ -407,6 +415,15 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
             return str(item)
         _take("lyricist", _mp4_lyricist)
         _take("lyrics", lambda: audio.get("\xa9lyr", [""])[0])
+        def _mp4_isrc() -> str:
+            raw = audio.get("----:com.apple.iTunes:ISRC")
+            if not raw:
+                return ""
+            item = raw[0]
+            if isinstance(item, (bytes, bytearray)):
+                return bytes(item).decode("utf-8", errors="ignore")
+            return str(item)
+        _take("isrc", _mp4_isrc)
     elif isinstance(audio, WAVE) or (DSF is not None and isinstance(audio, DSF)):
         # R2: WAV 与 DSF 都靠内嵌 ID3 块存标签，处理方式完全一致，合并为一支。
         # _extract_id3_dict 内部已做逐字段隔离，不需要再套一层 try。
@@ -433,7 +450,8 @@ def update_audio_tags(
     lyrics: Optional[str] = None,
     albumartist: Optional[str] = None,
     cover_data: Optional[bytes] = None,
-    cover_mime: Optional[str] = None
+    cover_mime: Optional[str] = None,
+    isrc: Optional[str] = None
 ) -> bool:
     """
     Updates audio file metadata tags in-place.
@@ -455,6 +473,7 @@ def update_audio_tags(
     tags = TagSet(
         title=title, artist=artist, album=album, year=year, tracknumber=tracknumber,
         composer=composer, lyricist=lyricist, lyrics=lyrics, albumartist=albumartist,
+        isrc=isrc,
     ).normalized()
 
     def _attach_id3_cover(id3_or_tags: Any) -> None:
@@ -533,6 +552,8 @@ def update_audio_tags(
             audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(tags.lyricist.strip().encode("utf-8"))]
         if tags.lyrics is not None:
             audio["\xa9lyr"] = [tags.lyrics]
+        if tags.isrc is not None:
+            audio["----:com.apple.iTunes:ISRC"] = [MP4FreeForm(tags.isrc.strip().encode("utf-8"))]
         if cover_data:
             from mutagen.mp4 import MP4Cover
             imageformat = MP4Cover.FORMAT_PNG if cover_mime == "image/png" else MP4Cover.FORMAT_JPEG

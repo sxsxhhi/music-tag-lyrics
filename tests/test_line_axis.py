@@ -38,6 +38,8 @@ def test_mark_axis_line_level_is_display():
 def test_mark_axis_ttml_is_official():
     data = _mk_lines((23200, None))
     assert mark_line_axis(data, source="apple-ttml") == AXIS_OFFICIAL
+    data2 = _mk_lines((23200, None))
+    assert mark_line_axis(data2, source="lrc-red") == AXIS_OFFICIAL
 
 
 def test_mark_axis_word_level_sing_inferred():

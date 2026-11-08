@@ -33,6 +33,8 @@ jobs:
         run: python tests/test_converter_prelude.py
       - name: Apple TTML ladder
         run: python tests/test_apple_ttml.py
+      - name: lrc.red TTML and ISRC ladder
+        run: python tests/test_lrc_red.py
       - name: Cover art ladder
         run: python tests/test_cover_art.py
       - name: Acoustic pipeline

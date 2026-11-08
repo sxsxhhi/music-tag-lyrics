@@ -484,6 +484,7 @@ def process_single_song(
     no_cover: bool = False,
     lang: str = "auto",
     qc_report: Optional[str] = None,
+    write_isrc: bool = False,
 ) -> bool:
     try:
         return _process_single_song_impl(
@@ -498,6 +499,7 @@ def process_single_song(
             no_cover=no_cover,
             lang=lang,
             qc_report=qc_report,
+            write_isrc=write_isrc,
         )
     finally:
         try:
@@ -519,6 +521,7 @@ def _process_single_song_impl(
     no_cover: bool = False,
     lang: str = "auto",
     qc_report: Optional[str] = None,
+    write_isrc: bool = False,
 ) -> bool:
     """
     Processes a single audio file:
@@ -560,6 +563,7 @@ def _process_single_song_impl(
     artist = tags.get("artist", "").strip()
     album = tags.get("album", "").strip()
     year = tags.get("year", "").strip()
+    isrc = tags.get("isrc", "").strip()
 
     inferred_title, inferred_artist = infer_title_artist_from_basename(base_name)
     if not title:
@@ -636,7 +640,8 @@ def _process_single_song_impl(
             artist=normalized_artist,
             album=album,
             duration_ms=duration_ms,
-            enable_apple=enable_apple
+            enable_apple=enable_apple,
+            isrc=isrc,
         )
 
         if not lyric_data or not lyric_data.get("lines"):
@@ -839,6 +844,18 @@ def _process_single_song_impl(
             else:
                 print("⚠️ Tag update skipped or format read-only")
         else:
+            isrc_to_write = None
+            if write_isrc and not isrc:
+                cand_isrc = lyric_data.get("isrc") if lyric_data else None
+                if cand_isrc:
+                    from core.utils.isrc import is_valid_isrc
+                    if is_valid_isrc(cand_isrc):
+                        cand_dur = lyric_data.get("duration_ms") or 0
+                        dur_diff_ok = (not duration_ms or not cand_dur or abs(cand_dur - duration_ms) <= 3000)
+                        if dur_diff_ok and lyric_data.get("match", {}).get("confidence") == "strict":
+                            isrc_to_write = cand_isrc
+                            print(f"🏷️  [ISRC] 权威查证已补齐 ISRC: {isrc_to_write}")
+
             success = update_audio_tags(
                 filepath,
                 title=cleaned_title,
@@ -849,7 +866,8 @@ def _process_single_song_impl(
                 lyricist=lyricist,
                 lyrics=spl_content,
                 cover_data=cover_bytes,
-                cover_mime=cover_mime
+                cover_mime=cover_mime,
+                isrc=isrc_to_write,
             )
             if success:
                 print("✅ Embedded tags updated (Artist with '/', 4-digit Year, In-place Lyrics)")
@@ -907,11 +925,17 @@ def main():
                         help="声学打轴语种分支：auto (自动检测) / zh (普通话) / yue (粤语)")
     parser.add_argument("--qc-report", default=None,
                         help="写出质检报告 JSON（L1/L2/行轴/闸门回退汇总；不带则不写）")
+    parser.add_argument("--write-isrc", action="store_true",
+                        help="允许向音频补齐满足严格门禁且缺失的 ISRC 标签（默认只读）")
+    parser.add_argument("--no-lrc-red", action="store_true",
+                        help="禁用 lrc.red 全球歌词网络")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, os.environ.get("MTL_LOG_LEVEL", "INFO").upper(), logging.INFO), format="%(message)s")
 
     # Apple 档总开关只在此处计算一次（A4 去重，原先单文件/目录两分支各算一遍）
     enable_apple = (not args.no_apple_ttml) and (os.environ.get("MTL_APPLE_TIER") != "off")
+    if args.no_lrc_red:
+        os.environ["MTL_LRC_RED"] = "off"
 
     target = args.path
     if os.path.isfile(target):
@@ -928,6 +952,7 @@ def main():
             no_cover=args.no_cover,
             lang=args.lang,
             qc_report=args.qc_report,
+            write_isrc=args.write_isrc,
         )
         return 0 if ok else 1
     elif os.path.isdir(target):
@@ -953,6 +978,7 @@ def main():
                             no_cover=args.no_cover,
                             lang=args.lang,
                             qc_report=args.qc_report,
+                            write_isrc=args.write_isrc,
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")

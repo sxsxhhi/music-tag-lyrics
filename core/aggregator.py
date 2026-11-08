@@ -138,14 +138,16 @@ def _adopt(
     new_rank = _rank(new, is_foreign)
 
     if new_rank > cur_rank:
-        if cur.get("source") == "apple-ttml":
-            print(f"ℹ️ [apple-ttml] 已交出原文逐字，因等级提升整包换 {new.get('source')}")
+        if cur.get("source") in ("apple-ttml", "lrc-red"):
+            src_tag = cur.get("source")
+            print(f"ℹ️ [{src_tag}] 已交出原文逐字，因等级提升整包换 {new.get('source')}")
             if trace is not None:
                 trace.append("replaced_by_higher_rank")
         return new
 
-    if cur.get("source") == "apple-ttml":
-        print(f"ℹ️ [apple-ttml] 拒绝被 {new.get('source')} 顶替（等级 {new_rank} ≤ {cur_rank}）")
+    if cur.get("source") in ("apple-ttml", "lrc-red"):
+        src_tag = cur.get("source")
+        print(f"ℹ️ [{src_tag}] 拒绝被 {new.get('source')} 顶替（等级 {new_rank} ≤ {cur_rank}）")
         if trace is not None:
             trace.append("downgrade_blocked")
     return cur
@@ -162,7 +164,8 @@ class LyricAggregator:
         album: str = "",
         duration_ms: int = 0,
         *,
-        enable_apple: bool = True
+        enable_apple: bool = True,
+        isrc: str = ""
     ) -> Optional[Dict[str, Any]]:
         is_foreign = is_foreign_track(title, artist)
         candidate: Optional[Dict[str, Any]] = None
@@ -196,10 +199,10 @@ class LyricAggregator:
                 logger.warning("歌词源调用失败，已隔离并继续: %s", exc)
             return None
 
-        # T1 Apple TTML —— 第 1 档
+        # T1 Apple TTML —— 第 1 档 (含 AMLL 与 lrc.red 兜底)
         if enable_apple:
             apple_cand = _probe(lambda: AppleTTMLFetcher.fetch(
-                title, artist=artist, duration_ms=duration_ms, album=album), "apple-ttml")
+                title, artist=artist, duration_ms=duration_ms, album=album, isrc=isrc), "apple-ttml")
             candidate = _adopt(candidate, apple_cand, is_foreign, trace)
 
         # T2 网易 —— 行级也能落地，但 need_more 会继续往下找逐字；整包替换交给 _adopt 判定

@@ -44,8 +44,9 @@ AXIS_UNKNOWN = "unknown"      # 判不准 → 不改写，只告警
 
 # 官方逐字源（aggregator 实况取值）：kugou 命中 KRC 时返回 verbatim；
 # v1.6.1 起 netease 命中 YRC 也返回 word（行首 == 首字，lead 恒为 0）；
-# v1.7.0 起 qq 命中 QRC 同理（实测 63/63 行首 == 首字）。
-_WORD_LEVEL_SOURCES = {"apple-ttml", "amll", "kugou-krc", "krc", "kugou", "netease", "qq"}
+# v1.7.0 起 qq 命中 QRC 同理（实测 63/63 行首 == 首字）；
+# v1.8.0 起 lrc-red 交付 Apple 原生 TTML 逐字。
+_WORD_LEVEL_SOURCES = {"apple-ttml", "amll", "kugou-krc", "krc", "kugou", "netease", "qq", "lrc-red"}
 
 
 def infer_from_words(
@@ -78,7 +79,7 @@ def mark_line_axis(data: Dict[str, Any], source: Optional[str] = None) -> str:
     src = str(source if source is not None else (data.get("source") or "")).lower().strip()
     has_words = any(ln.get("words") for ln in (data.get("lines") or []))
 
-    if src == "apple-ttml" or src == "amll":
+    if src in ("apple-ttml", "amll", "lrc-red"):
         axis = AXIS_OFFICIAL
     elif src == "netease" and has_words:
         # netease 的 YRC 逐字行首天然等于首字；但其**行级 lrc 候选**仍须留在 display

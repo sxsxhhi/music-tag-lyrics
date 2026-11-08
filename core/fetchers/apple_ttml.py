@@ -245,6 +245,7 @@ class AppleTTMLFetcher:
         duration_ms: int = 0,
         album: str = "",
         enable_itunes: bool = True,
+        isrc: str = "",
     ) -> Optional[Dict[str, Any]]:
         """全流程抓取：ID 发现 → 镜像攒票拉取 → 门禁判定。"""
         if os.environ.get("MTL_APPLE_TIER") == "off":
@@ -254,6 +255,26 @@ class AppleTTMLFetcher:
         # 与主链叠加后单曲最坏 ≈30.5s，远超文档承诺的 8.5s。
         t_song_start = time.perf_counter()
         song_deadline = t_song_start + SONG_DEADLINE_S + 2.5  # ID 2.5s + TTML 6.0s
+
+        def _try_lrc_red() -> Optional[Dict[str, Any]]:
+            if os.environ.get("MTL_LRC_RED") == "off":
+                return None
+            if time.perf_counter() >= song_deadline:
+                return None
+            try:
+                from .lrc_red import LrcRedFetcher
+                cand = LrcRedFetcher.fetch(
+                    title=title,
+                    artist=artist,
+                    duration_ms=duration_ms,
+                    album=album,
+                    isrc=isrc,
+                )
+                if cand and cand.get("lines"):
+                    return cand
+            except Exception as exc:
+                logger.warning("   ⚠️ [apple-ttml] lrc.red 兜底失败: %s", exc)
+            return None
 
         is_foreign = is_foreign_track(title, artist)
         is_zh = not is_foreign
@@ -332,7 +353,7 @@ class AppleTTMLFetcher:
                         resolved_mirror = meta.get("mirror", "")
 
         if not ttml_text or not target_apple_id:
-            return None
+            return _try_lrc_red()
 
         # -------------------------------------------------------------
         # 3. 解析 TTML
@@ -340,7 +361,7 @@ class AppleTTMLFetcher:
         data = parse_ttml(ttml_text)
         lines = data.get("lines") or []
         if not lines:
-            return None
+            return _try_lrc_red()
 
         # -------------------------------------------------------------
         # 4. 门禁验证 (Gate)
@@ -348,11 +369,11 @@ class AppleTTMLFetcher:
         # 结构门：只认真 span 词，整句兜底的 synthetic word 不算逐字
         if not _has_verbatim_words(lines):
             logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：0 行逐字")
-            return None
+            return _try_lrc_red()
 
         if is_instrumental_placeholder(lines, duration_ms):
             logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：纯音乐占位")
-            return None
+            return _try_lrc_red()
 
         ttml_tags = data.get("tags") or {}
         ttml_title = ttml_tags.get("ti") or ""
@@ -367,7 +388,7 @@ class AppleTTMLFetcher:
 
         if not t_loose or not ttml_t_loose or t_loose != ttml_t_loose:
             logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：标题不匹配 (%s vs %s)", t_loose, ttml_t_loose)
-            return None
+            return _try_lrc_red()
 
         title_strict_match = (t_strict == ttml_t_strict)
 
@@ -376,7 +397,7 @@ class AppleTTMLFetcher:
         ttml_art = artist_tokens(ttml_artist)
         if not (q_art & ttml_art):
             logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：艺人无交集 (%s vs %s)", q_art, ttml_art)
-            return None
+            return _try_lrc_red()
 
         # ③ 版本门
         q_ver = version_tokens(title)
@@ -384,7 +405,7 @@ class AppleTTMLFetcher:
         ver_diff = (q_ver - ttml_ver) | (ttml_ver - q_ver)
         if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
             logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：版本互斥冲突")
-            return None
+            return _try_lrc_red()
 
         # ④ 时长门禁与置信度判别 (P1-3: 统一 axis 算法)
         body = data.get("duration_ms") or 0
@@ -402,12 +423,12 @@ class AppleTTMLFetcher:
             is_preview = (duration_ms > PREVIEW_MIN_TRACK_MS and axis < PREVIEW_MAX_LAST_END_MS)
             if axis > duration_ms + OVERRUN_TOLERANCE_MS or is_preview:
                 logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：预览或冲轴 (axis=%d, duration=%d)", axis, duration_ms)
-                return None
+                return _try_lrc_red()
 
             # E3b_floor: 截断地板，始终必过
             if axis / duration_ms < 0.50:
                 logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：截断地板未过 (ratio=%.3f)", axis / duration_ms)
-                return None
+                return _try_lrc_red()
 
             # E1: iTunes trackTimeMillis
             durs = itunes_durations([target_apple_id], is_zh=is_zh)
@@ -418,7 +439,7 @@ class AppleTTMLFetcher:
             if e1_available and not e1_pass:
                 # 硬规则 1：E1 有值但不合格，不得回落 E2，直接拒！
                 logger.warning("   ⚠️ [apple-ttml] 门禁丢弃：iTunes 时长不对齐 (itunes=%d, local=%d)", itunes_track_ms, duration_ms)
-                return None
+                return _try_lrc_red()
 
             # E2: 专辑精确匹配
             local_al_n = norm_album(album)
