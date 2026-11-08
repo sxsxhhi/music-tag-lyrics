@@ -147,6 +147,22 @@ def parse_lrc_red_ttml(
     tags: Dict[str, Any] = {}
     metadata = metadata or {}
 
+    if not ttml_text or not isinstance(ttml_text, str):
+        return {
+            "tags": tags,
+            "lines": [],
+            "duration_ms": 0,
+            "songwriters": [],
+            "has_verbatim": False,
+            "has_translation": False,
+            "singing_lines": 0,
+            "native_word_lines": 0,
+            "word_coverage_ratio": 0.0,
+            "invalid_word_lines": 0,
+            "timeline_overlap_count": 0,
+            "timestamp_repair_count": 0,
+        }
+
     # 1. 抽取 songwriters 名单
     songwriters: List[str] = []
     for sm in _SONGWRITER_RE.finditer(ttml_text):
@@ -201,6 +217,10 @@ def parse_lrc_red_ttml(
     lines: List[Dict[str, Any]] = []
     for pm in _P_RE.finditer(ttml_text):
         p_attrs = _attrs(pm.group(1))
+        p_role = (p_attrs.get("ttm:role") or p_attrs.get("role") or "").lower()
+        if p_role in ("x-bg", "x-roman"):
+            continue
+
         p_begin = _ms(p_attrs, "begin")
         if p_begin is None:
             continue
@@ -213,12 +233,17 @@ def parse_lrc_red_ttml(
             p_end = p_begin + 2500
 
         raw_inner = pm.group(2)
+        if p_role == "x-translation":
+            t_text = html.unescape(_TAG_RE.sub("", raw_inner)).strip()
+            if t_text and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
+                lines[-1]["translation"] = t_text
+            continue
+
         # 移除背景和声与音译，避免污染主歌词
         body = _strip_span_blocks(raw_inner, "x-bg")
         body = _strip_span_blocks(body, "x-roman")
 
-        # 分离纯译文 span 与主歌词 span
-        word_spans: List[Any] = []
+        # 提取译文
         translation = ""
         for sm in _SPAN_RE.finditer(body):
             s_attrs = _attrs(sm.group(1))
@@ -227,43 +252,64 @@ def parse_lrc_red_ttml(
                 t_text = html.unescape(_TAG_RE.sub("", sm.group(2))).strip()
                 if t_text:
                     translation = t_text
-                continue
-            word_spans.append(sm)
+
+        # 剥离译文 span，避免译文干扰主歌词 span 间隙计算与文本回退
+        body_main = _strip_span_blocks(body, "x-translation")
+        word_spans = list(_SPAN_RE.finditer(body_main))
 
         has_invalid_span = False
         words: List[Dict[str, Any]] = []
         for idx, sm in enumerate(word_spans):
             s_attrs = _attrs(sm.group(1))
             s_begin = _ms(s_attrs, "begin")
+            if s_begin is None:
+                continue
             s_end = _ms(s_attrs, "end")
             s_raw_text = _TAG_RE.sub("", sm.group(2))
             s_text = html.unescape(s_raw_text)
 
-            if s_begin is not None and s_end is not None:
-                if s_end < s_begin:
-                    has_invalid_span = True
-                    continue
+            # 缺 end 时优先取下一个 span 的 begin，其次行尾 p_end
+            if s_end is None:
+                nxt_begin = None
+                if idx + 1 < len(word_spans):
+                    nxt_begin = _ms(_attrs(word_spans[idx + 1].group(1)), "begin")
+                if nxt_begin is not None and nxt_begin >= s_begin:
+                    s_end = nxt_begin
+                elif p_end > s_begin:
+                    s_end = p_end
+                else:
+                    s_end = s_begin + 500
 
-                # 检查与下一个 span 的空隙是否构成词边界空格
-                nxt_pos = word_spans[idx + 1].start() if idx + 1 < len(word_spans) else len(body)
-                gap = body[sm.end():nxt_pos]
-                next_text = html.unescape(_TAG_RE.sub("", word_spans[idx + 1].group(2))) if idx + 1 < len(word_spans) else ""
-                has_gap = _gap_is_word_boundary(gap, s_text, next_text)
+            if s_end < s_begin:
+                has_invalid_span = True
+                continue
 
-                text = s_text
-                if has_gap and not text.endswith(" "):
-                    text = text + " "
+            # 检查与下一个 span 的空隙是否构成词边界空格
+            nxt_pos = word_spans[idx + 1].start() if idx + 1 < len(word_spans) else len(body_main)
+            gap = body_main[sm.end():nxt_pos]
+            next_text = html.unescape(_TAG_RE.sub("", word_spans[idx + 1].group(2))) if idx + 1 < len(word_spans) else ""
+            has_gap = _gap_is_word_boundary(gap, s_text, next_text)
 
-                w_dur = max(40, s_end - s_begin)
-                words.append({
-                    "start": apply_time_offset(s_begin, adjust),
-                    "duration": w_dur,
-                    "end": apply_time_offset(s_end, adjust),
-                    "text": text,
-                    "join": "space" if has_gap else "none",
-                })
+            text = s_text
+            if has_gap and not text.endswith(" "):
+                text = text + " "
 
-        line_text = "".join(w["text"] for w in words).strip() if words else html.unescape(_TAG_RE.sub("", body)).strip()
+            w_dur = max(40, s_end - s_begin)
+            words.append({
+                "start": apply_time_offset(s_begin, adjust),
+                "duration": w_dur,
+                "end": apply_time_offset(s_end, adjust),
+                "text": text,
+                "join": "space" if has_gap else "none",
+            })
+
+        fallback_text = html.unescape(_TAG_RE.sub("", body_main)).strip()
+        line_text = "".join(w["text"] for w in words).strip() if words else fallback_text
+
+        if not line_text and not words:
+            if translation and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
+                lines[-1]["translation"] = translation
+            continue
 
         line_data: Dict[str, Any] = {
             "start": p_begin,

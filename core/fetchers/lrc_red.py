@@ -59,6 +59,7 @@ class LrcRedFetcher:
     _last_req_time: float = 0.0
     _raw_cache: Dict[str, Dict[str, Any]] = {}
     _cache = _raw_cache  # 兼容旧代码与测试调用 _cache.clear()
+    MAX_CACHE_ENTRIES: int = 500
 
     @classmethod
     def _rate_limit(cls, deadline: Optional[float] = None) -> bool:
@@ -202,6 +203,12 @@ class LrcRedFetcher:
             # 绝不写入永久负缓存！保证后续正常请求不被锁死（P0-1）
             return None
 
+        if len(cls._raw_cache) >= cls.MAX_CACHE_ENTRIES:
+            try:
+                cls._raw_cache.pop(next(iter(cls._raw_cache)))
+            except Exception:
+                pass
+
         record = {
             "meta": meta,
             "raw_ttml": raw_ttml,
@@ -318,8 +325,6 @@ class LrcRedFetcher:
             if title or artist:
                 # 调用方提供了标题或歌手进行查询，但远端缺失对应信息，不能自我认证通过
                 return None
-        elif by_model_raw is not False:
-            confidence = "strict" if title_strict_match else "loose"
         elif title_strict_match:
             confidence = "strict"
         else:
@@ -361,6 +366,7 @@ class LrcRedFetcher:
             "provenance": {
                 "provider": "lrc.red",
                 "by_model": by_model_state,
+                "origin_status": "official" if by_model_raw is False else "unverified_origin",
                 "endpoint": raw_record["endpoint"],
                 "endpoint_kind": raw_record["endpoint_kind"],
             },
@@ -404,6 +410,7 @@ class LrcRedFetcher:
         title: str,
         artist: str,
         duration_ms: int,
+        album: str = "",
     ) -> List[Dict[str, Any]]:
         """对 /match.json 或 /search.json 返回的候选集进行安全排序与严格过滤。"""
         valid_candidates = []
@@ -411,6 +418,7 @@ class LrcRedFetcher:
         local_norm_t_strict = norm_title(title, keep_version=True) if title else ""
         local_art = artist_tokens(artist) if artist else set()
         local_ver = version_tokens(title) if title else set()
+        local_al = norm_album(album) if album else ""
 
         for h in hits:
             cand_isrc = normalize_isrc(h.get("isrc"))
@@ -449,16 +457,36 @@ class LrcRedFetcher:
             if local_art and cand_art and not (local_art & cand_art):
                 continue
 
-            # 综合评分：时长差越小越好，严格标题匹配优先
+            # 综合评分：时长差越小越好，严格标题匹配优先，专辑匹配加分
             cand_t_strict = norm_title(cand_title, keep_version=True) if cand_title else ""
             score = 0
             if cand_t_strict and local_norm_t_strict and cand_t_strict == local_norm_t_strict:
                 score += 100
+            if local_al and h.get("album"):
+                cand_al = norm_album(h.get("album"))
+                if cand_al and cand_al == local_al:
+                    score += 20
             score -= dur_diff // 100
 
             valid_candidates.append((score, h))
 
         valid_candidates.sort(key=lambda x: x[0], reverse=True)
+
+        # M06: 多个等分且无法消歧候选，不强制选一首
+        if len(valid_candidates) >= 2:
+            top_score = valid_candidates[0][0]
+            top_isrc = normalize_isrc(valid_candidates[0][1].get("isrc"))
+            conflicting = [
+                item[1] for item in valid_candidates
+                if item[0] == top_score and normalize_isrc(item[1].get("isrc")) != top_isrc
+            ]
+            if conflicting:
+                logger.warning(
+                    "   ⚠️ [lrc-red] 存在等分且无法消歧的候选 (%s vs %s)，放弃选择以策安全 (M06)",
+                    top_isrc, normalize_isrc(conflicting[0].get("isrc"))
+                )
+                return []
+
         return [item[1] for item in valid_candidates]
 
     @classmethod
@@ -486,7 +514,7 @@ class LrcRedFetcher:
         if status != 200 or not data or not isinstance(data.get("hits"), list):
             return None
 
-        best_hits = cls._rank_and_filter_hits(data["hits"], title, artist, duration_ms)
+        best_hits = cls._rank_and_filter_hits(data["hits"], title, artist, duration_ms, album=album)
         for cand in best_hits[:3]:
             isrc = cand.get("isrc")
             res = cls.fetch_by_isrc(
@@ -522,7 +550,7 @@ class LrcRedFetcher:
             return None
 
         # 先验证并排序全部返回候选，再尝试前 3 名（P0-3）
-        best_hits = cls._rank_and_filter_hits(data["hits"], title, artist, duration_ms)
+        best_hits = cls._rank_and_filter_hits(data["hits"], title, artist, duration_ms, album=album)
         for cand in best_hits[:3]:
             isrc = cand.get("isrc")
             res = cls.fetch_by_isrc(

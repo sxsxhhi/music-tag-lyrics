@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-382%20passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-385%20passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20%7C%20OGG%20%7C%20DSF-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
@@ -162,7 +162,7 @@ python scripts/process_song.py "歌曲.flac" --write-isrc
 本项目配备了极其严苛的工程测试用例网络，涵盖各种奇怪歌词格式、字符集、连读念白与边界条件：
 
 ```bash
-# 一键运行全部 24 个离线测试套件（382 项用例全部离线通过）
+# 一键运行全部 24 个离线测试套件（385 项用例全部离线通过）
 python tests/run_all.py
 
 # 快速运行指定模块测试
@@ -197,7 +197,7 @@ python tests/run_all.py -k canto
 
 | 版本 | 发布日期 | 亮点概述 |
 | :---: | :---: | :--- |
-| **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 382 项测试全绿**<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 消除元数据假认证：严禁本地数据回填远端凭证，远端缺失元数据显式标为 missing 并降为 loose 候选；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• 区分 `byModel=True` 模型生成与官方逐字凭证，严禁模型轴交付为 T1 或写回 ISRC；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 完善 TTML 解析：XML 实体反转义、英文空格保持与时间标签规范化、多 div 时序自愈与质量指标审计；<br/>• 新增 `tests/test_v181_repro.py` 与 `tests/test_isrc_integration.py`，全量测试扩展至 24 套件 382 用例全绿。 |
+| **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 385 项测试全绿**<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 消除元数据假认证：严禁本地数据回填远端凭证，远端缺失元数据显式标为 missing 并降为 loose 候选；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• 区分 `byModel=True` 模型生成与官方逐字凭证，严禁模型轴交付为 T1 或写回 ISRC；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 完善 TTML 解析：XML 实体反转义、英文空格保持与时间标签规范化、多 div 时序自愈与质量指标审计；<br/>• 新增 `tests/test_v181_repro.py` 与 `tests/test_isrc_integration.py`，全量测试扩展至 24 套件 385 用例全绿。 |
 | **v1.8.0** | `2026-11-07` | **lrc.red 全球 ISRC 逐字网络接入 · Apple TTML 双引擎调度 · 366 项测试全绿**<br/>• 引入 lrc.red 全球歌词开放同步网络，作为 Apple TTML 的原生双引擎补充；<br/>• 支持基于本地 ISRC 编码直查 Apple Music TTML 逐字流光歌词；<br/>• 实现 lrc.red 专属 TTML 命名空间与逐字结构解析器。 |
 | **v1.7.0** | `2026-11-04` | **QQ 音乐 QRC 逐字通道 · 七源调度 · need_more 判据修复 · 353 项测试全绿**<br/>• 新增 QQ 音乐 QRC 逐字源：移植 QQ 非标准位序的 3DES 解密（标准 DES 库解不出来），解析 XML 包装的 `字(起,长)` 格式；<br/>• 调度顺序改为 **Apple → 网易 → QQ → 酷狗 → AMLL → LRCSHARE → LRCLIB**；<br/>• 修复 `need_more`：从「有候选即停」改为「非逐字就继续」，否则网易行级会锁死 QQ 逐字；<br/>• QQ 只交逐字，行级候选直接放弃；不消费未验证的 trans/roma 字段；<br/>• 新增 `tests/test_qq_qrc.py`（53 条），套件总数 21。 |
 | **v1.6.1** | `2026-10-28` | **网易云 YRC 逐字通道 · 同轴译文 ytlrc · 298 项测试全绿**<br/>• 网易云从「只能出整行」升级为可出逐字（`yv=1`）；「只有逐字、没有行级歌词」的曲目从六源无候选变为直接拿到逐字；<br/>• 新增位置切片解析，歌词里的 `(FR)` 之类括号不再截断文本、不再触发整行降级；<br/>• 自动识别并截除尾部等距铺排的制作名单（原本会冲出曲末 23 秒被门禁整包丢弃）；<br/>• 无 YRC 的曲目行为与升级前逐字节一致；六源优先级与调度顺序不变。 |

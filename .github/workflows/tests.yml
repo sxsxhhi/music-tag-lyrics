@@ -59,3 +59,7 @@ jobs:
         run: python tests/test_gate.py
       - name: Quality control
         run: python tests/test_qc.py
+      - name: v1.8.1 reproduction suite
+        run: python tests/test_v181_repro.py
+      - name: ISRC integration & container safety
+        run: python tests/test_isrc_integration.py

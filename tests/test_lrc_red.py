@@ -228,6 +228,46 @@ def test_t07_inverted_timestamps_audit_metric():
     assert parsed["invalid_word_lines"] >= 1
 
 
+def test_t08_missing_span_end_timestamp_recovery():
+    """T08: span 缺失 end 属性时，按下一个 span begin 或行尾安全兜底恢复。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>
+      <p begin="0.0" end="2.0">
+        <span begin="0.0">Hello</span> <span begin="1.0">world</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    assert parsed["has_verbatim"] is True
+    assert len(parsed["lines"][0]["words"]) == 2
+    w0 = parsed["lines"][0]["words"][0]
+    w1 = parsed["lines"][0]["words"][1]
+    assert w0["start"] == 0 and w0["end"] == 1000
+    assert w1["start"] == 1000 and w1["end"] == 2000
+
+
+def test_t09_paragraph_level_roles_and_translation_attach():
+    """T09: 段落级 ttm:role="x-translation" 附着到前一行，x-bg 整段过滤，不产生幽灵行。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+    <body><div>
+      <p begin="1.0" end="3.0"><span begin="1.0" end="3.0">Hello world</span></p>
+      <p begin="1.0" end="3.0" ttm:role="x-translation">你好世界</p>
+      <p begin="3.0" end="4.0" ttm:role="x-bg"><span>(Background)</span></p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    assert len(parsed["lines"]) == 1
+    assert parsed["lines"][0]["text"] == "Hello world"
+    assert parsed["lines"][0]["translation"] == "你好世界"
+    assert parsed["singing_lines"] == 1
+
+
+def test_t10_safe_empty_or_none_ttml():
+    """T10: None 或空字符串 TTML 输入安全返回空结构，严防崩溃。"""
+    res1 = parse_lrc_red_ttml(None)
+    assert res1["has_verbatim"] is False and len(res1["lines"]) == 0
+    res2 = parse_lrc_red_ttml("")
+    assert res2["has_verbatim"] is False and len(res2["lines"]) == 0
+
+
 # ==============================================================================
 # 3. 缓存安全性测试 (C01 - C04)
 # ==============================================================================
@@ -362,13 +402,29 @@ def test_m04_m05_remote_missing_meta_or_different_artist():
 
 def test_m06_ambiguous_candidates_not_arbitrary():
     """M06: 候选集无法消歧时不强制乱选。"""
-    hits = [
+    # 1. 冲突版本直接过滤
+    hits_ver = [
         {"isrc": "ISRC1", "title": "Song (Live 1)", "artist": "Singer", "duration": 200.0},
         {"isrc": "ISRC2", "title": "Song (Remix 1)", "artist": "Singer", "duration": 200.0},
     ]
-    # 本地为普通版，两个候选均为冲突版本
-    best = LrcRedFetcher._rank_and_filter_hits(hits, title="Song", artist="Singer", duration_ms=200000)
-    assert len(best) == 0
+    best_ver = LrcRedFetcher._rank_and_filter_hits(hits_ver, title="Song", artist="Singer", duration_ms=200000)
+    assert len(best_ver) == 0
+
+    # 2. 等分且无法消歧候选（同歌名、同艺人、同时长但不同 ISRC）
+    hits_tie = [
+        {"isrc": "USUM71413645", "title": "Song", "artist": "Singer", "duration": 200.0},
+        {"isrc": "GBARL1401524", "title": "Song", "artist": "Singer", "duration": 200.0},
+    ]
+    best_tie = LrcRedFetcher._rank_and_filter_hits(hits_tie, title="Song", artist="Singer", duration_ms=200000)
+    assert len(best_tie) == 0, "等分冲突 ISRC 必须放弃选择，不得武断任取"
+
+    # 3. 若有专辑信息可成功消歧，则允许放行
+    hits_disambig = [
+        {"isrc": "USUM71413645", "title": "Song", "artist": "Singer", "album": "Target Album", "duration": 200.0},
+        {"isrc": "GBARL1401524", "title": "Song", "artist": "Singer", "album": "Other Album", "duration": 200.0},
+    ]
+    best_ok = LrcRedFetcher._rank_and_filter_hits(hits_disambig, title="Song", artist="Singer", duration_ms=200000, album="Target Album")
+    assert len(best_ok) == 2 and best_ok[0]["isrc"] == "USUM71413645"
 
 
 # ==============================================================================
