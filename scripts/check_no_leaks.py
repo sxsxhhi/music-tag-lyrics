@@ -170,7 +170,8 @@ def scan_zip(zip_path: Path, verbose: bool):
     hits, allowed = [], []
     with zipfile.ZipFile(zip_path) as zf:
         for name in zf.namelist():
-            if not _is_text(name):
+            # 守卫自身含白名单字面量，与仓库模式一致必须排除
+            if os.path.basename(name) == os.path.basename(SELF_REL) or not _is_text(name):
                 continue
             try:
                 text = zf.read(name).decode("utf-8", "ignore")
