@@ -1105,6 +1105,8 @@ class AcousticAligner:
     def get_models(cls, device: str = 'cuda'):
         """Lazy-loads and caches Demucs and Stable-Whisper models."""
         # C-03: 只查通用位置，不再写死开发机路径；找不到就明确报错，不静默改全局 PATH
+        # 注：以下仅为只读探测常见 ffmpeg 安装位置并前插进程内 PATH，
+        # 不写盘、不改注册表、不改全局环境，符合「不侵入 C 盘」纪律。
         import shutil
         if not shutil.which("ffmpeg"):
             for cand_dir in [

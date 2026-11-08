@@ -60,6 +60,9 @@ def main():
     if not os.path.isfile(MOTHER_AUDIO):
         print(f"SKIP: 母盘不存在 {MOTHER_AUDIO}")
         return 0
+    if not os.path.isfile(GOLDEN_LRC):
+        print(f"SKIP: 版权对比夹具不存在 ({GOLDEN_LRC})，公开分发包不内置，请自备后重试")
+        return 0
 
     golden = [(t, x) for t, x in parse_lrc(GOLDEN_LRC) if t >= 12.0]
     hints = [(t, x) for t, x in golden]

@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-r"""Release packaging and manifest generator for music-tag-lyrics v1.8.1 (R22, R24).
+r"""Release packaging and manifest generator for music-tag-lyrics (R22, R24, P2-02, P2-03, P2-04).
 
 Generates:
-1. dist/music-tag-lyrics-skill-v1.8.1.zip (clean skill distribution package)
+1. dist/music-tag-lyrics-skill-v{__version__}.zip (clean skill distribution package)
 2. release-manifest.json (release metadata with commit, SHA-256, verification stamps)
 """
 
-import os
-import sys
-import json
-import zipfile
-import hashlib
 import datetime
+import hashlib
+import json
+import os
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -21,36 +21,16 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.version import __version__
+from scripts._dist_view import is_dir_excluded, is_file_excluded
+
 DIST_DIR = REPO_ROOT / "dist"
 MANIFEST_PATH = REPO_ROOT / "release-manifest.json"
 DOCS_MANIFEST_PATH = REPO_ROOT / "docs" / "release-manifest.json"
-ZIP_PATH = DIST_DIR / "music-tag-lyrics-skill-v1.8.1.zip"
-
-EXCLUDE_DIRS = {
-    ".git",
-    ".github",
-    ".test-work",
-    "__pycache__",
-    ".pytest_cache",
-    "dist",
-    "_baseline",
-    "_baseline_dump",
-    ".venv",
-    "venv",
-    "env",
-}
-
-EXCLUDE_EXTS = {
-    ".pyc",
-    ".pyo",
-    ".pyd",
-    ".DS_Store",
-}
-
-EXCLUDE_FILES = {
-    "Thumbs.db",
-    "desktop.ini",
-}
+ZIP_PATH = DIST_DIR / f"music-tag-lyrics-skill-v{__version__}.zip"
 
 
 def get_git_commit_sha() -> str:
@@ -69,7 +49,7 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_release_zip():
+def build_release_zip() -> list[str]:
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     if ZIP_PATH.exists():
         ZIP_PATH.unlink()
@@ -78,34 +58,25 @@ def build_release_zip():
 
     with zipfile.ZipFile(ZIP_PATH, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for root, dirs, files in os.walk(REPO_ROOT):
-            # 过滤排除目录
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".test-work") and not d.startswith("_baseline")]
+            dirs[:] = [d for d in dirs if not is_dir_excluded(d)]
 
+            rel_root = Path(root).relative_to(REPO_ROOT)
             for file in sorted(files):
-                if file in EXCLUDE_FILES:
-                    continue
-                ext = os.path.splitext(file)[1].lower()
-                if ext in EXCLUDE_EXTS:
-                    continue
+                rel_path = rel_root / file if str(rel_root) != "." else Path(file)
+                rel_str = str(rel_path).replace("\\", "/")
 
-                full_path = Path(root) / file
-                rel_path = full_path.relative_to(REPO_ROOT)
-
-                # 排除根目录下的临时文件或既有 zip
-                if rel_path.name.endswith(".zip") or str(rel_path).startswith("dist"):
+                if is_file_excluded(rel_str, file):
                     continue
 
-                # 归档到 zip 内的相对路径
-                arcname = str(rel_path).replace("\\", "/")
-                zf.write(full_path, arcname=arcname)
-                included_files.append(arcname)
+                zf.write(Path(root) / file, arcname=rel_str)
+                included_files.append(rel_str)
 
     return included_files
 
 
 def main():
     print("=" * 60)
-    print("📦 正在构建 music-tag-lyrics v1.8.1 发布包与 Release Manifest")
+    print(f"📦 正在构建 music-tag-lyrics v{__version__} 发布包与 Release Manifest")
     print("=" * 60)
 
     commit_sha = get_git_commit_sha()
@@ -123,8 +94,9 @@ def main():
     manifest_data = {
         "schema_version": "1.0",
         "name": "music-tag-lyrics",
-        "version": "1.8.1",
-        "release_tag": "v1.8.1",
+        "version": __version__,
+        "release_tag": f"v{__version__}",
+        "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
         "build_timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "git_commit": commit_sha,
         "release_asset": {
@@ -166,3 +138,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

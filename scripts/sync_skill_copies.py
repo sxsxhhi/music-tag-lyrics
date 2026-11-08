@@ -20,34 +20,13 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts._dist_view import is_dir_excluded, is_file_excluded
+
 DEST_AGENT = Path(r"F:\TOOLs\AI's DATA\ABC\Music\.agent\skills\music-tag-lyrics")
 DEST_AUTHORITATIVE = Path(r"F:\TOOLs\My skill\歌曲歌词修补skill\music-tag-lyrics")
-
-EXCLUDE_DIRS = {
-    ".git",
-    ".github",
-    ".test-work",
-    "__pycache__",
-    ".pytest_cache",
-    "dist",
-    "_baseline",
-    "_baseline_dump",
-    ".venv",
-    "venv",
-    "env",
-}
-
-EXCLUDE_EXTS = {
-    ".pyc",
-    ".pyo",
-    ".pyd",
-    ".DS_Store",
-}
-
-EXCLUDE_FILES = {
-    "Thumbs.db",
-    "desktop.ini",
-}
 
 
 def sync_to(target_dir: Path):
@@ -57,24 +36,20 @@ def sync_to(target_dir: Path):
 
     for root, dirs, files in os.walk(REPO_ROOT):
         # 排除忽略目录
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".test-work") and not d.startswith("_baseline")]
+        dirs[:] = [d for d in dirs if not is_dir_excluded(d)]
 
         rel_root = Path(root).relative_to(REPO_ROOT)
         dest_subdir = target_dir / rel_root
         dest_subdir.mkdir(parents=True, exist_ok=True)
 
-        for file in files:
-            if file in EXCLUDE_FILES:
-                continue
-            ext = os.path.splitext(file)[1].lower()
-            if ext in EXCLUDE_EXTS:
-                continue
-            if file.endswith(".zip") and str(rel_root).startswith("dist"):
-                continue
-
+        for file in sorted(files):
             rel_file = rel_root / file if str(rel_root) != "." else Path(file)
-            valid_rel_files.add(str(rel_file).replace("\\", "/"))
+            rel_str = str(rel_file).replace("\\", "/")
 
+            if is_file_excluded(rel_str, file):
+                continue
+
+            valid_rel_files.add(rel_str)
             src_file = Path(root) / file
             dest_file = dest_subdir / file
             shutil.copy2(src_file, dest_file)
@@ -95,8 +70,9 @@ def sync_to(target_dir: Path):
                     pass
         for d in dirs:
             dir_path = Path(root) / d
-            if d in EXCLUDE_DIRS or d.startswith(".test-work") or d.startswith("_baseline"):
+            if is_dir_excluded(d):
                 shutil.rmtree(dir_path, ignore_errors=True)
+                pruned_count += 1
             elif dir_path.is_dir() and not any(dir_path.iterdir()):
                 try:
                     dir_path.rmdir()

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缓存路径解析与三级回退保障。"""
+"""缓存路径解析与五级回退保障。"""
 
 import os
 import sys
@@ -8,16 +8,44 @@ from pathlib import Path
 from typing import Optional
 
 _CACHE_DIR_OVERRIDE: Optional[Path] = None
+_WARNED_SYSTEM_CACHE: bool = False
+
+
+def _warn_system_cache_once(target_path: Path) -> None:
+    """首次回退至系统盘时向 stderr 打印一次性醒目告警。"""
+    global _WARNED_SYSTEM_CACHE
+    if not _WARNED_SYSTEM_CACHE:
+        _WARNED_SYSTEM_CACHE = True
+        try:
+            sys.stderr.write(
+                f"⚠️ 缓存回退至系统盘目录（{target_path}）；如需改道请设置 MTL_CACHE_DIR\n"
+            )
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+
+def _is_writable_dir(path: Path) -> bool:
+    """检查目录是否可创建并写入。"""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test_file = path / ".write_test"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
 
 
 def get_cache_dir() -> Path:
     """
     返回可写的缓存目录。
-    优先级：
-      1. 代码内/测试 override
+    五级优先级：
+      1. 代码内/测试 override (_CACHE_DIR_OVERRIDE)
       2. 环境变量 MTL_CACHE_DIR
-      3. 系统标准用户缓存目录（Win %LOCALAPPDATA%，Mac ~/Library/Caches，Linux ~/.cache）
-      4. 系统临时目录 tempfile.gettempdir()
+      3. Skill 根目录下的 .cache/（跟随 skill 所在卷，零侵入系统盘）
+      4. 系统标准用户缓存目录（Win %LOCALAPPDATA%，Mac ~/Library/Caches，Linux ~/.cache；首次触发打印一次性告警）
+      5. 系统临时目录 tempfile.gettempdir()
     """
     global _CACHE_DIR_OVERRIDE
     if _CACHE_DIR_OVERRIDE is not None:
@@ -25,15 +53,17 @@ def get_cache_dir() -> Path:
         return _CACHE_DIR_OVERRIDE
 
     env_dir = os.environ.get("MTL_CACHE_DIR")
-    if env_dir:
-        p = Path(env_dir)
-        try:
-            p.mkdir(parents=True, exist_ok=True)
+    if env_dir and env_dir.strip():
+        p = Path(env_dir.strip())
+        if _is_writable_dir(p):
             return p
-        except Exception:
-            pass
 
-    # 平台缺省缓存
+    # 3. Skill 根目录下的 .cache/
+    repo_cache = Path(__file__).resolve().parents[2] / ".cache"
+    if _is_writable_dir(repo_cache):
+        return repo_cache
+
+    # 4. 平台缺省标准缓存
     candidates = []
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -48,22 +78,17 @@ def get_cache_dir() -> Path:
         else:
             candidates.append(Path.home() / ".cache" / "music-tag-lyrics")
 
-    candidates.append(Path(tempfile.gettempdir()) / "music-tag-lyrics")
-
     for c in candidates:
-        try:
-            c.mkdir(parents=True, exist_ok=True)
-            # 测试可写性
-            test_file = c / ".write_test"
-            test_file.write_text("ok", encoding="utf-8")
-            test_file.unlink(missing_ok=True)
+        if _is_writable_dir(c):
+            _warn_system_cache_once(c)
             return c
-        except Exception:
-            continue
 
-    # 兜底临时目录根
-    fallback = Path(tempfile.gettempdir())
-    return fallback
+    # 5. 系统临时目录兜底
+    temp_dir = Path(tempfile.gettempdir()) / "music-tag-lyrics"
+    if _is_writable_dir(temp_dir):
+        return temp_dir
+
+    return Path(tempfile.gettempdir())
 
 
 def get_cache_path(filename: str) -> Path:
@@ -75,3 +100,4 @@ def set_cache_dir_override(path: Optional[Path]) -> None:
     """仅供单元测试重定向缓存目录。"""
     global _CACHE_DIR_OVERRIDE
     _CACHE_DIR_OVERRIDE = path
+

@@ -63,3 +63,5 @@ jobs:
         run: python tests/test_v181_repro.py
       - name: ISRC integration & container safety
         run: python tests/test_isrc_integration.py
+      - name: Cache paths & drive isolation
+        run: python tests/test_cache_paths.py

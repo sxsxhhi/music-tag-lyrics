@@ -200,7 +200,7 @@ flowchart TD
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
 
-## 二十、声学对齐 v1.6.0：zh CTC 通道 / 行轴校准 / 质检闭环
+## 六、声学对齐 v1.6.0：zh CTC 通道 / 行轴校准 / 质检闭环
 
 **国语新通道（默认开启，`MTL_ZH_CTC=0` 回退双引擎）**：中文 wav2vec2 CTC **逐行窗**
 强制对齐（每行独立窗，免疫全局漂移与「长字吞停顿」）。模型
@@ -232,7 +232,7 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 `MTL_ZH_GATE=on|off`、`MTL_ZH_MIN_SCORE=-8.0`、`MTL_LINE_AXIS=calibrate|keep`、
 `MTL_DEVICE=auto|cpu`、`MTL_DEMUCS=on|off`、`MTL_QC_L3=on|off`、`MTL_GATE_MODE=strict|warn|off`。
 
-## 二十一、网易 YRC 逐字通道（v1.6.1）
+## 七、网易 YRC 逐字通道（v1.6.1）
 
 - **接口**：`/api/song/lyric?id=…&lv=1&kv=1&tv=-1&yv=1&rv=1`。只有 `yv=1` 才返回 `yrc`（逐字）；
   `ytlrc` 是逐字轨配套的行级译文，与 yrc 行戳同轴（实测最近邻 0ms），优先于 `tlyric`。
@@ -259,7 +259,7 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 
 ---
 
-## 二十二、环境隔离与存储红线（未经允许绝不侵入 C 盘）
+## 八、环境隔离与存储红线（未经允许绝不侵入 C 盘）
 
 - **【核心红线】未经用户明确允许，绝不侵入 C 盘**：
   1. **模型缓存原生居留 F 盘**：HuggingFace 缓存统一且唯一使用 `F:\TOOLs\AI's DATA\ABC\Music\Work\AI_Audio_Env\hf-cache`（已固化 Windows 用户级环境变量 `HF_HOME`）。严禁任何脚本、模型加载或测试代码向 `C:\Users\sxh20\.cache\huggingface` 回写或重新创建目录；
@@ -267,7 +267,8 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
   3. **声学虚拟环境规范**：仅使用 `Work\AI_Audio_Env\Scripts\python.exe -m …` 或直接导入；禁用 Scripts 内的 console `.exe` 垫片（因绝对路径已失效）；
   4. **工作区与母盘边界**：母盘 `只音\` 绝对只读；过程文件严禁散落根目录，一律进 `Work\任务\`；测试曲库必须加 `--no-tags` 零污染。
 
-## 二十三、QQ 音乐 QRC 逐字通道（v1.7.0）
+## 九、QQ 音乐 QRC 逐字通道（v1.7.0）
+
 
 ### 1. 接口与链路
 - 搜索：`https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?w={歌名 歌手}&format=json&p=1&n=10`，
@@ -331,7 +332,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、lrc.red 全球开放同步网络与 ISRC 检索（v1.8.1 正确性强化版）
+## 十、lrc.red 全球开放同步网络与 ISRC 检索（v1.8.1 正确性强化版）
 
 ### 1. 架构定位与网络预算
 在 T1 Apple TTML 体系内部接入 `lrc.red` 全球开放同步网络作为第二代 Apple 逐字流光歌词引擎：
