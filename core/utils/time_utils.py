@@ -3,7 +3,7 @@
 
 import re
 import logging
-from typing import Match
+from typing import Match, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +21,22 @@ def _frac_to_ms(frac: str) -> int:
         return int(frac) * 100
     return int(frac.ljust(3, "0")[:3])
 
-def parse_time_string_to_ms(time_str: str) -> int:
+def parse_time_string_to_ms(time_str: Optional[str]) -> Optional[int]:
     """
     Parses various timestamp notations into integer milliseconds:
     - '01:23.45' -> 83450
     - '01:23.456' -> 83456
     - '00:01:23.456' -> 83456
     - '83.456s' or '83.456' -> 83456
+
+    R07: 严格区分合法 0ms 与解析失败。空字符串、非法字符、负时间戳一律返回 None，
+    严禁静默转为合法 0ms 污染时间轴。
     """
-    if not time_str:
-        return 0
+    if not time_str or not isinstance(time_str, str):
+        return None
     s = time_str.strip()
+    if not s:
+        return None
     
     # 1. Colon notation (hh:mm:ss.xxx or mm:ss.xxx)
     m = TIME_COLON_RE.match(s)
@@ -46,11 +51,14 @@ def parse_time_string_to_ms(time_str: str) -> int:
     sm = TIME_SECONDS_RE.match(s)
     if sm:
         try:
-            return int(float(sm.group(1)) * 1000)
+            val = float(sm.group(1))
+            if val < 0:
+                return None
+            return int(val * 1000)
         except ValueError:
-            return 0
+            return None
             
-    return 0
+    return None
 
 def parse_match_to_ms(m: Match) -> int:
     """

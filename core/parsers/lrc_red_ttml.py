@@ -161,6 +161,7 @@ def parse_lrc_red_ttml(
             "invalid_word_lines": 0,
             "timeline_overlap_count": 0,
             "timestamp_repair_count": 0,
+            "inferred_end_count": 0,
         }
 
     # 1. 抽取 songwriters 名单
@@ -215,28 +216,45 @@ def parse_lrc_red_ttml(
 
     # 4. 逐行与逐词解析
     lines: List[Dict[str, Any]] = []
+    standalone_translations: List[Dict[str, Any]] = []
+    inferred_end_count = 0
+    timestamp_repair_count = 0
+
     for pm in _P_RE.finditer(ttml_text):
         p_attrs = _attrs(pm.group(1))
         p_role = (p_attrs.get("ttm:role") or p_attrs.get("role") or "").lower()
         if p_role in ("x-bg", "x-roman"):
             continue
 
+        p_id = p_attrs.get("xml:id") or p_attrs.get("id") or p_attrs.get("itunes:key")
+        p_agent = (p_attrs.get("ttm:agent") or p_attrs.get("agent") or "").strip().lower()
+        p_target = p_attrs.get("itunes:target") or p_attrs.get("target") or p_attrs.get("for")
+
         p_begin = _ms(p_attrs, "begin")
         if p_begin is None:
             continue
         p_end = _ms(p_attrs, "end")
         if p_end is None:
+            inferred_end_count += 1
             p_end = p_begin + 2500
         p_begin = apply_time_offset(p_begin, adjust)
         p_end = apply_time_offset(p_end, adjust)
         if p_end < p_begin:
+            timestamp_repair_count += 1
             p_end = p_begin + 2500
 
         raw_inner = pm.group(2)
-        if p_role == "x-translation":
+        if p_role in ("x-translation", "translation"):
             t_text = html.unescape(_TAG_RE.sub("", raw_inner)).strip()
-            if t_text and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
-                lines[-1]["translation"] = t_text
+            if t_text:
+                standalone_translations.append({
+                    "start": p_begin,
+                    "end": p_end,
+                    "text": t_text,
+                    "agent": p_agent,
+                    "id": p_id,
+                    "target": p_target,
+                })
             continue
 
         # 移除背景和声与音译，避免污染主歌词
@@ -248,13 +266,14 @@ def parse_lrc_red_ttml(
         for sm in _SPAN_RE.finditer(body):
             s_attrs = _attrs(sm.group(1))
             span_role = (s_attrs.get("ttm:role") or s_attrs.get("role") or "").lower()
-            if span_role == "x-translation":
+            if span_role in ("x-translation", "translation"):
                 t_text = html.unescape(_TAG_RE.sub("", sm.group(2))).strip()
                 if t_text:
                     translation = t_text
 
         # 剥离译文 span，避免译文干扰主歌词 span 间隙计算与文本回退
         body_main = _strip_span_blocks(body, "x-translation")
+        body_main = _strip_span_blocks(body_main, "translation")
         word_spans = list(_SPAN_RE.finditer(body_main))
 
         has_invalid_span = False
@@ -270,6 +289,7 @@ def parse_lrc_red_ttml(
 
             # 缺 end 时优先取下一个 span 的 begin，其次行尾 p_end
             if s_end is None:
+                inferred_end_count += 1
                 nxt_begin = None
                 if idx + 1 < len(word_spans):
                     nxt_begin = _ms(_attrs(word_spans[idx + 1].group(1)), "begin")
@@ -294,7 +314,10 @@ def parse_lrc_red_ttml(
             if has_gap and not text.endswith(" "):
                 text = text + " "
 
-            w_dur = max(40, s_end - s_begin)
+            raw_w_dur = s_end - s_begin
+            if raw_w_dur < 40:
+                timestamp_repair_count += 1
+            w_dur = max(40, raw_w_dur)
             words.append({
                 "start": apply_time_offset(s_begin, adjust),
                 "duration": w_dur,
@@ -304,19 +327,32 @@ def parse_lrc_red_ttml(
             })
 
         fallback_text = html.unescape(_TAG_RE.sub("", body_main)).strip()
-        line_text = "".join(w["text"] for w in words).strip() if words else fallback_text
+        raw_main_text = fallback_text
+        reconstructed_text = "".join(w["text"] for w in words).strip() if words else ""
+        line_text = reconstructed_text if words else raw_main_text
+
+        # R08: 校验逐词文本完整性，丢词或空洞时标记 text_mismatch
+        text_mismatch = False
+        if words and raw_main_text:
+            norm_raw = re.sub(r"\s+", "", raw_main_text)
+            norm_recon = re.sub(r"\s+", "", reconstructed_text)
+            text_mismatch = (norm_raw != norm_recon)
 
         if not line_text and not words:
-            if translation and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
-                lines[-1]["translation"] = translation
             continue
 
         line_data: Dict[str, Any] = {
             "start": p_begin,
             "end": p_end,
             "text": line_text,
+            "raw_main_text": raw_main_text,
             "has_invalid_span": has_invalid_span,
+            "text_mismatch": text_mismatch,
         }
+        if p_id:
+            line_data["id"] = p_id
+        if p_agent:
+            line_data["agent"] = p_agent
         if words:
             line_data["words"] = words
         if translation:
@@ -327,12 +363,45 @@ def parse_lrc_red_ttml(
     # 按照实际开始时间排序（P1-5: 兼容多 <div> 交错时序）
     lines.sort(key=lambda l: l.get("start", 0))
 
-    # 5. 覆盖度与质量审计指标统计（P1-6）
+    # R10: 规范挂载独立译文行，避免盲目挂载 lines[-1] 产生多声部/多 div 错位
+    if standalone_translations:
+        for tr in standalone_translations:
+            attached = False
+            # 1. 优先按 ID / target 显式绑定
+            target_id = tr.get("target") or tr.get("id")
+            if target_id:
+                for line in lines:
+                    if not line.get("translation") and line.get("id") == target_id:
+                        line["translation"] = tr["text"]
+                        attached = True
+                        break
+            if attached:
+                continue
+
+            # 2. 启发式最近邻：声部匹配 + 1500ms 紧密窗口
+            best_line = None
+            best_diff = 1501
+            for line in lines:
+                if line.get("translation"):
+                    continue
+                # 声部隔离
+                tr_agent = tr.get("agent")
+                l_agent = line.get("agent")
+                if tr_agent and l_agent and tr_agent != l_agent:
+                    continue
+                diff = abs(line.get("start", 0) - tr.get("start", 0))
+                if diff <= 1500 and diff < best_diff:
+                    best_diff = diff
+                    best_line = line
+
+            if best_line is not None:
+                best_line["translation"] = tr["text"]
+
+    # 5. 覆盖度与质量审计指标统计（P1-6, R08, R09）
     singing_lines = 0
     native_word_lines = 0
     invalid_word_lines = 0
     timeline_overlap_count = 0
-    timestamp_repair_count = 0
 
     prev_line_end = -1
     for line in lines:
@@ -342,10 +411,10 @@ def parse_lrc_red_ttml(
         singing_lines += 1
         l_words = line.get("words") or []
         if l_words:
-            if any(not w.get("synthetic") for w in l_words):
-                native_word_lines += 1
-            prev_w_end = -1
             has_inv = False
+            if line.get("has_invalid_span") or line.get("text_mismatch"):
+                has_inv = True
+            prev_w_end = -1
             for w in l_words:
                 w_st = w.get("start", 0)
                 w_et = w.get("end", 0)
@@ -354,9 +423,12 @@ def parse_lrc_red_ttml(
                 if prev_w_end > 0 and w_st < prev_w_end - 50:
                     timeline_overlap_count += 1
                 prev_w_end = w_et
-            if has_inv or line.get("has_invalid_span"):
+            if has_inv:
                 invalid_word_lines += 1
-        elif line.get("has_invalid_span"):
+            else:
+                if any(not w.get("synthetic") for w in l_words):
+                    native_word_lines += 1
+        elif line.get("has_invalid_span") or line.get("text_mismatch"):
             invalid_word_lines += 1
         l_st = line.get("start", 0)
         l_et = line.get("end", 0)
@@ -381,4 +453,5 @@ def parse_lrc_red_ttml(
         "invalid_word_lines": invalid_word_lines,
         "timeline_overlap_count": timeline_overlap_count,
         "timestamp_repair_count": timestamp_repair_count,
+        "inferred_end_count": inferred_end_count,
     }

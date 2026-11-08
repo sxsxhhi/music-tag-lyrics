@@ -305,6 +305,82 @@ def test_parse_time_three_digit_minutes():
     assert parse_time_string_to_ms(format_time_tag(6000000, "[]")[1:-1]) == 6000000
 
 
+def test_r07_strict_time_parsing_returns_none_for_invalid():
+    """R07: parse_time_string_to_ms 遇非法或负时间戳严格返回 None，绝不伪装为合法 0ms。"""
+    assert parse_time_string_to_ms("invalid") is None
+    assert parse_time_string_to_ms("-01:00.00") is None
+    assert parse_time_string_to_ms("") is None
+    assert parse_time_string_to_ms(None) is None
+    assert parse_time_string_to_ms("   ") is None
+    # 合法零时刻严格保持为 0
+    assert parse_time_string_to_ms("00:00.00") == 0
+    assert parse_time_string_to_ms("00:00:00.000") == 0
+    assert parse_time_string_to_ms("0") == 0
+    assert parse_time_string_to_ms("0.0s") == 0
+
+
+def test_r08_reconstructed_word_text_integrity_check():
+    """R08: 内部丢词或文本不完整时，标记 text_mismatch，降级为 invalid_word_lines。"""
+    from core.parsers.lrc_red_ttml import parse_lrc_red_ttml
+    # "Hello World" 中 World 缺少 span，导致 reconstructed_text 仅为 "Hello"
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+    <tt xmlns="http://www.w3.org/ns/ttml">
+      <body>
+        <div>
+          <p begin="1.0" end="3.0"><span begin="1.0" end="2.0">Hello</span> World</p>
+        </div>
+      </body>
+    </tt>"""
+    res = parse_lrc_red_ttml(xml)
+    assert len(res["lines"]) == 1
+    line = res["lines"][0]
+    assert line["raw_main_text"] == "Hello World"
+    assert line["text_mismatch"] is True
+    assert res["invalid_word_lines"] == 1
+    assert res["native_word_lines"] == 0
+    assert res["word_coverage_ratio"] == 0.0
+
+
+def test_r09_real_quality_counters_increment():
+    """R09: inferred_end_count 与 timestamp_repair_count 真实累加，杜绝恒为 0。"""
+    from core.parsers.lrc_red_ttml import parse_lrc_red_ttml
+    # p 缺 end (inferred_end_count +1), span 缺 end (inferred_end_count +1),
+    # span 时长仅 10ms < 40ms 触发修复 (timestamp_repair_count +1)
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+    <tt xmlns="http://www.w3.org/ns/ttml">
+      <body>
+        <div>
+          <p begin="1.0"><span begin="1.0" end="1.01">A</span><span begin="1.01">B</span></p>
+        </div>
+      </body>
+    </tt>"""
+    res = parse_lrc_red_ttml(xml)
+    assert res["inferred_end_count"] >= 2, f"inferred_end_count was {res['inferred_end_count']}"
+    assert res["timestamp_repair_count"] >= 1, f"timestamp_repair_count was {res['timestamp_repair_count']}"
+
+
+def test_r10_ttml_translation_attachment_avoids_mismatched_lines():
+    """R10: 译文多声部隔离与显式 target 绑定，避免盲目挂载 lines[-1]。"""
+    from core.parsers.lrc_red_ttml import parse_lrc_red_ttml
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+    <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+      <body>
+        <div>
+          <p xml:id="p1" ttm:agent="v1" begin="1.0" end="2.5">Lead singer line</p>
+          <p xml:id="p2" ttm:agent="v2" begin="1.2" end="2.7">Backing singer line</p>
+          <!-- 显式针对 p1 的译文 -->
+          <p ttm:role="x-translation" target="p1" begin="1.0" end="2.5">主唱行中文译文</p>
+        </div>
+      </body>
+    </tt>"""
+    res = parse_lrc_red_ttml(xml)
+    assert len(res["lines"]) == 2
+    l1 = next(l for l in res["lines"] if l.get("id") == "p1")
+    l2 = next(l for l in res["lines"] if l.get("id") == "p2")
+    assert l1.get("translation") == "主唱行中文译文"
+    assert l2.get("translation") is None, "声部不同且未指定 target 的行不得被误挂译文"
+
+
 # --------------------------------------------------------------------------
 # 本地 runner（无 pytest 也能跑）
 # --------------------------------------------------------------------------
