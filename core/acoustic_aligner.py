@@ -70,7 +70,7 @@ def _check_acoustic_environment(device: str = "cuda"):
     except ImportError as exc:
         raise AcousticEnvironmentError(
             f"声学打轴需要 PyTorch（未安装：{exc}）。"
-            f"请使用声学环境解释器（Work\\AI_Audio_Env\\Scripts\\python.exe）；"
+            f"请使用装有 torch/demucs/stable-whisper 的声学虚拟环境解释器（见 SKILL.md 声学环境规范）；"
             f"严禁降级为伪逐字——如需行级合成请走 --non-interactive / 拒绝 GPU 分支。"
         ) from exc
     if device == "cuda" and not torch.cuda.is_available():

@@ -20,9 +20,7 @@ if REPO_ROOT not in sys.path:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-DEFAULT_CANTO_AUDIO = r"D:\WindowsAppp\Desktop\测试\焚情 - 黄凯芹.flac"
-FALLBACK_CANTO_AUDIO = os.path.abspath(os.path.join(REPO_ROOT, "..", "任务", "2026-10-24-v132-fix", "_cover_test", "焚情 - 黄凯芹.flac"))
-CANTO_AUDIO = DEFAULT_CANTO_AUDIO if os.path.isfile(DEFAULT_CANTO_AUDIO) else FALLBACK_CANTO_AUDIO
+CANTO_AUDIO = os.environ.get("MTL_CANTO_AUDIO", "")
 
 
 def main():
@@ -35,8 +33,8 @@ def main():
         print("SKIP: 无声学依赖（CI 场景）")
         return 0
 
-    if not os.path.isfile(CANTO_AUDIO):
-        print(f"SKIP: 测试音频不存在 {CANTO_AUDIO}")
+    if not CANTO_AUDIO or not os.path.isfile(CANTO_AUDIO):
+        print("SKIP: 未设置 MTL_CANTO_AUDIO（粤语回归音频路径），GPU 回归锚不适用")
         return 0
 
     print(f"🎯 粤语 GPU 回归曲目: {CANTO_AUDIO}")

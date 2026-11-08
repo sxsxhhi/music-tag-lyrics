@@ -106,12 +106,12 @@ def main():
             "file_count": len(included_files),
         },
         "platforms_verified": [
-            "Windows 11 (Python 3.13.9, RTX 3060 Laptop)",
+            "Windows 11 (Python 3.13)",
             "Ubuntu 24.04 (GitHub Actions CI, Python 3.13)",
         ],
         "python_compatibility": "Python 3.10 - 3.13",
         "container_support_matrix": {
-            "FLAC (.flac)": "Verified (38 real audio tracks)",
+            "FLAC (.flac)": "Verified (real audio tracks)",
             "MP3 (.mp3)": "Verified (Real ID3v2.3/2.4 USLT)",
             "M4A / AAC (.m4a)": "Verified (Real QuickTime atoms)",
             "WAV (.wav)": "Verified (Real RIFF ID3 chunk)",
@@ -119,8 +119,8 @@ def main():
             "OGG (.ogg)": "Pending Physical Fixtures Verification",
         },
         "quality_and_safety_guarantees": {
-            "mother_disk_protection": "STRICT_ENFORCED (只音\\ mother disk zero-touch)",
-            "sample_audio_contamination": "ZERO_CONTAMINATION (40/40 tracks verified by SHA-256)",
+            "mother_disk_protection": "STRICT_ENFORCED (mother library zero-touch)",
+            "sample_audio_contamination": "ZERO_CONTAMINATION (all sampled tracks verified by SHA-256)",
             "network_tripwire": "ACTIVE (offline tests protected against public egress)",
             "isrc_safety_gate": "STRICT_VERIFIED (unknown artist & version mismatch blocked)",
         },
@@ -129,6 +129,7 @@ def main():
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
+    DOCS_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(DOCS_MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 

@@ -31,3 +31,15 @@ _baseline_*/
 # Release distribution artifacts
 dist/
 
+# 内部过程审计/复检报告与私人曲库清单：不入公开仓库
+# （docs/ 只保留 images/ 架构图与 release-manifest.json）
+docs/*.md
+docs/*.csv
+
+# 本机运行产物与私有夹具（含私人曲库文件名、音频哈希或版权内容）
+tests/baseline.json
+tests/fixtures/golden_*.lrc
+# 例外：结构合成的公开夹具（无版权文本）必须入库
+!tests/fixtures/golden_timeline_sample.lrc
+_baseline_runs/
+

@@ -33,7 +33,7 @@ from core.acoustic_aligner import (
 )
 
 FIXTURES = os.path.join(REPO_ROOT, "tests", "fixtures")
-GOLDEN_LRC = os.path.join(FIXTURES, "golden_jinhaixin_2000.lrc")
+GOLDEN_LRC = os.path.join(FIXTURES, "golden_timeline_sample.lrc")
 GOLDEN_VALLEYS = (40.87, 53.87, 125.15)
 
 
@@ -135,7 +135,7 @@ def test_06_flux_split_two_char_token():
 def test_07_golden_fixture_structure():
     """R3：Golden 夹具零行重叠（铁律 19）、行单调、三个谷底被行边界覆盖。"""
     if not os.path.isfile(GOLDEN_LRC):
-        _testkit.skip(f"版权夹具不存在 ({GOLDEN_LRC})，公开分发包不内置")
+        _testkit.skip(f"结构夹具不存在 ({GOLDEN_LRC})")
     text = open(GOLDEN_LRC, encoding="utf-8").read()
     line_re = re.compile(r"^\[(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\]", re.M)
     starts = []

@@ -67,7 +67,7 @@ def test_spl_word_offset_applied_once():
 
 def test_ttml_shape():
     """41 行 / 381 词 —— 这两个数字是全部后续改动的锚点，永不允许漂移。"""
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
     lines = data["lines"]
     assert len(lines) == 41, len(lines)
     assert sum(len(l.get("words") or []) for l in lines) == 381
@@ -75,44 +75,44 @@ def test_ttml_shape():
 
 def test_ttml_line_keys():
     """行 dict 现为 6 键：补上了 translation（B4 修复 F-06/C-08）。"""
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
     assert sorted(data["lines"][0].keys()) == ["duration", "end", "start", "text", "translation", "words"]
 
 
 def test_ttml_preserves_source_spaces():
     """F-19：源里 span 之间的空格是真实字符，解析后必须保留。
 
-    源文本 = "A" + " " + "lu" + "na," + " " + "ca" + "ra" + " " + "can" + "ti" + "ca"
-           = "A luna, cara cantica"
+    源文本 = "na" + " " + "no" + " " + "ri" + " " + "ka" + " " + "ra" + " " + "mi" + " " + "na"
+           = "na no ri ka ra mi na"
     """
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
-    assert data["lines"][0]["text"] == "A luna, cara cantica", data["lines"][0]["text"]
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
+    assert data["lines"][0]["text"] == "na no ri ka ra mi na", data["lines"][0]["text"]
 
 
 def test_ttml_render_no_syllable_split():
     """F-19 症状修复：输出层按 join 标记走，不再把音节当词插空格。"""
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
     out = to_spl(data, title=data["tags"].get("ti", ""), artist=data["tags"].get("ar", ""))
     # 取第一条带词级标签的行（时间戳可能因厘秒四舍五入与旧输出差 1cs，不作硬编码）
     lyric_lines = [l for l in out.splitlines() if l.startswith("[") and "<" in l]
     assert lyric_lines, "未找到逐字行"
-    assert _rendered(lyric_lines[0]) == "A luna, cara cantica", _rendered(lyric_lines[0])
+    assert _rendered(lyric_lines[0]) == "na no ri ka ra mi na", _rendered(lyric_lines[0])
 
 
 def test_ttml_translation_kept():
     """F-06：x-translation 译文必须落到 line["translation"] 并出现在输出里。"""
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
-    assert data["lines"][0]["translation"] == "我的月亮呀，我亲爱的歌"
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
+    assert data["lines"][0]["translation"] == "译文样例1"
     assert sum(1 for l in data["lines"] if l["translation"]) == 41
     out = to_spl(data, title="x", artist="y")
-    assert "我的月亮呀，我亲爱的歌" in out
+    assert "译文样例1" in out
 
 
 def test_ttml_meta_multilang():
     """X-06：多语言重复 key 不再"后写覆盖"。ti/album 取首个非空，artists 合并去重。"""
-    data = parse_ttml(_read("amll_ncm_0.ttml"))
-    assert data["tags"]["ti"] == "Nod-Krai"
-    assert data["tags"]["ar"] == "AURORA/HOYO-MiX"
+    data = parse_ttml(_read("amll_ttml_sample.ttml"))
+    assert data["tags"]["ti"] == "示例曲目"
+    assert data["tags"]["ar"] == "示例艺人/示例组合"
 
 
 # --------------------------------------------------------------------------

@@ -45,7 +45,7 @@ from ..version import __version__
 logger = logging.getLogger(__name__)
 
 LRC_RED_BASE = "https://lrc.red"
-UA_LRC_RED = f"music-tag-lyrics/{__version__} (+https://github.com/sxsxhhi/music-tag-lyrics; contact: sxhxu@qq.com)"
+UA_LRC_RED = f"music-tag-lyrics/{__version__} (+https://github.com/sxsxhhi/music-tag-lyrics)"
 
 
 REQ_TIMEOUT_S = 3.0

@@ -58,7 +58,7 @@ def test_ttml2lyrics_disk_write_p0_1():
         spl_text = open(spl_file, encoding="utf-8").read()
         assert len(lrc_text) > 0
         assert lrc_text == spl_text
-        assert "大石碎胸口" in lrc_text
+        assert "示例曲目" in lrc_text
 
 
 def test_ttml2lyrics_stdout():
@@ -79,7 +79,7 @@ def test_ttml2lyrics_stdout():
 
         assert ret == 0
         output = buf.getvalue()
-        assert "大石碎胸口" in output
+        assert "示例曲目" in output
         assert "[00:28.700]" in output
 
 

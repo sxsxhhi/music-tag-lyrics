@@ -7,7 +7,9 @@
   2. 产物行时间轴 vs Golden 夹具逐行对照（行起点毫秒容差，报告最大偏差）；
   3. 铁律 19：产物自身行间零重叠、行内字单调。
 
-运行：Work\\AI_Audio_Env\\Scripts\\python.exe tests/run_acoustic_baseline.py
+运行（需自行准备私有母盘音频与 Golden 时间轴，二者均不入公开仓库）：
+  MTL_MOTHER_AUDIO=<母盘音频路径> MTL_GOLDEN_LRC=<golden.lrc 路径> \
+    python tests/run_acoustic_baseline.py
 """
 import os
 import re
@@ -28,8 +30,8 @@ try:
 except ImportError:
     pass
 
-MOTHER_AUDIO = r"F:\TOOLs\AI's DATA\ABC\Music\只音\金海心 - 那么骄傲.flac"
-GOLDEN_LRC = os.path.join(REPO_ROOT, "tests", "fixtures", "golden_jinhaixin_2000.lrc")
+MOTHER_AUDIO = os.environ.get("MTL_MOTHER_AUDIO", "")
+GOLDEN_LRC = os.environ.get("MTL_GOLDEN_LRC", "")
 GOLDEN_VALLEYS = (40.87, 53.87, 125.15)
 LINE_TOL_MS = 1500        # 结构性门槛（捕捉级联/咬窗类缺陷）；逐行复刻人工精修不属于通用引擎职责，偏差如实报告
 VALLEY_TOL_S = 0.020      # 谷底容差 ±20ms（方案硬指标）
@@ -57,11 +59,11 @@ def main():
     except ImportError:
         print("SKIP: 无声学依赖（CI 场景）")
         return 0
-    if not os.path.isfile(MOTHER_AUDIO):
-        print(f"SKIP: 母盘不存在 {MOTHER_AUDIO}")
+    if not MOTHER_AUDIO or not os.path.isfile(MOTHER_AUDIO):
+        print("SKIP: 未设置 MTL_MOTHER_AUDIO（私有母盘音频路径），GPU 回归锚不适用")
         return 0
-    if not os.path.isfile(GOLDEN_LRC):
-        print(f"SKIP: 版权对比夹具不存在 ({GOLDEN_LRC})，公开分发包不内置，请自备后重试")
+    if not GOLDEN_LRC or not os.path.isfile(GOLDEN_LRC):
+        print("SKIP: 未设置 MTL_GOLDEN_LRC（私有 Golden 时间轴），GPU 回归锚不适用")
         return 0
 
     golden = [(t, x) for t, x in parse_lrc(GOLDEN_LRC) if t >= 12.0]

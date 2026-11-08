@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 r"""Synchronize clean skill copies according to AGENTS.md discipline.
 
-Source (only git repo):
-  F:\TOOLs\AI's DATA\ABC\Music\Work\music-tag-lyrics\
+Source: this git repository (resolved from __file__).
 
-Destinations:
-  1. F:\TOOLs\AI's DATA\ABC\Music\.agent\skills\music-tag-lyrics\
-  2. F:\TOOLs\My skill\歌曲歌词修补skill\music-tag-lyrics\
+Destinations, resolved in this order:
+  1. env MTL_DEST_AGENT          -- callable copy inside the agent workspace
+  2. default: <workspace>/.agent/skills/music-tag-lyrics
+     (<workspace> = REPO_ROOT.parent.parent, i.e. the directory holding Work/)
+  3. env MTL_DEST_AUTHORITATIVE  -- external authoritative install; no default,
+     skipped with a hint when unset.
+
+No destination is hard-coded, so the script is portable across machines.
 """
 
 import os
@@ -25,8 +29,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts._dist_view import is_dir_excluded, is_file_excluded
 
-DEST_AGENT = Path(r"F:\TOOLs\AI's DATA\ABC\Music\.agent\skills\music-tag-lyrics")
-DEST_AUTHORITATIVE = Path(r"F:\TOOLs\My skill\歌曲歌词修补skill\music-tag-lyrics")
+_env_agent = os.environ.get("MTL_DEST_AGENT")
+DEST_AGENT = Path(_env_agent) if _env_agent else (
+    REPO_ROOT.parent.parent / ".agent" / "skills" / "music-tag-lyrics"
+)
+_env_auth = os.environ.get("MTL_DEST_AUTHORITATIVE")
+DEST_AUTHORITATIVE = Path(_env_auth) if _env_auth else None
 
 
 def sync_to(target_dir: Path):
@@ -88,12 +96,15 @@ def main():
     print("=" * 60)
 
     n1, p1 = sync_to(DEST_AGENT)
-    print(f"✅ 已同步至 Antigravity 可调用副本: {DEST_AGENT} (同步 {n1} 个文件，清理 {p1} 个陈旧文件)")
+    print(f"✅ 已同步至可调用副本: {DEST_AGENT} (同步 {n1} 个文件，清理 {p1} 个陈旧文件)")
 
-    n2, p2 = sync_to(DEST_AUTHORITATIVE)
-    print(f"✅ 已同步至纯净权威安装包: {DEST_AUTHORITATIVE} (同步 {n2} 个文件，清理 {p2} 个陈旧文件)")
+    if DEST_AUTHORITATIVE is None:
+        print("⏭️  跳过外部权威安装包：未设置 MTL_DEST_AUTHORITATIVE")
+    else:
+        n2, p2 = sync_to(DEST_AUTHORITATIVE)
+        print(f"✅ 已同步至权威安装包: {DEST_AUTHORITATIVE} (同步 {n2} 个文件，清理 {p2} 个陈旧文件)")
 
-    print("🎉 Skill 三地同步全部完成！")
+    print("🎉 Skill 副本同步完成！")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-r"""v1.8.1 真实曲库 40 首前置冻结 A/B 评测与零污染验证脚本 (R19).
+r"""真实曲库 A/B 评测与零污染验证脚本。
 
-数据源：F:\TOOLs\AI's DATA\ABC\Music\待修补\My music
+数据源：由环境变量 MTL_AB_SRC 指定，其下需含 中文/ 与 非国语/ 两个子目录；
+        未设置或目录不存在时打印用法并以退出码 2 结束。
+抽样规则：目录内按文件名排序后等距抽样（可复现），不把任何具体曲目写死进源码。
+        样本量由 MTL_AB_SAMPLE_ZH / MTL_AB_SAMPLE_FOREIGN 控制（默认各 20 首）。
 隔离目录：.test-work/fixtures/ab_sample/
 输出目录：.test-work/out/ab_eval/
-清单文件：docs/validation_tracks_manifest.csv
+清单文件：.test-work/out/ab_eval/validation_tracks_manifest.csv（不进公开仓库）
 """
 
 import os
@@ -21,60 +24,31 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.process_song import process_single_song, read_audio_tags
 from core.aggregator import LyricAggregator
 
-SRC_DIR = Path(r"F:\TOOLs\AI's DATA\ABC\Music\待修补\My music")
+SRC_DIR = Path(os.environ.get("MTL_AB_SRC", "")).expanduser()
 SRC_ZH = SRC_DIR / "中文"
 SRC_FOREIGN = SRC_DIR / "非国语"
 
 WORK_DIR = REPO_ROOT / ".test-work"
 FIXTURES_DIR = WORK_DIR / "fixtures" / "ab_sample"
 OUT_DIR = WORK_DIR / "out" / "ab_eval"
-MANIFEST_FILE = REPO_ROOT / "docs" / "validation_tracks_manifest.csv"
+MANIFEST_FILE = OUT_DIR / "validation_tracks_manifest.csv"
+SAMPLE_SIZE_ZH = int(os.environ.get("MTL_AB_SAMPLE_ZH", "20"))
+SAMPLE_SIZE_FOREIGN = int(os.environ.get("MTL_AB_SAMPLE_FOREIGN", "20"))
+AUDIO_EXTS = {".flac", ".mp3", ".wav", ".m4a", ".dsf", ".ogg"}
 
-SELECTED_ZH = [
-    "1+1 - 卓文萱.flac",
-    "Always Online - 林俊杰.flac",
-    "Ba Ba Ba - 草蜢.flac",
-    "Behind - 黄淑惠.mp3",
-    "Da Da Da - 王心凌.flac",
-    "Dear John - 比莉.flac",
-    "Emily，生命是件神奇的事 (The wonder of us) - 房东的猫.flac",
-    "Forever Love - 王力宏.flac",
-    "G大调的悲伤 - 张靓颖.flac",
-    "I Need You - 郭采洁.flac",
-    "Infinity - Dance Flow.flac",
-    "Last Dance - 伍佰 & China Blue.flac",
-    "Lydia - F.I.R.飞儿乐团.flac",
-    "Melody - 陶喆.flac",
-    "NEW BOY - 朴树.flac",
-    "Para Para Sakura - 郭富城.flac",
-    "Super Star - S.H.E.flac",
-    "Today - 梁咏琪.flac",
-    "一荤一素 - 毛不易.flac",
-    "一腔诗意喂了狗 (Live) - 花粥.flac",
-]
+def pick_samples(directory: Path, limit: int):
+    """按文件名排序后等距抽样：结果可复现，且不把私有曲库清单写进源码。"""
+    if not directory.is_dir():
+        return []
+    files = sorted(
+        (p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in AUDIO_EXTS),
+        key=lambda p: p.name,
+    )
+    if limit <= 0 or limit >= len(files):
+        return files
+    step = len(files) / limit
+    return [files[int(i * step)] for i in range(limit)]
 
-SELECTED_FOREIGN = [
-    "Counting Stars - OneRepublic.flac",
-    "Rolling in the Deep - Adele.flac",
-    "Butter-Fly - 和田光司.flac",
-    "MY ALL - 浜崎あゆみ.flac",
-    "Gee - 少女时代.flac",
-    "Nobody - Wonder Girls.flac",
-    "Hotel California - Eagles.flac",
-    "Sugar - Maroon 5.flac",
-    "Love Story - Taylor Swift.flac",
-    "My Heart Will Go On(我心依旧) - 席琳·迪翁.wav",
-    "Numb Little Bug (Piano Version) - Em Beihold.flac",
-    "Payphone (Edit) - Maroon 5;Wiz Khalifa.flac",
-    "Closer - The Chainsmokers&Halsey.flac",
-    "Uptown Funk - Mark Ronson;Bruno Mars.flac",
-    "See You Again(有缘再见) - Wiz Khalifa;Charlie Puth.flac",
-    "Perfect - Ed Sheeran.flac",
-    "Lemon Tree(柠檬树) - Fool's Garden.flac",
-    "DAY BY DAY - T-ara.flac",
-    "Bizarre Love Triangle - Frente!.flac",
-    "Boom, Boom, Boom, Boom!! - Vengaboys.flac",
-]
 
 
 def sha256_file(path: Path) -> str:
@@ -93,20 +67,25 @@ def main():
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    tracks = []
-    for fn in SELECTED_ZH:
-        src = SRC_ZH / fn
-        if src.is_file():
-            tracks.append(("Chinese", fn, src))
-        else:
-            print(f"⚠️ 未找到文件: {src}")
+    if not str(SRC_DIR) or not SRC_DIR.is_dir():
+        print("用法: MTL_AB_SRC=<曲库根目录> python scripts/run_v181_ab_benchmark.py")
+        print("      曲库根目录下需包含 中文/ 与 非国语/ 两个子目录。")
+        print("      可选: MTL_AB_SAMPLE_ZH / MTL_AB_SAMPLE_FOREIGN 控制样本量（默认各 20）。")
+        return 2
 
-    for fn in SELECTED_FOREIGN:
-        src = SRC_FOREIGN / fn
-        if src.is_file():
-            tracks.append(("Foreign", fn, src))
-        else:
-            print(f"⚠️ 未找到文件: {src}")
+    print(f"📁 数据源: {SRC_DIR}")
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    tracks = []
+    for src in pick_samples(SRC_ZH, SAMPLE_SIZE_ZH):
+        tracks.append(("Chinese", src.name, src))
+    for src in pick_samples(SRC_FOREIGN, SAMPLE_SIZE_FOREIGN):
+        tracks.append(("Foreign", src.name, src))
+
+    if not tracks:
+        print("⚠️ 未在数据源中发现可用的音频样本，请检查目录结构。")
+        return 2
 
     print(f"📊 已选择评估样本：{len(tracks)} 首 (中文 {len([t for t in tracks if t[0]=='Chinese'])}, 外语 {len([t for t in tracks if t[0]=='Foreign'])})")
 

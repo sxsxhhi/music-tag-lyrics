@@ -159,7 +159,8 @@ def main():
                     help="歌词产物目录，必须在仓库之外")
     ap.add_argument("--timeout", type=int, default=180, help="每首超时秒数")
     ap.add_argument("--only", default=None, help="只跑文件名含该子串的曲目")
-    ap.add_argument("--json", default=os.path.join(REPO_ROOT, "tests", "baseline.json"))
+    ap.add_argument("--json", default=os.path.join(os.path.dirname(REPO_ROOT), "_baseline_runs", "baseline.json"),
+                    help="快照 JSON 输出路径，默认在仓库之外（含私人曲库文件名与音频哈希，禁止入库）")
     args = ap.parse_args()
 
     python_exe = sys.executable

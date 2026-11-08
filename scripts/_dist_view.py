@@ -44,8 +44,8 @@ EXCLUDE_FILES = {
     "_dist_view.py",
     # Manifest 元数据文件不打入分发包本体以消除自指死锁（P2-04-A）
     "release-manifest.json",
-    # 版权歌词测试夹具（P2-07-A）
-    "golden_jinhaixin_2000.lrc",
+    # 本机运行生成的基线快照（含私人曲库文件名与音频哈希，禁止分发）
+    "baseline.json",
 }
 
 # 通配文件名排除模式（P2-02：私有基准测试脚本等）

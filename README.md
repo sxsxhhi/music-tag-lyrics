@@ -68,7 +68,7 @@ pip install -r requirements.txt
 python scripts/process_song.py "周杰伦 - 晴天.flac"
 
 # 2. 批量处理整个音乐文件夹（递归扫描所有子目录）
-python scripts/process_song.py "D:/我的音乐/"
+python scripts/process_song.py "/path/to/your/music/"
 
 # 3. 保护已有信息：只更新歌词，绝不触碰你原本手填的标题/歌手/年份/封面
 python scripts/process_song.py "歌曲.flac" --lyrics-only

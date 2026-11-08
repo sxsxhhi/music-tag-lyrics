@@ -65,3 +65,5 @@ jobs:
         run: python tests/test_isrc_integration.py
       - name: Cache paths & drive isolation
         run: python tests/test_cache_paths.py
+      - name: Path & PII leak guard
+        run: python scripts/check_no_leaks.py

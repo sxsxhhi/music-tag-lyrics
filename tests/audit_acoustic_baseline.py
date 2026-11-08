@@ -9,10 +9,10 @@
   3. 对 Δ > LINE_TOL_MS 的行自动测量「引擎起点有无起振 / 夹具起点是否落在静音」，
      给出初判 suspect_engine / suspect_fixture，**人工裁决**。
 
-用法：
-  python tests/audit_acoustic_baseline.py \
-      --audio "F:\\...\\金海心 - 那么骄傲.flac" \
-      --diff  Work/任务/2026-10-27-v22/golden_diff.md
+用法（私有母盘音频与 Golden 时间轴均不入公开仓库，需自备）：
+  MTL_GOLDEN_LRC=<golden.lrc 路径> python tests/audit_acoustic_baseline.py \
+      --audio "<mother-library>/<song>.flac" \
+      --diff  "<process-dir>/golden_diff.md"
 退出码：全部 Δ <= LINE_TOL_MS → 0；否则 1。
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-GOLDEN_LRC = os.path.join(REPO_ROOT, "tests", "fixtures", "golden_jinhaixin_2000.lrc")
+GOLDEN_LRC = os.environ.get("MTL_GOLDEN_LRC", "")
 LINE_TOL_MS = 1500        # 与 run_acoustic_baseline.py 同口径；**严禁放宽**
 
 
@@ -36,6 +36,11 @@ def main() -> int:
     ap.add_argument("--diff", default="")
     ap.add_argument("--lang", default="zh")
     args = ap.parse_args()
+
+    if not args.golden or not os.path.isfile(args.golden):
+        print("ERROR: 未指定 Golden 时间轴。请用 --golden <path> 或环境变量 MTL_GOLDEN_LRC"
+              "（私有夹具不入公开仓库，需自行准备）")
+        return 2
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
