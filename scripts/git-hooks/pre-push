@@ -1,0 +1,37 @@
+#!/bin/sh
+# 推送前强制脱敏检查（AGENTS.md 第零节）。
+#
+# 安装（仓库内执行一次）：
+#     git config core.hooksPath scripts/git-hooks
+#
+# 检测到本机绝对路径、用户名、私有目录名、个人邮箱等即阻断推送。
+# 确需跳过：git push --no-verify（视为违规，需在提交说明中记录原因）。
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$REPO_ROOT" || exit 0
+
+PY="${MTL_PYTHON:-}"
+if [ -z "$PY" ]; then
+    for cand in python3 python py; do
+        if command -v "$cand" >/dev/null 2>&1; then
+            PY="$cand"
+            break
+        fi
+    done
+fi
+
+if [ -z "$PY" ]; then
+    echo "⚠️  未找到 Python 解释器，跳过脱敏检查。" >&2
+    echo "   请手动运行：python scripts/check_no_leaks.py" >&2
+    exit 0
+fi
+
+if ! "$PY" scripts/check_no_leaks.py; then
+    echo "" >&2
+    echo "❌ 推送被阻断：检测到本机路径或个人信息泄漏。" >&2
+    echo "   规则见工作区 AGENTS.md 第零节；修复后重试。" >&2
+    echo "   确需跳过：git push --no-verify（违规，需在提交说明中记录原因）。" >&2
+    exit 1
+fi
+
+exit 0

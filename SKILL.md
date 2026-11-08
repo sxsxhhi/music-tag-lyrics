@@ -44,7 +44,7 @@ flowchart TD
 
 ---
 
-## 二、20 条避坑铁律
+## 二、21 条避坑铁律
 
 ### 1. 乐器长尾奏（Outro）识别防假截断铁律
 - **铁律准则**：严禁粗暴以时长差判定残缺。必须以唱词语义完整性、尾段副歌重现度、歌手真实停唱点综合判定，保护自然华彩尾奏。
@@ -138,6 +138,12 @@ flowchart TD
 - **铁律准则**：调用声学对齐模块（`AcousticAligner.align_lyrics`）时，严禁使用固定除法伪造逐字。运行环境必须具备可用 GPU（CUDA 就绪）与 `stable_whisper` 依赖，缺失时立即抛出 `AcousticEnvironmentError` 显式阻断，坚决杜绝低质假逐字输出。仅在用户明确拒绝 GPU 时，才允许在外部降级分支进入 numpy 行级合成——此路径 `synthesized_words=True`，控制台明确提示「非酷狗逐字、非 GPU」。
 - **记账语义（v1.5.2）**：`synthesized_words=True` 仅表示「整首没有任何真声学逐字」。两条声学路径都是真声学：粤语 CTC 逐字带分数（`gpu_acoustic`），普通话双引擎逐字是声学时间轴但引擎不产分数（`gpu_whisper`）——后者**不是**合成，不得因缺字段就标 True。该字段是内存记账（`words_source` / `acoustic_coverage` / `synthesized_ratio`），**不写进音频标签或 LRC 头**。
 - **双引擎流水线（v1.4.0）**：`DualEngineHybridAligner` = Demucs 人声 → 行级提示窗 Whisper Token 对齐 → 44.1kHz STFT 谱流单字拆分/±60ms 瞬态吸附 → 25ms/5ms RMS 换气谷底双向锁定（释放门限 RMS≤0.020，仅作用于行间场景）→ sustain 衰减门控（60ms 静默收束）→ 双声回音覆盖（tail ≤ next_start − 50ms）。行级时间轴提示为一等先验输入。
+
+### 21. 【核心红线】公开分发前必须脱敏（开发与发布纪律）
+- **铁律准则**：本 skill 的源码、分发包、release 资产与任一 tag 源码树都属于**公开面**。推送、打 tag、上传资产之前必须确认其中不含本机环境信息与私人数据。历史上曾发生 release 资产与全部历史 tag 同时泄漏本机路径、私人曲库清单与完整版权歌词的事故，代价是重建全部资产与标签入口。
+- **强制命令**（退出码非 0 一律不得推送）：仓库扫描 `python scripts/check_no_leaks.py`；发布包扫描 `python scripts/check_no_leaks.py --zip <包路径>`。仓库已配置 `core.hooksPath=scripts/git-hooks`，`pre-push` 自动执行；用 `--no-verify` 绕过视为违规。
+- **禁止进入公开面**：带盘符的本机绝对路径、Windows 用户名、真实邮箱、私有数据目录名、私人曲库清单（曲名/艺人/指纹）、本机运行快照、内部审计与复盘报告、完整或近完整的歌词与真实接口密文。
+- **写法规约**：路径一律使用 `MTL_*` 环境变量或 `<workspace>` / `<repo>` / `<hf-cache>` / `<user-home>` / `<mother-library>` / `<process-dir>` 占位符；运维脚本的硬编码目标路径改为环境变量注入或从仓库根相对推导；新增测试夹具必须是**结构等价的合成内容**——保留行数、字数、时间轴与解析断言，删除全部表达性文本。
 
 ### 运行纪律（丢弃必须说清）
 - 源返回空时必须打印**丢弃原因**（预览 / 冲轴 / 版本互斥）。禁止对用户说「酷狗没有」，除非搜歌候选数为 0。

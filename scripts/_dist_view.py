@@ -24,6 +24,8 @@ EXCLUDE_DIRS = {
     ".venv",
     "venv",
     "env",
+    # 仓库开发用 git 钩子，不进分发包
+    "git-hooks",
 }
 
 # 排除文件后缀
