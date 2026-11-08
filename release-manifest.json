@@ -4,12 +4,12 @@
   "version": "1.8.1",
   "release_tag": "v1.8.1",
   "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
-  "build_timestamp_utc": "2026-11-08T13:37:57.856312+00:00",
-  "git_commit": "ecb78c4b1615d6fb817a59df399d16205b9e571b",
+  "build_timestamp_utc": "2026-11-08T14:31:01.542536+00:00",
+  "git_commit": "3a1236127400b994e53503e99ac2d192fe7ad8f4",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.1.zip",
-    "size_bytes": 1866584,
-    "sha256": "7529c8781e837e84078771cff05e0060f943849e7c58bc31f77668561b1e0d74",
+    "size_bytes": 1867260,
+    "sha256": "f400d46bb470433ddd89497d1dbc7fa34a1053b7bf8acde84058971305d24163",
     "file_count": 96
   },
   "platforms_verified": [
