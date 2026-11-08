@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from ..parsers.lrc_parser import parse_lrc
 from ..parsers.yrc_parser import parse_yrc
 from ..utils.http import http_post_json, http_get_json, UA_DESKTOP
+from ..utils.text_match import artist_tokens
 from ..utils.version_guard import (
     is_live_version,
     is_remix_version,
@@ -62,22 +63,50 @@ class NetEaseFetcher:
         if not data or not isinstance(data, dict):
             return None
 
-        songs = data.get("result", {}).get("songs", [])
-        if not songs:
+        result = data.get("result")
+        if not isinstance(result, dict):
+            logger.warning("[netease] search returned unexpected result type: %s", type(result))
+            return None
+
+        songs = result.get("songs")
+        if not isinstance(songs, list):
+            logger.warning("[netease] search returned unexpected songs type: %s", type(songs))
             return None
 
         target_is_live = is_live_version(title)
         target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_artist_toks = artist_tokens(artist) if artist else frozenset()
         valid_candidates = []
         for s in songs:
-            s_name = s.get("name", "")
-            s_album = s.get("album", {}).get("name", "")
+            if not isinstance(s, dict):
+                continue
+            s_name = s.get("name")
+            if not isinstance(s_name, str):
+                continue
+            album_dict = s.get("album")
+            s_album = album_dict.get("name", "") if isinstance(album_dict, dict) else ""
             s_dur = s.get("duration", 0)
+            if not isinstance(s_dur, (int, float)):
+                s_dur = 0
 
             if not is_title_fuzzy_match(s_name, title):
                 continue
             if not matches_version_policy(target_is_live, s_name, s_album, target_is_remix=target_is_remix):
                 continue
+
+            # R14: 艺人校验（若本地提供了明确艺人，候选艺人有列表时必须产生交集，避免同名错歌）
+            if target_artist_toks:
+                cand_artists = []
+                raw_ar = s.get("artists")
+                if isinstance(raw_ar, list):
+                    for a in raw_ar:
+                        if isinstance(a, dict) and isinstance(a.get("name"), str):
+                            cand_artists.append(a["name"])
+                if cand_artists:
+                    cand_art_toks = artist_tokens("/".join(cand_artists))
+                    if cand_art_toks and not (target_artist_toks & cand_art_toks):
+                        continue
+
             if not is_duration_acceptable(s_dur, duration_ms, tolerance_sec=35):
                 continue
             d_diff = abs(s_dur - duration_ms) if duration_ms > 0 else 0
@@ -86,7 +115,10 @@ class NetEaseFetcher:
         if not valid_candidates:
             return None
         valid_candidates.sort(
-            key=lambda x: (-album_match_score(album, x[1].get("album", {}).get("name", "")), x[0])
+            key=lambda x: (
+                -album_match_score(album, x[1].get("album", {}).get("name", "") if isinstance(x[1].get("album"), dict) else ""),
+                x[0]
+            )
         )
         return valid_candidates[0][1]
 
@@ -97,7 +129,7 @@ class NetEaseFetcher:
         Applies version mutual exclusion (Live vs Studio) and duration filtering.
         """
         song = cls.search_best_song(title, artist, duration_ms, album=album)
-        if not song:
+        if not song or not isinstance(song, dict):
             return None
         return song.get("id")
 
@@ -105,9 +137,12 @@ class NetEaseFetcher:
     def lookup_year(cls, title: str, artist: str = "", duration_ms: int = 0) -> str:
         """从网易专辑 publishTime 取四位年份。"""
         song = cls.search_best_song(title, artist, duration_ms)
-        if not song:
+        if not song or not isinstance(song, dict):
             return ""
-        ts = (song.get("album") or {}).get("publishTime") or 0
+        album = song.get("album")
+        if not isinstance(album, dict):
+            return ""
+        ts = album.get("publishTime") or 0
         try:
             ts_i = int(ts)
         except (TypeError, ValueError):
@@ -116,10 +151,14 @@ class NetEaseFetcher:
             return ""
         if ts_i > 10_000_000_000:
             ts_i //= 1000
-        year = time.gmtime(ts_i).tm_year
-        if 1900 <= year <= 2099:
-            return str(year)
+        try:
+            year = time.gmtime(ts_i).tm_year
+            if 1900 <= year <= 2099:
+                return str(year)
+        except (ValueError, OSError):
+            return ""
         return ""
+
 
     @classmethod
     def fetch_raw_lyrics(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, str]]:

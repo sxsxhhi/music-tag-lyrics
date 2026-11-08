@@ -22,3 +22,8 @@ desktop.ini
 # Baseline lyric dumps are copyrighted; keep them outside the repo
 _baseline*/
 _baseline_*/
+
+# Local test-work sandbox
+.test-work/
+.test-work*/
+

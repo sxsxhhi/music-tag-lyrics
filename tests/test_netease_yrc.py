@@ -455,6 +455,62 @@ def test_aggregator_chinese_netease_verbatim_preempts_kugou():
     assert "kugou" not in calls, calls
 
 
+def test_r01_netease_search_handles_corrupt_structures():
+    """R01: 网易 API 返回非 dict result、非 list songs、非 dict album 等异常结构时不崩溃，受控返回 None/空串。"""
+    # 1. result 为 string (GitHub Actions 海外 IP 暴露的典型异常)
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"code": 403, "result": "Cheating"}):
+        assert NetEaseFetcher.search_best_song("Song", "Artist") is None
+        assert NetEaseFetcher.lookup_year("Song", "Artist") == ""
+
+    # 2. result 为 None 或不存在
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"code": 200, "result": None}):
+        assert NetEaseFetcher.search_best_song("Song", "Artist") is None
+        assert NetEaseFetcher.lookup_year("Song", "Artist") == ""
+
+    # 3. songs 为 string
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"code": 200, "result": {"songs": "invalid"}}):
+        assert NetEaseFetcher.search_best_song("Song", "Artist") is None
+
+    # 4. songs 列表中夹杂非 dict 或 album 为 string
+    malformed_songs = [
+        "not_a_dict",
+        {"name": "Song", "album": "string_album", "duration": 180000, "artists": [{"name": "Artist"}]},
+    ]
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"code": 200, "result": {"songs": malformed_songs}}):
+        res = NetEaseFetcher.search_best_song("Song", "Artist", duration_ms=180000)
+        assert res is not None
+        assert res.get("name") == "Song"
+        # album 是字符串时 lookup_year 不应抛 AttributeError
+        assert NetEaseFetcher.lookup_year("Song", "Artist", duration_ms=180000) == ""
+
+
+def test_r14_netease_search_rejects_wrong_artist_candidates():
+    """R14: 网易检索具备艺人门禁，避免同名不同歌手错选。"""
+    cand_wrong_artist = {
+        "name": "泡沫",
+        "album": {"name": "同名专辑", "publishTime": 1400000000000},
+        "duration": 200000,
+        "artists": [{"name": "花儿乐队"}],
+    }
+    cand_right_artist = {
+        "name": "泡沫",
+        "album": {"name": "X.P.S.E", "publishTime": 1400000000000},
+        "duration": 200000,
+        "artists": [{"name": "邓紫棋"}],
+    }
+
+    # 当搜索邓紫棋《泡沫》时，只有花儿乐队的候选必须被拒绝
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"result": {"songs": [cand_wrong_artist]}}):
+        assert NetEaseFetcher.search_best_song("泡沫", "邓紫棋", duration_ms=200000) is None
+        assert NetEaseFetcher.lookup_year("泡沫", "邓紫棋", duration_ms=200000) == ""
+
+    # 包含正确艺人时放行
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"result": {"songs": [cand_right_artist]}}):
+        res = NetEaseFetcher.search_best_song("泡沫", "邓紫棋", duration_ms=200000)
+        assert res is not None
+        assert NetEaseFetcher.lookup_year("泡沫", "邓紫棋", duration_ms=200000) == "2014"
+
+
 def main():
     return _testkit.run(globals())
 

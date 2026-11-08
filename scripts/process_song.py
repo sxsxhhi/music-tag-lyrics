@@ -885,13 +885,21 @@ def _process_single_song_impl(
                 cover_mime=cover_mime,
                 isrc=isrc_to_write,
             )
+
+
             if success:
                 print("✅ Embedded tags updated (Artist with '/', 4-digit Year, In-place Lyrics)")
             else:
-                print("⚠️ Tag update skipped or format read-only")
+                print("⚠️ Tag update skipped or format read-only (sidecar lyrics preserved)")
 
-    print(f"✨ Successfully finished processing.")
+        if not success:
+            print("✨ Partially finished: sidecar lyrics generated, embedded tags skipped or failed.")
+        else:
+            print("✨ Successfully finished processing.")
+    else:
+        print("✨ Successfully finished processing.")
     return True
+
 
 
 def _write_cleaned_metadata(
