@@ -1,13 +1,13 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.7.0）。调度：Apple TTML(am-lyrics) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：未经允许绝不侵入 C 盘，HF 权重原生固化 F 盘。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.7.0）。调度：Apple TTML(am-lyrics) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：未经允许绝不侵入系统盘，HF 权重原生固化于非系统盘。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
 # music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.7.0)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
-> **不依赖 ffmpeg / Node / 播放器。** 绝不移动、归档或删除音频。`--lyrics-only` 只覆写内嵌歌词帧。**【环境与存储红线】未经用户明确允许，绝不侵入 C 盘。** 所有模型缓存原生固化于 F 盘（`HF_HOME`），严禁静默回写系统盘。
+> **不依赖 ffmpeg / Node / 播放器。** 绝不移动、归档或删除音频。`--lyrics-only` 只覆写内嵌歌词帧。**【环境与存储红线】未经用户明确允许，绝不侵入系统盘。** 所有模型缓存原生固化于非系统盘（`HF_HOME`），严禁静默回写系统盘。
 
 ---
 
@@ -162,7 +162,7 @@ flowchart TD
 
 ## 四、Demucs v4 GPU 兜底与双引擎声学对齐 (v1.5.0)
 
-技能包不内置重型模型权重。声学环境位于 `Work\AI_Audio_Env`，HuggingFace 缓存统一指向 `Work\AI_Audio_Env\hf-cache`（HF_HOME 固化，内含 HTDemucs / 粤语 / 国语权重，2.77GB，保留相对软链接）。严禁回写 C 盘用户目录。两条入口：
+技能包不内置重型模型权重。声学环境位于 `<workspace>/AI_Audio_Env`，HuggingFace 缓存统一指向 `<hf-cache>/`（HF_HOME 固化，内含 HTDemucs / 粤语 / 国语权重，2.77GB，保留相对软链接）。严禁回写系统盘用户目录。两条入口：
 
 1. **有行无字**：征求 GPU；Y 用已有行轴做短窗；N / 非交互 / 失败 → numpy 合成。
 2. **无 lines**：先全球搜文本（GitHub 优先），再征求 GPU；无文本红线阻断；N / 非交互 → 本首失败。
@@ -259,13 +259,13 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 
 ---
 
-## 二十二、环境隔离与存储红线（未经允许绝不侵入 C 盘）
+## 二十二、环境隔离与存储红线（未经允许绝不侵入系统盘）
 
-- **【核心红线】未经用户明确允许，绝不侵入 C 盘**：
-  1. **模型缓存原生居留 F 盘**：HuggingFace 缓存统一且唯一使用 `F:\TOOLs\AI's DATA\ABC\Music\Work\AI_Audio_Env\hf-cache`（已固化 Windows 用户级环境变量 `HF_HOME`）。严禁任何脚本、模型加载或测试代码向 `C:\Users\sxh20\.cache\huggingface` 回写或重新创建目录；
-  2. **禁止系统默认 C 盘路径**：Windows 默认桌面（`C:\Users\sxh20\Desktop`）严禁使用，用户物理桌面必须使用 `D:\WindowsAppp\Desktop\`；
-  3. **声学虚拟环境规范**：仅使用 `Work\AI_Audio_Env\Scripts\python.exe -m …` 或直接导入；禁用 Scripts 内的 console `.exe` 垫片（因绝对路径已失效）；
-  4. **工作区与母盘边界**：母盘 `只音\` 绝对只读；过程文件严禁散落根目录，一律进 `Work\任务\`；测试曲库必须加 `--no-tags` 零污染。
+- **【核心红线】未经用户明确允许，绝不侵入系统盘**：
+  1. **模型缓存与重型权重一律外置**：HuggingFace 缓存统一且唯一使用 `<workspace>/hf-cache`（通过环境变量 `HF_HOME` 固化）。严禁任何脚本、模型加载或测试代码向 `<user-home>/.cache/huggingface` 回写或重新创建目录；
+  2. **禁止系统默认桌面路径**：`<user-home>/Desktop` 不作为任何输入或输出位置；需要桌面级目录时必须显式指定非系统盘数据目录；
+  3. **声学虚拟环境规范**：仅使用 `<workspace>/AI_Audio_Env/Scripts/python.exe -m …` 或直接导入；禁用 Scripts 内的 console `.exe` 垫片（因绝对路径已失效）；
+  4. **工作区与母盘边界**：母盘 `<mother-library>/` 绝对只读；过程文件严禁散落根目录，一律进 `<process-dir>/`；测试曲库必须加 `--no-tags` 零污染。
 
 ## 二十三、QQ 音乐 QRC 逐字通道（v1.7.0）
 

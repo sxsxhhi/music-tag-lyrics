@@ -642,8 +642,8 @@ def test_d1_x_roman_is_stripped():
     fixture = FIXTURES_DIR / "apple_ttml_meta.ttml"
     res = parse_ttml(fixture.read_text(encoding="utf-8"))
     assert len(res["lines"]) == 2
-    assert "da shi sui xiong kou" not in res["lines"][0]["text"]
-    assert res["lines"][0]["translation"] == "Chest smashed by boulder"
+    assert "shi li qu mu" not in res["lines"][0]["text"]
+    assert res["lines"][0]["translation"] == "Sample translation"
 
 
 def test_d2_ttml_elrc_output_three_digit_precision():
@@ -651,7 +651,7 @@ def test_d2_ttml_elrc_output_three_digit_precision():
     fixture = FIXTURES_DIR / "apple_ttml_meta.ttml"
     data = parse_ttml(fixture.read_text(encoding="utf-8"))
     from core.converter import to_spl
-    out = to_spl(data, title="大石碎胸口", artist="万能青年旅店")
+    out = to_spl(data, title="示例曲目", artist="示例艺人")
     assert "[00:28.700]" in out
     assert "<00:28.700>" in out
 

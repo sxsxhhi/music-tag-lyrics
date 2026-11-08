@@ -33,7 +33,7 @@ from core.acoustic_aligner import (
 )
 
 FIXTURES = os.path.join(REPO_ROOT, "tests", "fixtures")
-GOLDEN_LRC = os.path.join(FIXTURES, "golden_jinhaixin_2000.lrc")
+GOLDEN_LRC = os.path.join(FIXTURES, "golden_timeline_sample.lrc")
 GOLDEN_VALLEYS = (40.87, 53.87, 125.15)
 
 
