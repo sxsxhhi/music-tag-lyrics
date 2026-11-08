@@ -601,6 +601,28 @@ def test_ver01_ver04_version_exclusion_bidirectional():
     assert matches_version_policy(target_is_live=False, cand_title="Song (翻唱)", target_is_cover=False) is False
 
 
+def test_r15_lrclib_candidate_validation_and_window():
+    """R15: LRCLIB 搜索严密校验标题与歌手，且时长门禁从 35s 收窄至 15s。"""
+    from core.fetchers.lrclib import LRCLIBFetcher
+    from unittest import mock
+
+    items = [
+        # 1. 标题不匹配
+        {"trackName": "Another Song", "artistName": "Jay Chou", "duration": 200, "syncedLyrics": "[00:01.00]Test"},
+        # 2. 歌手不匹配
+        {"trackName": "晴天", "artistName": "Eason Chan", "duration": 200, "syncedLyrics": "[00:01.00]Test"},
+        # 3. 时长相差 25s (> 15s，旧版 35s 会放行，新版必须拦截)
+        {"trackName": "晴天", "artistName": "周杰伦", "duration": 225, "syncedLyrics": "[00:01.00]Test"},
+        # 4. 合格候选（标题、歌手匹配，时长差 <= 15s）
+        {"trackName": "晴天", "artistName": "周杰伦", "duration": 203, "syncedLyrics": "[00:01.00]Valid Lyric"},
+    ]
+
+    with mock.patch.object(LRCLIBFetcher, "_search_list", return_value=items):
+        cand = LRCLIBFetcher.search_and_fetch("晴天", "周杰伦", duration_ms=200000)
+        assert cand is not None
+        assert cand["lines"][0]["text"] == "Valid Lyric", "应严格过滤并选出唯一合格候选"
+
+
 def main():
     """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
     return _testkit.run(globals())

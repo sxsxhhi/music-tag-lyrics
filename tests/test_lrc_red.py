@@ -31,6 +31,7 @@
 import json
 import os
 import sys
+import time
 from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -594,6 +595,62 @@ def test_r06_version_symmetry_and_remaster_isrc_guard():
         cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="Adele")
         assert cand is not None
         assert cand["isrc_write_eligible"] is False, "Remaster 版本不对称时绝对不得写回 ISRC"
+
+
+def test_r12_unified_429_circuit_breaker_cooling():
+    """R12: 任意端点返回 429 均激活共享退避冷却，冷却期内不向远端发起多余请求。"""
+    LrcRedFetcher.clear_cache()
+    try:
+        call_count = [0]
+
+        def mock_429_http(*args, **kwargs):
+            call_count[0] += 1
+            return HttpResult(status=429, text="Too Many Requests", bytes_len=17, elapsed_ms=10, error="")
+
+        with mock.patch("core.fetchers.lrc_red.http_get_text_ex", side_effect=mock_429_http):
+            res1 = LrcRedFetcher._fetch_raw_record("USUM71413645")
+            assert res1 is None
+            assert call_count[0] == 1
+            assert LrcRedFetcher._cooldown_until > time.perf_counter()
+
+            # 再次发起请求，应当直接命中冷却期拦截，不再调用底层 HTTP
+            res2 = LrcRedFetcher._fetch_raw_record("USUM71413646")
+            assert res2 is None
+            assert call_count[0] == 1, "冷却期内不得发起真实网络请求"
+    finally:
+        LrcRedFetcher.clear_cache()
+
+
+def test_r13_cache_memory_budget_lru_eviction():
+    """R13: _raw_cache 受控于总内存字节预算（32MB）与条目上限，超限执行 LRU 淘汰。"""
+    LrcRedFetcher.clear_cache()
+    try:
+        # 临时将字节上限缩为小阈值以便确定性触发
+        orig_max_bytes = LrcRedFetcher.MAX_CACHE_BYTES
+        LrcRedFetcher.MAX_CACHE_BYTES = 1000
+
+        mock_payload_small = {
+            "title": "Song",
+            "artist": "Artist",
+            "duration": 180.0,
+            "source": "<tt>Small Payload 600 bytes</tt>" + ("x" * 400),
+        }
+        with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+            mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_payload_small), bytes_len=600, elapsed_ms=10, error="")
+            rec1 = LrcRedFetcher._fetch_raw_record("ISRC10000001")
+            assert rec1 is not None
+            assert "ISRC10000001" in LrcRedFetcher._raw_cache
+            bytes_before = LrcRedFetcher._cache_bytes
+
+            # 插入第二个记录，总字节将超过 1000 bytes，必然触发 LRU 淘汰 ISRC10000001
+            rec2 = LrcRedFetcher._fetch_raw_record("ISRC10000002")
+            assert rec2 is not None
+            assert "ISRC10000002" in LrcRedFetcher._raw_cache
+            assert "ISRC10000001" not in LrcRedFetcher._raw_cache, "首条记录应因内存预算超限被 LRU 淘汰"
+            assert LrcRedFetcher._cache_bytes <= LrcRedFetcher.MAX_CACHE_BYTES
+    finally:
+        LrcRedFetcher.MAX_CACHE_BYTES = orig_max_bytes
+        LrcRedFetcher.clear_cache()
 
 
 def main():

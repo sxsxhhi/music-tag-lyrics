@@ -6,11 +6,13 @@ from typing import Dict, Any, Optional
 
 from ..parsers.lrc_parser import parse_lrc
 from ..utils.http import http_get_json, UA_DEFAULT
+from ..utils.text_match import artist_tokens
 from ..utils.version_guard import (
     is_live_version,
     is_remix_version,
     matches_version_policy,
     album_match_score,
+    is_title_fuzzy_match,
 )
 
 
@@ -65,11 +67,21 @@ class LRCLIBFetcher:
         if data:
             yield data
         target_is_live = is_live_version(title)
+        target_art_toks = artist_tokens(artist) if artist else set()
         n = 0
         for item in cls._search_list(title, artist):
             if not isinstance(item, dict):
                 continue
-            if not matches_version_policy(target_is_live, item.get("trackName", ""), item.get("albumName", "")):
+            track_name = item.get("trackName", "")
+            album_name = item.get("albumName", "")
+            artist_name = item.get("artistName", "")
+            if not is_title_fuzzy_match(track_name, title):
+                continue
+            if target_art_toks:
+                cand_art_toks = artist_tokens(artist_name)
+                if not cand_art_toks or not (target_art_toks & cand_art_toks):
+                    continue
+            if not matches_version_policy(target_is_live, track_name, album_name):
                 continue
             yield item
             n += 1
@@ -96,10 +108,25 @@ class LRCLIBFetcher:
     def search_and_fetch(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, Any]]:
         target_is_live = is_live_version(title)
         target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_art_toks = artist_tokens(artist) if artist else set()
         valid_items = []
         for item in cls._search_list(title, artist):
+            if not isinstance(item, dict):
+                continue
             track_name = item.get("trackName", "")
             album_name = item.get("albumName", "")
+            artist_name = item.get("artistName", "")
+
+            # R15: 标题模糊匹配校验
+            if not is_title_fuzzy_match(track_name, title):
+                continue
+
+            # R15: 艺人校验（本地提供了明确艺人时，远端候选必须有交集）
+            if target_art_toks:
+                cand_art_toks = artist_tokens(artist_name)
+                if not cand_art_toks or not (target_art_toks & cand_art_toks):
+                    continue
+
             if not matches_version_policy(target_is_live, track_name, album_name, target_is_remix=target_is_remix):
                 continue
             if not item.get("syncedLyrics"):
@@ -108,7 +135,8 @@ class LRCLIBFetcher:
             item_dur_sec = float(item.get("duration", 0) or 0)
             if duration_ms > 0 and item_dur_sec > 0:
                 diff_sec = abs(item_dur_sec - (duration_ms / 1000.0))
-                if diff_sec > 35:
+                # R15: 时长容差收窄至 15s
+                if diff_sec > 15:
                     continue
                 valid_items.append((diff_sec, item))
             else:

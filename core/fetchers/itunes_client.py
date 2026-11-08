@@ -103,14 +103,21 @@ class ITunesClient:
         except Exception as exc:
             logger.warning("保存 itunes-cache 失败: %s", exc)
 
-    def _request(self, url: str, purpose: str = "lookup") -> Optional[Dict[str, Any]]:
-        """执行受限流与冷却保护的 HTTP 请求。
+    def _request(
+        self,
+        url: str,
+        purpose: str = "search",
+        timeout: float = 3.0,
+        deadline: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """执行实际 HTTP 请求。
 
-        v1.5.1-D3: 429 冷却**按用途分桶**。旧版是进程级单值，一次 429 会让
-        冷却期内**所有**华语曲（search + lookup 一起）静默降级酷狗。
-        现在 lookup 与 search 各自独立退避，互不拖累。
+        R11: 全链路继承绝对超时与 deadline，防止耗尽上层 T1 预算。
         """
         now = time.perf_counter()
+        if deadline is not None and now >= deadline:
+            return None
+
         cool_until = self._cooldown_until.get(purpose, 0.0)
         if now < cool_until:
             rem = int(cool_until - now)
@@ -120,8 +127,6 @@ class ITunesClient:
             return None
 
         if not self.bucket.consume():
-            # 令牌耗尽时不阻塞整条流水线，返回 None 落入后续源。
-            # 同一耗尽期（20s 窗口）只可见打印一次，避免批量刷屏。
             now_pc = time.perf_counter()
             if now_pc - self._bucket_warn_at >= 20.0:
                 self._bucket_warn_at = now_pc
@@ -129,7 +134,14 @@ class ITunesClient:
             logger.debug("iTunes 请求超限流速，本次放弃")
             return None
 
-        res = http.http_get_text_ex(url, timeout=3.0)
+        req_timeout = timeout
+        if deadline is not None:
+            rem_d = deadline - time.perf_counter()
+            if rem_d <= 0.1:
+                return None
+            req_timeout = min(timeout, rem_d)
+
+        res = http.http_get_text_ex(url, timeout=req_timeout)
         if res.status == 429:
             self._consecutive_429[purpose] = self._consecutive_429.get(purpose, 0) + 1
             n = self._consecutive_429[purpose]
@@ -153,7 +165,12 @@ class ITunesClient:
             logger.debug("iTunes 返回非 JSON 响应: %s", exc)
             return None
 
-    def lookup_durations(self, apple_ids: List[str], is_zh: bool = True) -> Dict[str, int]:
+    def lookup_durations(
+        self,
+        apple_ids: List[str],
+        is_zh: bool = True,
+        deadline: Optional[float] = None
+    ) -> Dict[str, int]:
         """批量反查 Apple ID 的 trackTimeMillis 时长字典。实现 us -> cn 局部两区递进。"""
         result: Dict[str, int] = {}
         missing_ids = []
@@ -183,14 +200,14 @@ class ITunesClient:
             return result
 
         # 2. 第一批：向 US 店面批量查询
-        _us_missing, us_fail = self._batch_lookup_storefront(missing_ids, "us", result)
+        _us_missing, us_fail = self._batch_lookup_storefront(missing_ids, "us", result, deadline=deadline)
 
         # 3. 第二批：按语言分派店面（华语 us→cn，外语 us→jp），对仍缺失的 ID 查询
         still_need = [i for i in missing_ids if i not in result]
         second_country = LOOKUP_SECOND_STOREFRONT["zh" if is_zh else "foreign"]
         second_fail: List[str] = []
         if still_need:
-            _second_missing, second_fail = self._batch_lookup_storefront(still_need, second_country, result)
+            _second_missing, second_fail = self._batch_lookup_storefront(still_need, second_country, result, deadline=deadline)
 
         us_fail_set = set(us_fail)
         second_fail_set = set(second_fail)
@@ -205,16 +222,19 @@ class ITunesClient:
         return result
 
     def _batch_lookup_storefront(
-        self, ids: List[str], country: str, result: Dict[str, int]
+        self, ids: List[str], country: str, result: Dict[str, int], deadline: Optional[float] = None
     ) -> Tuple[List[str], List[str]]:
         """返回 (本店面未找到, 传输失败)。传输失败 = _request None（429/超时/空桶）。"""
         not_found: List[str] = []
         transport_failed: List[str] = []
         for i in range(0, len(ids), LOOKUP_BATCH):
+            if deadline is not None and time.perf_counter() >= deadline:
+                transport_failed.extend(ids[i:])
+                break
             batch = ids[i:i + LOOKUP_BATCH]
             ids_str = ",".join(batch)
             url = f"https://itunes.apple.com/lookup?id={ids_str}&country={country}"
-            data = self._request(url, purpose="lookup")
+            data = self._request(url, purpose="lookup", deadline=deadline)
             if data is None:
                 transport_failed.extend(batch)
                 continue
@@ -240,7 +260,8 @@ class ITunesClient:
         self,
         title: str,
         artist: str = "",
-        duration_ms: int = 0
+        duration_ms: int = 0,
+        deadline: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """按 search 区域顺序检索 iTunes，命中首个合格候选即停止（永不触碰 cn）。"""
         t_strict = norm_title(title, keep_version=True)
@@ -270,8 +291,10 @@ class ITunesClient:
         regions_ok = 0
 
         for region in SEARCH_REGIONS:
+            if deadline is not None and time.perf_counter() >= deadline:
+                break
             url = f"https://itunes.apple.com/search?term={encoded_query}&country={region}&media=music&entity=song&limit=10"
-            data = self._request(url, purpose="search")
+            data = self._request(url, purpose="search", deadline=deadline)
             if data is None:
                 continue
             regions_ok += 1
@@ -325,6 +348,6 @@ class ITunesClient:
         return None
 
 
-def itunes_durations(apple_ids: List[str], is_zh: bool = True) -> Dict[str, int]:
+def itunes_durations(apple_ids: List[str], is_zh: bool = True, deadline: Optional[float] = None) -> Dict[str, int]:
     """便捷包装函数。"""
-    return ITunesClient.get_instance().lookup_durations(apple_ids, is_zh=is_zh)
+    return ITunesClient.get_instance().lookup_durations(apple_ids, is_zh=is_zh, deadline=deadline)

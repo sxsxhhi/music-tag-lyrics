@@ -62,6 +62,19 @@ class LrcRedFetcher:
     _raw_cache: Dict[str, Dict[str, Any]] = {}
     _cache = _raw_cache  # 兼容旧代码与测试调用 _cache.clear()
     MAX_CACHE_ENTRIES: int = 500
+    MAX_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MiB 内存预算 (R13)
+    _cache_bytes: int = 0
+    _cooldown_until: float = 0.0             # 429 共享退避冷却 (R12)
+    _consecutive_429: int = 0
+    COOLDOWN_SEC: float = 60.0
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """重置缓存与冷却状态。"""
+        cls._raw_cache.clear()
+        cls._cache_bytes = 0
+        cls._cooldown_until = 0.0
+        cls._consecutive_429 = 0
 
     @classmethod
     def _rate_limit(cls, deadline: Optional[float] = None) -> bool:
@@ -148,8 +161,24 @@ class LrcRedFetcher:
         if clean_isrc in cls._raw_cache:
             return cls._raw_cache[clean_isrc]
 
-        if deadline is not None and time.perf_counter() >= deadline:
+        now = time.perf_counter()
+        if now < cls._cooldown_until:
+            rem = int(cls._cooldown_until - now)
+            logger.warning("   ⚠️ [lrc-red] 处于 429 冷却中（剩余 %ds），跳过请求: %s", rem, clean_isrc)
             return None
+
+        if deadline is not None and now >= deadline:
+            return None
+
+        def _handle_429():
+            cls._consecutive_429 += 1
+            n = cls._consecutive_429
+            backoff_sec = min(300.0, cls.COOLDOWN_SEC * (2 ** (n - 1)))
+            cls._cooldown_until = time.perf_counter() + backoff_sec
+            logger.warning(
+                "   ⚠️ [lrc-red] 遭遇 429 限流（第 %d 次），激活 %.0fs 退避冷却: %s",
+                n, backoff_sec, clean_isrc,
+            )
 
         # 1. 尝试 /s/{isrc}.song.json
         song_url = f"{LRC_RED_BASE}/s/{clean_isrc}.song.json"
@@ -161,6 +190,7 @@ class LrcRedFetcher:
         endpoint_kind = "song.json"
 
         if status == 200 and data and data.get("source"):
+            cls._consecutive_429 = 0
             raw_ttml = data["source"]
             meta = {
                 "title": data.get("title") or "",
@@ -173,8 +203,7 @@ class LrcRedFetcher:
                 "sync": data.get("sync") or "",
             }
         elif status == 429:
-            # 遭遇 429 退避，不追加请求施压
-            logger.warning("   ⚠️ [lrc-red] 遭遇 429 限流: %s", clean_isrc)
+            _handle_429()
             return None
         else:
             # P1-2: 降级回落请求 /s/{isrc}.ttml 与 /s/{isrc}.json
@@ -183,7 +212,11 @@ class LrcRedFetcher:
 
             meta_url = f"{LRC_RED_BASE}/s/{clean_isrc}.json"
             m_status, m_data = cls._http_get_json(meta_url, deadline=deadline)
+            if m_status == 429:
+                _handle_429()
+                return None
             if m_status == 200 and m_data:
+                cls._consecutive_429 = 0
                 meta = {
                     "title": m_data.get("title") or "",
                     "artist": m_data.get("artist") or "",
@@ -194,9 +227,14 @@ class LrcRedFetcher:
                     "by_model": m_data.get("byModel"),
                     "sync": m_data.get("sync") or "",
                 }
+
             ttml_url = f"{LRC_RED_BASE}/s/{clean_isrc}.ttml"
             t_status, t_text = cls._http_get_text(ttml_url, deadline=deadline)
+            if t_status == 429:
+                _handle_429()
+                return None
             if t_status == 200 and t_text:
+                cls._consecutive_429 = 0
                 raw_ttml = t_text
                 endpoint = ttml_url
                 endpoint_kind = "ttml"
@@ -205,11 +243,19 @@ class LrcRedFetcher:
             # 绝不写入永久负缓存！保证后续正常请求不被锁死（P0-1）
             return None
 
-        if len(cls._raw_cache) >= cls.MAX_CACHE_ENTRIES:
+        # R13: 计算内存占用并按 32MB / 500 条 LRU 淘汰
+        rec_size = len(raw_ttml.encode("utf-8")) + len(json.dumps(meta).encode("utf-8"))
+        while cls._raw_cache and (
+            len(cls._raw_cache) >= cls.MAX_CACHE_ENTRIES
+            or (cls._cache_bytes + rec_size > cls.MAX_CACHE_BYTES)
+        ):
             try:
-                cls._raw_cache.pop(next(iter(cls._raw_cache)))
+                old_key = next(iter(cls._raw_cache))
+                old_rec = cls._raw_cache.pop(old_key)
+                old_size = old_rec.get("_size", 0)
+                cls._cache_bytes = max(0, cls._cache_bytes - old_size)
             except Exception:
-                pass
+                break
 
         record = {
             "meta": meta,
@@ -217,8 +263,10 @@ class LrcRedFetcher:
             "endpoint": endpoint,
             "endpoint_kind": endpoint_kind,
             "retrieved_at": time.time(),
+            "_size": rec_size,
         }
         cls._raw_cache[clean_isrc] = record
+        cls._cache_bytes += rec_size
         return record
 
     @classmethod

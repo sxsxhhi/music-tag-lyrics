@@ -307,7 +307,7 @@ class AppleTTMLFetcher:
                         # 4.3.2 组内 id 廉价探测
                         # ids[0] 走完整 origin 攒票
                         first_id = chosen_entry.ids[0]
-                        v, txt, meta = fetch_ttml_raw(first_id)
+                        v, txt, meta = fetch_ttml_raw(first_id, deadline_s=max(0.2, song_deadline - time.perf_counter()))
                         if v == "OK":
                             target_apple_id = first_id
                             ttml_text = txt
@@ -347,11 +347,11 @@ class AppleTTMLFetcher:
         # -------------------------------------------------------------
         use_itunes = enable_itunes and os.environ.get("MTL_APPLE_ITUNES") != "off"
         if not ttml_text and use_itunes:
-            itunes_cand = ITunesClient.get_instance().search_track(title, artist, duration_ms)
+            itunes_cand = ITunesClient.get_instance().search_track(title, artist, duration_ms, deadline=song_deadline)
             if itunes_cand:
                 cand_id = itunes_cand.get("apple_id")
                 if cand_id:
-                    v, txt, meta = fetch_ttml_raw(cand_id)
+                    v, txt, meta = fetch_ttml_raw(cand_id, deadline_s=max(0.2, song_deadline - time.perf_counter()))
                     if v == "OK":
                         target_apple_id = cand_id
                         ttml_text = txt
@@ -436,7 +436,7 @@ class AppleTTMLFetcher:
                 return _try_lrc_red()
 
             # E1: iTunes trackTimeMillis
-            durs = itunes_durations([target_apple_id], is_zh=is_zh)
+            durs = itunes_durations([target_apple_id], is_zh=is_zh, deadline=t1_deadline)
             itunes_track_ms = durs.get(target_apple_id, 0)
             e1_available = (itunes_track_ms > 0)
             e1_pass = e1_available and (abs(itunes_track_ms - duration_ms) <= 5000)

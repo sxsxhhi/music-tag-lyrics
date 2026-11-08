@@ -1410,6 +1410,30 @@ def test_a05_lrc_red_fails_falls_through_to_none():
         assert mock_lr.called
 
 
+def test_r11_deadline_propagates_to_itunes_and_lrc_red():
+    """R11: T1 的 14.0s 绝对超时预算全链路传递给 iTunes 与 lrc.red。"""
+    with mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance", return_value=None), \
+         mock.patch("core.fetchers.apple_ttml.ITunesClient.get_instance") as mock_itunes, \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch", return_value=None) as mock_lr:
+        itunes_inst = mock.MagicMock()
+        mock_itunes.return_value = itunes_inst
+        itunes_inst.search_track.return_value = None
+
+        AppleTTMLFetcher.fetch("Test Song", "Test Artist", duration_ms=200000)
+
+        # 检查 search_track 收到 deadline 参数
+        assert itunes_inst.search_track.called
+        kwargs_itunes = itunes_inst.search_track.call_args.kwargs
+        assert "deadline" in kwargs_itunes
+        assert kwargs_itunes["deadline"] > time.perf_counter()
+
+        # 检查 lrc.red 收到 deadline 参数
+        assert mock_lr.called
+        kwargs_lr = mock_lr.call_args.kwargs
+        assert "deadline" in kwargs_lr
+        assert kwargs_lr["deadline"] > time.perf_counter()
+
+
 # =====================================================================
 # 运行全部测试
 # =====================================================================
