@@ -92,8 +92,9 @@ def matches_version_policy(
     cand_title: str,
     cand_album: str = "",
     target_is_remix: Optional[bool] = None,
-    target_is_instrumental: Optional[bool] = None,
-    target_is_cover: Optional[bool] = None,
+    target_is_instrumental: Optional[bool] = False,
+    target_is_cover: Optional[bool] = False,
+    target_is_demo: Optional[bool] = None,
 ) -> bool:
     """
     Enforces bidirectional strict version exclusion:
@@ -102,12 +103,15 @@ def matches_version_policy(
     - If target_is_remix is provided:
       - If target is Remix: candidate MUST be remix (either in title or album).
       - If target is Original (non-remix): candidate MUST NOT be remix.
-    - If target_is_instrumental is provided:
+    - If target_is_instrumental is provided (default False):
       - If target is Instrumental: candidate MUST be instrumental.
       - If target is Vocal: candidate MUST NOT be instrumental.
-    - If target_is_cover is provided:
+    - If target_is_cover is provided (default False):
       - If target is Cover: candidate MUST be cover.
       - If target is Original: candidate MUST NOT be cover.
+    - If target_is_demo is provided:
+      - If target is Demo: candidate MUST be demo.
+      - If target is Non-demo: candidate MUST NOT be demo.
     """
     cand_is_live = is_live_version(cand_title) or is_live_version(cand_album)
     if target_is_live:
@@ -142,6 +146,15 @@ def matches_version_policy(
                 return False
         else:
             if cand_is_cover:
+                return False
+
+    if target_is_demo is not None:
+        cand_is_demo = is_demo_version(cand_title) or is_demo_version(cand_album)
+        if target_is_demo:
+            if not cand_is_demo:
+                return False
+        else:
+            if cand_is_demo:
                 return False
 
     return True

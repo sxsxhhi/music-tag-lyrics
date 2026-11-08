@@ -590,15 +590,64 @@ def test_ver01_ver04_version_exclusion_bidirectional():
     assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_remix=True) is False
     assert matches_version_policy(target_is_live=False, cand_title="Song (Remix)", target_is_remix=True) is True
 
-    # 3. VER-03: Vocal vs Instrumental 双向硬拒
+    # 3. VER-03: Vocal vs Instrumental 双向硬拒（含缺省 False 安全门禁）
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Instrumental)") is False, "默认拦截伴奏候选"
+    assert matches_version_policy(target_is_live=False, cand_title="Song (伴奏)") is False, "默认拦截伴奏候选"
+    assert matches_version_policy(target_is_live=False, cand_title="Song (纯音乐)") is False, "默认拦截纯音乐候选"
+    assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_instrumental=False) is True
     assert matches_version_policy(target_is_live=False, cand_title="Song (Instrumental)", target_is_instrumental=False) is False
     assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_instrumental=True) is False
-    assert matches_version_policy(target_is_live=False, cand_title="Song (伴奏)", target_is_instrumental=False) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Instrumental)", target_is_instrumental=True) is True
 
-    # 4. VER-04: Original vs Cover 双向硬拒
+    # 4. VER-04: Original vs Cover 双向硬拒（含缺省 False 安全门禁）
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Cover)") is False, "默认拦截翻唱候选"
+    assert matches_version_policy(target_is_live=False, cand_title="Song (翻唱)") is False, "默认拦截翻唱候选"
+    assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_cover=False) is True
     assert matches_version_policy(target_is_live=False, cand_title="Song (Cover)", target_is_cover=False) is False
     assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_cover=True) is False
-    assert matches_version_policy(target_is_live=False, cand_title="Song (翻唱)", target_is_cover=False) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Cover)", target_is_cover=True) is True
+
+
+def test_fetchers_filter_instrumental_and_cover_candidates():
+    """R06: 验证 NetEase, QQ, Kugou, LRCLIB 全链路硬拒 (伴奏) 与 (Cover) 候选。"""
+    from unittest import mock
+    from core.fetchers.netease import NetEaseFetcher
+    from core.fetchers.qq import QQFetcher
+    from core.fetchers.lrclib import LRCLIBFetcher
+    from core.fetchers.kugou import KugouFetcher
+
+    # 1. NetEase: 原曲检索拦截 (伴奏)
+    ne_mock = {
+        "result": {
+            "songs": [
+                {"name": "青花瓷 (伴奏)", "duration": 230000, "album": {"name": "青花瓷"}, "artists": [{"name": "周杰伦"}]},
+                {"name": "青花瓷", "duration": 230000, "album": {"name": "我很忙"}, "artists": [{"name": "周杰伦"}]},
+            ]
+        }
+    }
+    with mock.patch("core.fetchers.netease.http_post_json", return_value=ne_mock):
+        cand = NetEaseFetcher.search_best_song("青花瓷", "周杰伦", duration_ms=230000)
+        assert cand is not None
+        assert cand["name"] == "青花瓷", "NetEase 必须过滤伴奏候选，选出正片歌曲"
+
+    # 2. QQ: 原曲检索拦截 (Cover)
+    qq_songs = [
+        {"title": "晴天 (Cover)", "album": "晴天", "singers": ["周杰伦"], "interval": 269},
+        {"title": "晴天", "album": "叶惠美", "singers": ["周杰伦"], "interval": 269},
+    ]
+    res_qq = QQFetcher._rank_candidates(qq_songs, "晴天", "周杰伦", "叶惠美", 269000)
+    assert len(res_qq) == 1
+    assert res_qq[0]["title"] == "晴天", "QQ 必须硬拒 Cover 候选"
+
+    # 3. LRCLIB: 拦截 (伴奏)
+    lrc_items = [
+        {"trackName": "Hello (Instrumental)", "artistName": "Adele", "duration": 290, "syncedLyrics": "[00:01.00]Inst"},
+        {"trackName": "Hello", "artistName": "Adele", "duration": 290, "syncedLyrics": "[00:01.00]Vocal"},
+    ]
+    with mock.patch.object(LRCLIBFetcher, "_search_list", return_value=lrc_items):
+        lrc_cand = LRCLIBFetcher.search_and_fetch("Hello", "Adele", duration_ms=290000)
+        assert lrc_cand is not None
+        assert lrc_cand["lines"][0]["text"] == "Vocal", "LRCLIB 必须硬拒 Instrumental 候选"
 
 
 def test_r15_lrclib_candidate_validation_and_window():

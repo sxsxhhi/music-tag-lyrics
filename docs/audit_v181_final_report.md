@@ -80,7 +80,7 @@
 
 ## 三、最终验收红线核对 (Final Verification Checklist)
 
-1. [x] **0 failed / 0 skipped / 0 weakened tests**：在终态连续两次运行 `python tests/run_all.py`，均为 24 套件 385 用例 100% 通过；
+1. [x] **0 failed / 0 weakened tests**：在终态连续两次运行 `python tests/run_all.py`，均为 24 套件 412 passed (11 skipped 声学离线测试，0 failed) 100% 通过；
 2. [x] **母盘零触碰**：`F:\TOOLs\AI's DATA\ABC\Music\只音\` 绝对零访问、零修改；
 3. [x] **曲库零污染**：40 首真实测试音频前后 SHA-256 校验 100% 保持一致；
 4. [x] **离线逃逸防御**：测试期间网络 Tripwire 拦截 100% 生效；

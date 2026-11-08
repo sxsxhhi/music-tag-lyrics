@@ -135,6 +135,7 @@ class HttpResult(NamedTuple):
     bytes_len: int
     elapsed_ms: int
     error: str        # timeout / ssl_eof / urlerror / ""
+    headers: Optional[Dict[str, str]] = None
 
 
 def http_get_text_ex(
@@ -152,18 +153,19 @@ def http_get_text_ex(
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp_headers = dict(resp.headers.items()) if hasattr(resp, "headers") and resp.headers else {}
             if max_bytes > 0:
                 raw = resp.read(max_bytes + 1)
                 elapsed_ms = int((time.perf_counter() - t0) * 1000)
                 status = getattr(resp, "status", getattr(resp, "code", 200))
                 if len(raw) > max_bytes:
-                    return HttpResult(status=status, text="", bytes_len=len(raw), elapsed_ms=elapsed_ms, error="oversized")
+                    return HttpResult(status=status, text="", bytes_len=len(raw), elapsed_ms=elapsed_ms, error="oversized", headers=resp_headers)
             else:
                 raw = resp.read()
                 elapsed_ms = int((time.perf_counter() - t0) * 1000)
                 status = getattr(resp, "status", getattr(resp, "code", 200))
             text = raw.decode("utf-8", errors="ignore")
-            return HttpResult(status=status, text=text, bytes_len=len(raw), elapsed_ms=elapsed_ms, error="")
+            return HttpResult(status=status, text=text, bytes_len=len(raw), elapsed_ms=elapsed_ms, error="", headers=resp_headers)
     except urllib.error.HTTPError as exc:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         try:
@@ -172,7 +174,8 @@ def http_get_text_ex(
             bytes_len = len(raw)
         except Exception:
             raw, text, bytes_len = b"", "", 0
-        return HttpResult(status=exc.code, text=text, bytes_len=bytes_len, elapsed_ms=elapsed_ms, error="")
+        resp_headers = dict(exc.headers.items()) if hasattr(exc, "headers") and exc.headers else {}
+        return HttpResult(status=exc.code, text=text, bytes_len=bytes_len, elapsed_ms=elapsed_ms, error="", headers=resp_headers)
     except (socket.timeout, TimeoutError) as exc:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=elapsed_ms, error="timeout")

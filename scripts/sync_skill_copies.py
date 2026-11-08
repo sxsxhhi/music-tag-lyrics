@@ -53,6 +53,7 @@ EXCLUDE_FILES = {
 def sync_to(target_dir: Path):
     target_dir.mkdir(parents=True, exist_ok=True)
     copied_count = 0
+    valid_rel_files = set()
 
     for root, dirs, files in os.walk(REPO_ROOT):
         # 排除忽略目录
@@ -71,12 +72,38 @@ def sync_to(target_dir: Path):
             if file.endswith(".zip") and str(rel_root).startswith("dist"):
                 continue
 
+            rel_file = rel_root / file if str(rel_root) != "." else Path(file)
+            valid_rel_files.add(str(rel_file).replace("\\", "/"))
+
             src_file = Path(root) / file
             dest_file = dest_subdir / file
             shutil.copy2(src_file, dest_file)
             copied_count += 1
 
-    return copied_count
+    # 清理目标目录中多余/过期的陈旧文件与被排除目录
+    pruned_count = 0
+    for root, dirs, files in os.walk(target_dir, topdown=False):
+        rel_root = Path(root).relative_to(target_dir)
+        for file in files:
+            rel_file = rel_root / file if str(rel_root) != "." else Path(file)
+            rel_str = str(rel_file).replace("\\", "/")
+            if rel_str not in valid_rel_files:
+                try:
+                    (Path(root) / file).unlink()
+                    pruned_count += 1
+                except OSError:
+                    pass
+        for d in dirs:
+            dir_path = Path(root) / d
+            if d in EXCLUDE_DIRS or d.startswith(".test-work") or d.startswith("_baseline"):
+                shutil.rmtree(dir_path, ignore_errors=True)
+            elif dir_path.is_dir() and not any(dir_path.iterdir()):
+                try:
+                    dir_path.rmdir()
+                except OSError:
+                    pass
+
+    return copied_count, pruned_count
 
 
 def main():
@@ -84,11 +111,11 @@ def main():
     print("🔄 正在执行 Skill 权威副本与可调用副本纯净同步")
     print("=" * 60)
 
-    n1 = sync_to(DEST_AGENT)
-    print(f"✅ 已同步至 Antigravity 可调用副本: {DEST_AGENT} ({n1} 个文件)")
+    n1, p1 = sync_to(DEST_AGENT)
+    print(f"✅ 已同步至 Antigravity 可调用副本: {DEST_AGENT} (同步 {n1} 个文件，清理 {p1} 个陈旧文件)")
 
-    n2 = sync_to(DEST_AUTHORITATIVE)
-    print(f"✅ 已同步至纯净权威安装包: {DEST_AUTHORITATIVE} ({n2} 个文件)")
+    n2, p2 = sync_to(DEST_AUTHORITATIVE)
+    print(f"✅ 已同步至纯净权威安装包: {DEST_AUTHORITATIVE} (同步 {n2} 个文件，清理 {p2} 个陈旧文件)")
 
     print("🎉 Skill 三地同步全部完成！")
 

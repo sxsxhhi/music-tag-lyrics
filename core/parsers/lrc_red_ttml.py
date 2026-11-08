@@ -404,6 +404,7 @@ def parse_lrc_red_ttml(
     timeline_overlap_count = 0
 
     prev_line_end = -1
+    prev_line_agent = None
     for line in lines:
         txt = (line.get("text") or "").strip()
         if not txt or is_credit_line(txt):
@@ -432,9 +433,13 @@ def parse_lrc_red_ttml(
             invalid_word_lines += 1
         l_st = line.get("start", 0)
         l_et = line.get("end", 0)
+        l_agent = line.get("agent")
         if prev_line_end > 0 and l_st < prev_line_end - 100:
-            timeline_overlap_count += 1
+            # R09: 区分合法双声部同唱与同声部主轴冲突
+            if not (prev_line_agent and l_agent and prev_line_agent != l_agent):
+                timeline_overlap_count += 1
         prev_line_end = l_et
+        prev_line_agent = l_agent
 
     word_coverage_ratio = (native_word_lines / singing_lines) if singing_lines > 0 else 0.0
     has_verbatim = bool(native_word_lines > 0)

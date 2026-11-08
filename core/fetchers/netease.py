@@ -13,10 +13,13 @@ from typing import Dict, Any, Optional
 from ..parsers.lrc_parser import parse_lrc
 from ..parsers.yrc_parser import parse_yrc
 from ..utils.http import http_post_json, http_get_json, UA_DESKTOP
-from ..utils.text_match import artist_tokens
+from ..utils.text_match import artist_tokens, GENERIC_ARTISTS
 from ..utils.version_guard import (
     is_live_version,
     is_remix_version,
+    is_instrumental_version,
+    is_cover_version,
+    is_demo_version,
     matches_version_policy,
     is_duration_acceptable,
     is_title_fuzzy_match,
@@ -75,6 +78,9 @@ class NetEaseFetcher:
 
         target_is_live = is_live_version(title)
         target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_is_instrumental = is_instrumental_version(title) or is_instrumental_version(album)
+        target_is_cover = is_cover_version(title) or is_cover_version(album)
+        target_is_demo = is_demo_version(title) or is_demo_version(album)
         target_artist_toks = artist_tokens(artist) if artist else frozenset()
         valid_candidates = []
         for s in songs:
@@ -91,7 +97,15 @@ class NetEaseFetcher:
 
             if not is_title_fuzzy_match(s_name, title):
                 continue
-            if not matches_version_policy(target_is_live, s_name, s_album, target_is_remix=target_is_remix):
+            if not matches_version_policy(
+                target_is_live,
+                s_name,
+                s_album,
+                target_is_remix=target_is_remix,
+                target_is_instrumental=target_is_instrumental,
+                target_is_cover=target_is_cover,
+                target_is_demo=target_is_demo,
+            ):
                 continue
 
             # R14: 艺人校验（若本地提供了明确艺人，候选艺人有列表时必须产生交集，避免同名错歌）
@@ -135,7 +149,12 @@ class NetEaseFetcher:
 
     @classmethod
     def lookup_year(cls, title: str, artist: str = "", duration_ms: int = 0) -> str:
-        """从网易专辑 publishTime 取四位年份。"""
+        """从网易专辑 publishTime 取四位年份。
+        
+        R14: 本地艺人为空或泛称(群星/Unknown)时，严禁盲目猜歌补全错年份。
+        """
+        if not artist or artist.strip().lower() in GENERIC_ARTISTS:
+            return ""
         song = cls.search_best_song(title, artist, duration_ms)
         if not song or not isinstance(song, dict):
             return ""

@@ -10,6 +10,9 @@ from ..utils.text_match import artist_tokens
 from ..utils.version_guard import (
     is_live_version,
     is_remix_version,
+    is_instrumental_version,
+    is_cover_version,
+    is_demo_version,
     matches_version_policy,
     album_match_score,
     is_title_fuzzy_match,
@@ -67,6 +70,10 @@ class LRCLIBFetcher:
         if data:
             yield data
         target_is_live = is_live_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_is_instrumental = is_instrumental_version(title) or is_instrumental_version(album)
+        target_is_cover = is_cover_version(title) or is_cover_version(album)
+        target_is_demo = is_demo_version(title) or is_demo_version(album)
         target_art_toks = artist_tokens(artist) if artist else set()
         n = 0
         for item in cls._search_list(title, artist):
@@ -81,7 +88,15 @@ class LRCLIBFetcher:
                 cand_art_toks = artist_tokens(artist_name)
                 if not cand_art_toks or not (target_art_toks & cand_art_toks):
                     continue
-            if not matches_version_policy(target_is_live, track_name, album_name):
+            if not matches_version_policy(
+                target_is_live,
+                track_name,
+                album_name,
+                target_is_remix=target_is_remix,
+                target_is_instrumental=target_is_instrumental,
+                target_is_cover=target_is_cover,
+                target_is_demo=target_is_demo,
+            ):
                 continue
             yield item
             n += 1
@@ -108,6 +123,9 @@ class LRCLIBFetcher:
     def search_and_fetch(cls, title: str, artist: str = "", duration_ms: int = 0, album: str = "") -> Optional[Dict[str, Any]]:
         target_is_live = is_live_version(title)
         target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_is_instrumental = is_instrumental_version(title) or is_instrumental_version(album)
+        target_is_cover = is_cover_version(title) or is_cover_version(album)
+        target_is_demo = is_demo_version(title) or is_demo_version(album)
         target_art_toks = artist_tokens(artist) if artist else set()
         valid_items = []
         for item in cls._search_list(title, artist):
@@ -127,7 +145,15 @@ class LRCLIBFetcher:
                 if not cand_art_toks or not (target_art_toks & cand_art_toks):
                     continue
 
-            if not matches_version_policy(target_is_live, track_name, album_name, target_is_remix=target_is_remix):
+            if not matches_version_policy(
+                target_is_live,
+                track_name,
+                album_name,
+                target_is_remix=target_is_remix,
+                target_is_instrumental=target_is_instrumental,
+                target_is_cover=target_is_cover,
+                target_is_demo=target_is_demo,
+            ):
                 continue
             if not item.get("syncedLyrics"):
                 continue

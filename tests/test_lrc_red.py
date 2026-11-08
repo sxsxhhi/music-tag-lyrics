@@ -653,6 +653,83 @@ def test_r13_cache_memory_budget_lru_eviction():
         LrcRedFetcher.clear_cache()
 
 
+def test_r06_version_album_live_studio_exclusion():
+    """R06: 专辑名称含 Live/现场 版本标识时参与版本互斥，杜绝录音室原曲匹配现场版专辑。"""
+    LrcRedFetcher.clear_cache()
+    mock_live_album = {
+        "title": "Hotel California",
+        "artist": "Eagles",
+        "album": "Hell Freezes Over (Live)",
+        "duration": 390.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_live_album), bytes_len=100, elapsed_ms=30, error="")
+        # 1. 本地为录音室专辑，远端为 Live 专辑 -> 必须被版本互斥门禁拦截
+        cand = LrcRedFetcher.fetch_by_isrc("USEE10000001", duration_ms=390000, title="Hotel California", artist="Eagles", album="Hotel California")
+        assert cand is None, "录音室专辑与远端 Live 专辑必须被版本互斥硬拒"
+
+        # 2. 本地为 Live 专辑，远端也为 Live 专辑 -> 允许匹配
+        LrcRedFetcher.clear_cache()
+        cand_live = LrcRedFetcher.fetch_by_isrc("USEE10000001", duration_ms=390000, title="Hotel California", artist="Eagles", album="Hell Freezes Over (Live)")
+        assert cand_live is not None
+        assert cand_live["isrc_write_eligible"] is True
+
+
+def test_r12_429_respects_retry_after_header():
+    """R12: 429 响应带 Retry-After 头时，冷却时间应至少为 Retry-After 指定秒数。"""
+    LrcRedFetcher.clear_cache()
+    try:
+        def mock_retry_after(*args, **kwargs):
+            return HttpResult(status=429, text="Too Many Requests", bytes_len=17, elapsed_ms=10, error="", headers={"Retry-After": "120"})
+
+        with mock.patch("core.fetchers.lrc_red.http_get_text_ex", side_effect=mock_retry_after):
+            t_start = time.perf_counter()
+            res = LrcRedFetcher._fetch_raw_record("USUM71413645")
+            assert res is None
+            # 应当解析出 120 秒冷却
+            assert LrcRedFetcher._cooldown_until >= t_start + 119.0
+    finally:
+        LrcRedFetcher.clear_cache()
+
+
+def test_r13_true_lru_access_preserves_accessed_entry():
+    """R13: 验证真实 LRU 机制：缓存命中时刷新 recency，超限时淘汰最久未访问条目而非单纯 FIFO。"""
+    LrcRedFetcher.clear_cache()
+    try:
+        orig_max_bytes = LrcRedFetcher.MAX_CACHE_BYTES
+        # 允许容纳约 2 个条目
+        LrcRedFetcher.MAX_CACHE_BYTES = 1300
+
+        mock_payload = {
+            "title": "Song",
+            "artist": "Artist",
+            "duration": 180.0,
+            "source": "<tt>Payload 500 bytes</tt>" + ("y" * 400),
+        }
+        with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+            mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_payload), bytes_len=550, elapsed_ms=10, error="")
+            # 1. 插入 A 和 B
+            LrcRedFetcher._fetch_raw_record("ISRC_A")
+            LrcRedFetcher._fetch_raw_record("ISRC_B")
+            assert "ISRC_A" in LrcRedFetcher._raw_cache
+            assert "ISRC_B" in LrcRedFetcher._raw_cache
+
+            # 2. 访问 A（使 A 成为最近使用，B 成为最久未用 LRU）
+            rec_a = LrcRedFetcher._fetch_raw_record("ISRC_A")
+            assert rec_a is not None
+
+            # 3. 插入 C（超出 1300 bytes 预算，必须淘汰 B，保留 A！）
+            LrcRedFetcher._fetch_raw_record("ISRC_C")
+            assert "ISRC_A" in LrcRedFetcher._raw_cache, "最近访问过的 A 必须保留"
+            assert "ISRC_C" in LrcRedFetcher._raw_cache, "新插入的 C 必须保留"
+            assert "ISRC_B" not in LrcRedFetcher._raw_cache, "最久未访问的 B 必须被 LRU 淘汰"
+    finally:
+        LrcRedFetcher.MAX_CACHE_BYTES = orig_max_bytes
+        LrcRedFetcher.clear_cache()
+
+
 def main():
     return _testkit.run(globals())
 

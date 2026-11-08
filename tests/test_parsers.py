@@ -381,6 +381,23 @@ def test_r10_ttml_translation_attachment_avoids_mismatched_lines():
     assert l2.get("translation") is None, "声部不同且未指定 target 的行不得被误挂译文"
 
 
+def test_r09_duet_simultaneous_lines_not_overlap():
+    """R09: 区分合法双声部同时演唱（不同 agent）与主唱轴冲突重叠。"""
+    from core.parsers.lrc_red_ttml import parse_lrc_red_ttml
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+    <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+      <body>
+        <div>
+          <!-- 声部 1 与声部 2 在同一时间段合唱，属于合法合唱 -->
+          <p ttm:agent="v1" begin="1.0" end="3.0">Singer A line</p>
+          <p ttm:agent="v2" begin="1.5" end="3.5">Singer B line</p>
+        </div>
+      </body>
+    </tt>"""
+    res = parse_lrc_red_ttml(xml)
+    assert res["timeline_overlap_count"] == 0, "不同 agent 的合唱不应计入主轴冲突错误"
+
+
 # --------------------------------------------------------------------------
 # 本地 runner（无 pytest 也能跑）
 # --------------------------------------------------------------------------

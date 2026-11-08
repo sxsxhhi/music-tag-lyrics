@@ -12,6 +12,9 @@ from ..utils.text_utils import is_instrumental_placeholder
 from ..utils.version_guard import (
     is_live_version,
     is_remix_version,
+    is_instrumental_version,
+    is_cover_version,
+    is_demo_version,
     strip_subtitle_brackets,
     matches_version_policy,
     is_title_fuzzy_match,
@@ -60,9 +63,20 @@ def krcs_version_ok(
     cand_dur_sec: int = 0,
     target_dur_sec: int = 0,
     target_is_remix: Optional[bool] = None,
+    target_is_instrumental: Optional[bool] = None,
+    target_is_cover: Optional[bool] = None,
+    target_is_demo: Optional[bool] = None,
 ) -> bool:
     """KRCS 标题无 Live、专辑为空时，时长贴齐本地 Live ±10s 视为同版本。"""
-    if matches_version_policy(target_is_live, cand_title or "", cand_album or "", target_is_remix=target_is_remix):
+    if matches_version_policy(
+        target_is_live,
+        cand_title or "",
+        cand_album or "",
+        target_is_remix=target_is_remix,
+        target_is_instrumental=target_is_instrumental,
+        target_is_cover=target_is_cover,
+        target_is_demo=target_is_demo,
+    ):
         return True
     if target_is_live and target_dur_sec > 0:
         return abs(int(cand_dur_sec) - int(target_dur_sec)) <= KRCS_METADATA_WINDOW_SEC
@@ -352,13 +366,24 @@ class KugouFetcher:
         songs = cls.search_song(title, artist)
         target_is_live = is_live_version(title)
         target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_is_instrumental = is_instrumental_version(title) or is_instrumental_version(album)
+        target_is_cover = is_cover_version(title) or is_cover_version(album)
+        target_is_demo = is_demo_version(title) or is_demo_version(album)
         
         # Apply strict version mutual exclusion
         filtered_songs = []
         for song in songs:
             s_title = song.get("title", "")
             s_album = song.get("album", "")
-            if matches_version_policy(target_is_live, s_title, s_album, target_is_remix=target_is_remix):
+            if matches_version_policy(
+                target_is_live,
+                s_title,
+                s_album,
+                target_is_remix=target_is_remix,
+                target_is_instrumental=target_is_instrumental,
+                target_is_cover=target_is_cover,
+                target_is_demo=target_is_demo,
+            ):
                 filtered_songs.append(song)
             elif songs:
                 _set_kugou_status("gated")

@@ -31,6 +31,9 @@ from ..utils.version_guard import (
     album_match_score,
     is_live_version,
     is_remix_version,
+    is_instrumental_version,
+    is_cover_version,
+    is_demo_version,
     is_title_fuzzy_match,
     matches_version_policy,
     strip_subtitle_brackets,
@@ -148,7 +151,10 @@ class QQFetcher:
     ) -> List[Dict[str, Any]]:
         """四项硬闸 + 专辑加权排序。"""
         target_is_live = is_live_version(title)
-        target_is_remix = is_remix_version(title)
+        target_is_remix = is_remix_version(title) or is_remix_version(album)
+        target_is_instrumental = is_instrumental_version(title) or is_instrumental_version(album)
+        target_is_cover = is_cover_version(title) or is_cover_version(album)
+        target_is_demo = is_demo_version(title) or is_demo_version(album)
         target_artist = (artist or "").strip().lower()
 
         scored: List[tuple] = []
@@ -158,7 +164,13 @@ class QQFetcher:
             if not is_title_fuzzy_match(cand_title, title):
                 continue
             if not matches_version_policy(
-                target_is_live, cand_title, cand_album, target_is_remix=target_is_remix
+                target_is_live,
+                cand_title,
+                cand_album,
+                target_is_remix=target_is_remix,
+                target_is_instrumental=target_is_instrumental,
+                target_is_cover=target_is_cover,
+                target_is_demo=target_is_demo,
             ):
                 continue
             if target_artist:

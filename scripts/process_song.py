@@ -45,7 +45,13 @@ from core.acoustic.qc import (
     write_report as write_qc_report,
 )
 from core.utils.text_utils import is_foreign_track
-from core.utils.version_guard import is_live_version, matches_version_policy
+from core.utils.version_guard import (
+    is_live_version,
+    is_remix_version,
+    is_instrumental_version,
+    is_cover_version,
+    matches_version_policy,
+)
 
 SUPPORTED_EXTS = {".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav", ".dsf"}
 
@@ -69,8 +75,18 @@ def find_local_plain_lyrics(song_path: str, title: str, artist: str) -> Optional
         f"{base_name}.lrc"
     ]
     target_live = is_live_version(title)
+    target_remix = is_remix_version(title)
+    target_inst = is_instrumental_version(title)
+    target_cover = is_cover_version(title)
     for c in candidates:
-        if not matches_version_policy(target_live, c, ""):
+        if not matches_version_policy(
+            target_live,
+            c,
+            "",
+            target_is_remix=target_remix,
+            target_is_instrumental=target_inst,
+            target_is_cover=target_cover,
+        ):
             continue
         p = os.path.join(song_dir, c)
         if os.path.isfile(p):
@@ -868,7 +884,7 @@ def _process_single_song_impl(
                     from core.utils.isrc import is_valid_isrc
                     if is_valid_isrc(cand_isrc):
                         isrc_to_write = cand_isrc
-                        print(f"🏷️  [ISRC] 权威查证已补齐 ISRC: {isrc_to_write}")
+                        print(f"🏷️  [ISRC] 门禁核验通过，补齐 ISRC: {isrc_to_write}")
                     else:
                         print(f"⚠️  [ISRC] 跳过写入：候选 ISRC 格式非法 ({cand_isrc})")
 

@@ -511,6 +511,25 @@ def test_r14_netease_search_rejects_wrong_artist_candidates():
         assert NetEaseFetcher.lookup_year("泡沫", "邓紫棋", duration_ms=200000) == "2014"
 
 
+def test_r14_lookup_year_rejects_empty_or_generic_artist():
+    """R14: lookup_year 在歌手缺失或为泛称(群星/Unknown)时严禁盲目猜歌补全错年份。"""
+    cand = {
+        "name": "晴天",
+        "album": {"name": "叶惠美", "publishTime": 1059609600000},
+        "duration": 269000,
+        "artists": [{"name": "周杰伦"}],
+    }
+    with mock.patch("core.fetchers.netease.http_post_json", return_value={"result": {"songs": [cand]}}):
+        # 1. 歌手为空
+        assert NetEaseFetcher.lookup_year("晴天", "") == ""
+        # 2. 歌手为群星/Unknown等泛称
+        assert NetEaseFetcher.lookup_year("晴天", "群星") == ""
+        assert NetEaseFetcher.lookup_year("晴天", "Various Artists") == ""
+        assert NetEaseFetcher.lookup_year("晴天", "Unknown") == ""
+        # 3. 正常歌手
+        assert NetEaseFetcher.lookup_year("晴天", "周杰伦", duration_ms=269000) == "2003"
+
+
 def main():
     return _testkit.run(globals())
 

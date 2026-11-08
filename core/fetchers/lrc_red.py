@@ -115,6 +115,9 @@ class LrcRedFetcher:
             user_agent=UA_LRC_RED,
             max_bytes=MAX_JSON_BYTES,
         )
+        if res.status == 429:
+            cls._handle_429(res)
+            return 429, None
         if res.status != 200 or not res.text:
             return res.status, None
         try:
@@ -147,9 +150,34 @@ class LrcRedFetcher:
             user_agent=UA_LRC_RED,
             max_bytes=MAX_TTML_BYTES,
         )
+        if res.status == 429:
+            cls._handle_429(res)
+            return 429, None
         if res.status != 200 or not res.text:
             return res.status, None
         return 200, res.text
+
+    @classmethod
+    def _handle_429(cls, res: Optional[Any] = None) -> None:
+        """激活 429 冷却退避，支持解析 Retry-After 响应头（上限 300s，R12）。"""
+        cls._consecutive_429 += 1
+        n = cls._consecutive_429
+        backoff = cls.COOLDOWN_SEC * (2 ** (n - 1))
+        if res is not None and hasattr(res, "headers") and res.headers:
+            val = res.headers.get("retry-after") or res.headers.get("Retry-After")
+            if val:
+                try:
+                    retry_val = float(val)
+                    if retry_val > 0:
+                        backoff = max(backoff, retry_val)
+                except (ValueError, TypeError):
+                    pass
+        backoff_sec = min(300.0, backoff)
+        cls._cooldown_until = time.perf_counter() + backoff_sec
+        logger.warning(
+            "   ⚠️ [lrc-red] 遭遇 429 限流（第 %d 次），激活 %.0fs 退避冷却",
+            n, backoff_sec,
+        )
 
     @classmethod
     def _fetch_raw_record(
@@ -158,8 +186,11 @@ class LrcRedFetcher:
         deadline: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """获取并缓存远端原始响应记录（不绑定具体本地歌曲上下文，P0-1）。"""
+        # 0. 内存缓存命中：移到末尾以实现真 LRU 访问淘汰 (R13)
         if clean_isrc in cls._raw_cache:
-            return cls._raw_cache[clean_isrc]
+            record = cls._raw_cache.pop(clean_isrc)
+            cls._raw_cache[clean_isrc] = record
+            return record
 
         now = time.perf_counter()
         if now < cls._cooldown_until:
@@ -169,16 +200,6 @@ class LrcRedFetcher:
 
         if deadline is not None and now >= deadline:
             return None
-
-        def _handle_429():
-            cls._consecutive_429 += 1
-            n = cls._consecutive_429
-            backoff_sec = min(300.0, cls.COOLDOWN_SEC * (2 ** (n - 1)))
-            cls._cooldown_until = time.perf_counter() + backoff_sec
-            logger.warning(
-                "   ⚠️ [lrc-red] 遭遇 429 限流（第 %d 次），激活 %.0fs 退避冷却: %s",
-                n, backoff_sec, clean_isrc,
-            )
 
         # 1. 尝试 /s/{isrc}.song.json
         song_url = f"{LRC_RED_BASE}/s/{clean_isrc}.song.json"
@@ -203,7 +224,7 @@ class LrcRedFetcher:
                 "sync": data.get("sync") or "",
             }
         elif status == 429:
-            _handle_429()
+            cls._handle_429()
             return None
         else:
             # P1-2: 降级回落请求 /s/{isrc}.ttml 与 /s/{isrc}.json
@@ -213,7 +234,7 @@ class LrcRedFetcher:
             meta_url = f"{LRC_RED_BASE}/s/{clean_isrc}.json"
             m_status, m_data = cls._http_get_json(meta_url, deadline=deadline)
             if m_status == 429:
-                _handle_429()
+                cls._handle_429()
                 return None
             if m_status == 200 and m_data:
                 cls._consecutive_429 = 0
@@ -231,7 +252,7 @@ class LrcRedFetcher:
             ttml_url = f"{LRC_RED_BASE}/s/{clean_isrc}.ttml"
             t_status, t_text = cls._http_get_text(ttml_url, deadline=deadline)
             if t_status == 429:
-                _handle_429()
+                cls._handle_429()
                 return None
             if t_status == 200 and t_text:
                 cls._consecutive_429 = 0
@@ -319,16 +340,15 @@ class LrcRedFetcher:
             )
             return None
 
-        if title and r_title:
-            local_ver = version_tokens(title)
-            remote_ver = version_tokens(r_title)
-            ver_diff = (local_ver - remote_ver) | (remote_ver - local_ver)
-            if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
-                logger.warning(
-                    "   ⚠️ [lrc-red] 版本互斥冲突 (%s vs %s)，丢弃候选",
-                    local_ver, remote_ver
-                )
-                return None
+        local_ver = (version_tokens(title) if title else set()) | (version_tokens(album) if album else set())
+        remote_ver = (version_tokens(r_title) if r_title else set()) | (version_tokens(r_album) if r_album else set())
+        ver_diff = (local_ver - remote_ver) | (remote_ver - local_ver)
+        if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
+            logger.warning(
+                "   ⚠️ [lrc-red] 版本互斥冲突 (%s vs %s)，丢弃候选",
+                local_ver, remote_ver
+            )
+            return None
 
         # 3. 艺人门禁（P0-3）
         if artist and r_artist:
@@ -394,8 +414,8 @@ class LrcRedFetcher:
             and remote_dur_ms > 0
             and abs(duration_ms - remote_dur_ms) <= 3000
         )
-        local_ver_all = version_tokens(title) if title else set()
-        remote_ver_all = version_tokens(r_title) if r_title else set()
+        local_ver_all = (version_tokens(title) if title else set()) | (version_tokens(album) if album else set())
+        remote_ver_all = (version_tokens(r_title) if r_title else set()) | (version_tokens(r_album) if r_album else set())
         version_identical = (local_ver_all == remote_ver_all)
 
         has_full_identity = bool(
