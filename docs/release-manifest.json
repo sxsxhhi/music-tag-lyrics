@@ -3,12 +3,12 @@
   "name": "music-tag-lyrics",
   "version": "1.8.1",
   "release_tag": "v1.8.1",
-  "build_timestamp_utc": "2026-11-08T11:15:13.005183+00:00",
-  "git_commit": "460ce675c701d003752a9b4b041b5feaeeb6f04a",
+  "build_timestamp_utc": "2026-11-08T11:16:09.523665+00:00",
+  "git_commit": "e221b70a44b37e74c8c4412412e69acfae17a40f",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.1.zip",
-    "size_bytes": 1914054,
-    "sha256": "9628e781752b27c5a8dda8b7adb4b59f9533c7ff966aaa770b709b590a45dcb1",
+    "size_bytes": 1914052,
+    "sha256": "9fe067a73d4320bf4decf163e07f966f4ae99ae3be37a82e1f1e2f748f3da89c",
     "file_count": 113
   },
   "platforms_verified": [
