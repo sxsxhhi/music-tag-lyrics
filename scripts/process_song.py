@@ -845,16 +845,32 @@ def _process_single_song_impl(
                 print("⚠️ Tag update skipped or format read-only")
         else:
             isrc_to_write = None
-            if write_isrc and not isrc:
-                cand_isrc = lyric_data.get("isrc") if lyric_data else None
-                if cand_isrc:
+            if write_isrc:
+                if isrc:
+                    print(f"ℹ️  [ISRC] 跳过写入：本地已有 ISRC 标签 ({isrc})，严禁覆盖")
+                elif not lyric_data:
+                    print("⚠️  [ISRC] 跳过写入：未获取到歌词数据")
+                elif not lyric_data.get("isrc_write_eligible"):
+                    cand_dur = lyric_data.get("duration_ms") or 0
+                    reasons = []
+                    if not duration_ms or not cand_dur:
+                        reasons.append("缺失音轨时长")
+                    elif abs(cand_dur - duration_ms) > 3000:
+                        reasons.append(f"时长差超标 ({abs(cand_dur - duration_ms)}ms > 3000ms)")
+                    if lyric_data.get("match", {}).get("confidence") != "strict":
+                        reasons.append("远端置信度非 strict")
+                    if lyric_data.get("match", {}).get("by_model") != "false":
+                        reasons.append("远端非确证原生逐字")
+                    reason_msg = "、".join(reasons) if reasons else "证据不足"
+                    print(f"⚠️  [ISRC] 跳过写入：{reason_msg}")
+                else:
+                    cand_isrc = lyric_data.get("isrc")
                     from core.utils.isrc import is_valid_isrc
                     if is_valid_isrc(cand_isrc):
-                        cand_dur = lyric_data.get("duration_ms") or 0
-                        dur_diff_ok = (not duration_ms or not cand_dur or abs(cand_dur - duration_ms) <= 3000)
-                        if dur_diff_ok and lyric_data.get("match", {}).get("confidence") == "strict":
-                            isrc_to_write = cand_isrc
-                            print(f"🏷️  [ISRC] 权威查证已补齐 ISRC: {isrc_to_write}")
+                        isrc_to_write = cand_isrc
+                        print(f"🏷️  [ISRC] 权威查证已补齐 ISRC: {isrc_to_write}")
+                    else:
+                        print(f"⚠️  [ISRC] 跳过写入：候选 ISRC 格式非法 ({cand_isrc})")
 
             success = update_audio_tags(
                 filepath,

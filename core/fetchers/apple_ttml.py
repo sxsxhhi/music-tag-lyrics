@@ -251,24 +251,29 @@ class AppleTTMLFetcher:
         if os.environ.get("MTL_APPLE_TIER") == "off":
             return None
 
-        # v1.5.1-D2: 全流程共用一个 deadline。旧版 alt-id 探测另起 6.0s，
-        # 与主链叠加后单曲最坏 ≈30.5s，远超文档承诺的 8.5s。
+        T1_TOTAL_BUDGET_S = 14.0
+        AMLL_TARGET_BUDGET_S = 8.5
         t_song_start = time.perf_counter()
-        song_deadline = t_song_start + SONG_DEADLINE_S + 2.5  # ID 2.5s + TTML 6.0s
+        t1_deadline = t_song_start + T1_TOTAL_BUDGET_S
+        song_deadline = t_song_start + AMLL_TARGET_BUDGET_S
 
-        def _try_lrc_red() -> Optional[Dict[str, Any]]:
+        def _try_lrc_red(reason: str = "") -> Optional[Dict[str, Any]]:
             if os.environ.get("MTL_LRC_RED") == "off":
                 return None
-            if time.perf_counter() >= song_deadline:
+            now = time.perf_counter()
+            if now >= t1_deadline:
+                logger.info("   ℹ️ [apple-ttml] T1 总预算耗尽 (%.2fs)，跳过 lrc.red 兜底", now - t_song_start)
                 return None
             try:
                 from .lrc_red import LrcRedFetcher
+                lrc_red_deadline = min(t1_deadline, now + 5.0)
                 cand = LrcRedFetcher.fetch(
                     title=title,
                     artist=artist,
                     duration_ms=duration_ms,
                     album=album,
                     isrc=isrc,
+                    deadline=lrc_red_deadline,
                 )
                 if cand and cand.get("lines"):
                     return cand
@@ -416,7 +421,7 @@ class AppleTTMLFetcher:
         if not has_axis:
             logger.warning("   ⚠️ [apple-ttml] 时长证据不可用（body_dur 缺失 / 音频时长 0），本首降级")
             if is_zh:
-                return None  # 华语不接受无轴 loose，直接落酷狗
+                return _try_lrc_red("ZH_NO_AXIS")  # 华语不接受无轴 loose，转入 lrc.red 兜底
             confidence = "loose"
         else:
             # E3a: 上界与预览门 (P2-10: 抽离统一常量)
@@ -455,8 +460,8 @@ class AppleTTMLFetcher:
 
             if is_zh:
                 if not is_strict:
-                    logger.warning("   ⚠️ [apple-ttml] 华语未达 strict 门槛，交由酷狗处理")
-                    return None
+                    logger.warning("   ⚠️ [apple-ttml] 华语未达 strict 门槛，转入 lrc.red 兜底")
+                    return _try_lrc_red("ZH_NOT_STRICT")
                 confidence = "strict"
             else:
                 confidence = "strict" if is_strict else "loose"

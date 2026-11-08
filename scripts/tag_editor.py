@@ -374,6 +374,10 @@ def read_audio_tags(filepath: str) -> Dict[str, Any]:
     except Exception:
         audio = None
     if audio is None:
+        try:
+            _extract_id3_dict(ID3(filepath), info)
+        except Exception:
+            pass
         return info
 
     try:

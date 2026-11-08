@@ -141,7 +141,8 @@ def http_get_text_ex(
     url: str,
     headers: Optional[Dict[str, str]] = None,
     timeout: float = 3.0,
-    user_agent: str = UA_DEFAULT
+    user_agent: str = UA_DEFAULT,
+    max_bytes: int = 0,
 ) -> HttpResult:
     """带状态码、体长、耗时与精细异常的 HTTP GET。校验证书，不吞状态码。"""
     req_headers = {"User-Agent": user_agent}
@@ -151,15 +152,22 @@ def http_get_text_ex(
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            if max_bytes > 0:
+                raw = resp.read(max_bytes + 1)
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                status = getattr(resp, "status", getattr(resp, "code", 200))
+                if len(raw) > max_bytes:
+                    return HttpResult(status=status, text="", bytes_len=len(raw), elapsed_ms=elapsed_ms, error="oversized")
+            else:
+                raw = resp.read()
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                status = getattr(resp, "status", getattr(resp, "code", 200))
             text = raw.decode("utf-8", errors="ignore")
-            status = getattr(resp, "status", getattr(resp, "code", 200))
             return HttpResult(status=status, text=text, bytes_len=len(raw), elapsed_ms=elapsed_ms, error="")
     except urllib.error.HTTPError as exc:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         try:
-            raw = exc.read()
+            raw = exc.read(max_bytes + 1) if max_bytes > 0 else exc.read()
             text = raw.decode("utf-8", errors="ignore")
             bytes_len = len(raw)
         except Exception:

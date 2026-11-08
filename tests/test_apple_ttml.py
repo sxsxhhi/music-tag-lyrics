@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import json
+import unittest.mock as mock
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -1311,6 +1312,102 @@ def test_g5_translation_attach_shared_algo():
     assert n2 == 2, n2
     assert lines2[0]["translation"] == "你好"  # 词级标签被清洗
     assert lines2[1]["translation"] == "世界"
+
+
+# =====================================================================
+# A01 - A05: AMLL -> lrc.red 兜底与 T1 预算回归测试 (v1.8.1)
+# =====================================================================
+
+def test_a01_amll_success_lrc_red_not_called():
+    """A01: AMLL 成功命中时，绝不调用 lrc.red 浪费网络资源。"""
+    ttml_ok = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:amll="http://schemas.amll.org/ttml">
+    <head><metadata><amll:meta key="musicName" value="Song A"/><amll:meta key="artists" value="Artist A"/><amll:meta key="album" value="Album A"/></metadata></head>
+    <body dur="4:00.000"><div>
+      <p begin="00:10.000" end="03:55.000"><span begin="00:10.000" end="03:55.000">Hello</span></p>
+    </div></body></tt>"""
+    with mock.patch("core.fetchers.apple_ttml.fetch_ttml_raw", return_value=("OK", ttml_ok, {"mirror": "test"})), \
+         mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance") as mock_idx, \
+         mock.patch("core.fetchers.apple_ttml.itunes_durations", return_value={"123": 240000}), \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch") as mock_lr:
+        mock_entry = mock.MagicMock(ids=["123"], ambiguous=False)
+        mock_idx.return_value = mock.MagicMock(lookup=mock.MagicMock(return_value=[mock_entry]))
+
+        cand = AppleTTMLFetcher.fetch("Song A", "Artist A", duration_ms=240000)
+        assert cand is not None
+        assert cand["source"] == "apple-ttml"
+        assert not mock_lr.called, "AMLL 成功时绝不得调用 lrc.red"
+
+
+def test_a02_amll_404_lrc_red_called():
+    """A02: AMLL 404 / 未收录时，无缝触发 lrc.red 兜底。"""
+    mock_lrc_cand = {"source": "lrc-red", "lyric_type": "word", "lines": [{"start": 1000, "end": 2000, "text": "OK"}]}
+    with mock.patch("core.fetchers.apple_ttml.fetch_ttml_raw", return_value=("NOT_FOUND", "", {})), \
+         mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance", return_value=None), \
+         mock.patch("core.fetchers.apple_ttml.ITunesClient.get_instance") as mock_itunes, \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch", return_value=mock_lrc_cand) as mock_lr:
+        mock_itunes.return_value = mock.MagicMock(search_track=mock.MagicMock(return_value=None))
+
+        cand = AppleTTMLFetcher.fetch("Song A", "Artist A", duration_ms=240000)
+        assert cand is not None
+        assert cand["source"] == "lrc-red"
+        assert mock_lr.called
+
+
+def test_a03_amll_zh_not_strict_lrc_red_called():
+    """A03: 华语歌曲在 AMLL 判定未达 strict 时，转入 lrc.red 兜底而非直接放弃。"""
+    # 模拟 AMLL 返回有效 TTML 但缺少时长轴导致 strict 失败
+    ttml_no_axis = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <head><metadata><amll:meta key="musicName" value="你好"/><amll:meta key="artists" value="歌手"/></metadata></head>
+    <body><div>
+      <p begin="10.0" end="20.0"><span begin="10.0" end="15.0">测试</span></p>
+    </div></body></tt>"""
+    mock_lrc_cand = {"source": "lrc-red", "lyric_type": "word", "lines": [{"start": 1000, "end": 2000, "text": "OK"}]}
+    with mock.patch("core.fetchers.apple_ttml.fetch_ttml_raw", return_value=("OK", ttml_no_axis, {"mirror": "test"})), \
+         mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance") as mock_idx, \
+         mock.patch("core.fetchers.apple_ttml.itunes_durations", return_value={}), \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch", return_value=mock_lrc_cand) as mock_lr:
+        mock_entry = mock.MagicMock(ids=["123"], ambiguous=False)
+        mock_idx.return_value = mock.MagicMock(lookup=mock.MagicMock(return_value=[mock_entry]))
+
+        cand = AppleTTMLFetcher.fetch("你好", "歌手", duration_ms=240000)
+        assert cand is not None
+        assert cand["source"] == "lrc-red"
+        assert mock_lr.called
+
+
+def test_a04_amll_elapsed_budget_lrc_red_still_called():
+    """A04: 当 AMLL 耗尽 8.5s 预算时，T1 总预算 (14s) 仍留给 lrc.red 机会。"""
+    mock_lrc_cand = {"source": "lrc-red", "lyric_type": "word", "lines": [{"start": 1000, "end": 2000, "text": "OK"}]}
+    # 模拟时钟从 0 流逝到 9.0s（超过 AMLL 的 8.5s，但仍在 14s 内）
+    current_time = [100.0]
+
+    def fake_perf_counter():
+        return current_time[0]
+
+    with mock.patch("time.perf_counter", side_effect=fake_perf_counter), \
+         mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance", return_value=None), \
+         mock.patch("core.fetchers.apple_ttml.ITunesClient.get_instance") as mock_itunes, \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch", return_value=mock_lrc_cand) as mock_lr:
+        mock_itunes.return_value = mock.MagicMock(search_track=mock.MagicMock(return_value=None))
+
+        # 模拟 AMLL 流程耗时 9.0 秒
+        current_time[0] = 109.0
+        cand = AppleTTMLFetcher.fetch("Song A", "Artist A", duration_ms=240000)
+        assert cand is not None
+        assert cand["source"] == "lrc-red"
+        assert mock_lr.called
+
+
+def test_a05_lrc_red_fails_falls_through_to_none():
+    """A05: AMLL 与 lrc.red 均失败时返回 None，交由后续 T2-T7 来源处理。"""
+    with mock.patch("core.fetchers.apple_ttml.AmllIndex.get_instance", return_value=None), \
+         mock.patch("core.fetchers.apple_ttml.ITunesClient.get_instance") as mock_itunes, \
+         mock.patch("core.fetchers.lrc_red.LrcRedFetcher.fetch", return_value=None) as mock_lr:
+        mock_itunes.return_value = mock.MagicMock(search_track=mock.MagicMock(return_value=None))
+
+        cand = AppleTTMLFetcher.fetch("Unknown Song", "Unknown Artist", duration_ms=240000)
+        assert cand is None
+        assert mock_lr.called
 
 
 # =====================================================================

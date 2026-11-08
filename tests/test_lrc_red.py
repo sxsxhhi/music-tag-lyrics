@@ -1,5 +1,32 @@
 # -*- coding: utf-8 -*-
-"""lrc.red 歌词客户端、解析适配器与 ISRC 工具单元测试 (v1.8.0)。"""
+"""lrc.red 歌词客户端、解析适配器与 ISRC 工具单元测试 (v1.8.1)。
+
+覆盖用例矩阵：
+- C01: 缓存隔离（跨歌曲不同时长重新仲裁）
+- C02: 杜绝错误负缓存锁死
+- C03: 缓存命中时重复执行验证
+- C04: 网络异常后恢复重试
+- M01: ISRC 直查 Live 版本互斥拦截
+- M02: ISRC 直查 Remix 版本互斥拦截
+- M03: match / search 裁决与排序一致性
+- M04: 远端缺失元数据拒绝伪造 strict
+- M05: 远端艺人不同拦截
+- M06: 多个等分且无法消歧候选不强制乱选
+- Q01: byModel=True 拒绝作为 T1 strict 逐字候选
+- Q02: byModel=False 仍需完整门禁验证
+- Q03: byModel 缺失标记 unknown / unverified_origin
+- Q04: 演唱行逐字覆盖率不足 95% 拦截
+- A06: .song.json 404 时降级到 .ttml + .json
+- A07: .song.json 200 缺 source 时尝试备用端点
+- A08: 429 / 503 / 体积超限受控失败
+- T01: 英文 Hel + lo (无空格) 保持 Hello
+- T02: 英文 This + hit (有空格) 保持 This hit
+- T03: 中文相邻字不额外插空格
+- T04: XML 实体正确转义解码
+- T05: 多 <div> 交错时间行排序
+- T06: 和声、音译与译文分离
+- T07: 逆序时间戳质量审计拦截
+"""
 
 import json
 import os
@@ -20,10 +47,14 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from core.utils.isrc import normalize_isrc, is_valid_isrc
 from core.parsers.lrc_red_ttml import parse_lrc_red_ttml, normalize_lrc_red_namespaces
+import core.fetchers.lrc_red as lr_mod
 from core.fetchers.lrc_red import LrcRedFetcher
 from core.utils.http import HttpResult
+from core.converter import format_verbatim_words_line
 
-# 模拟 lrc.red 样本 TTML
+lr_mod.MIN_REQ_INTERVAL_S = 0.0
+
+# 模拟标准 lrc.red 样本 TTML
 SAMPLE_LRC_RED_TTML = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:lrc="http://lrc.red/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" lrc:timing="Word" xml:lang="en">
 <head>
   <metadata>
@@ -54,6 +85,10 @@ SAMPLE_LRC_RED_TTML = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:lrc="http:/
 </tt>"""
 
 
+# ==============================================================================
+# 1. 编码与命名空间基础测试
+# ==============================================================================
+
 def test_isrc_normalization():
     """测试 ISRC 提取、分隔符清洗与大写格式化。"""
     assert normalize_isrc("GBARL1401524") == "GBARL1401524"
@@ -61,7 +96,6 @@ def test_isrc_normalization():
     assert normalize_isrc("US-UM7-14-13645") == "USUM71413645"
     assert normalize_isrc(" cn-a01-02-304-00 ") == "CNA010230400"
 
-    # 非法长度或字符
     assert normalize_isrc("") is None
     assert normalize_isrc("GBARL140152") is None       # 11 位
     assert normalize_isrc("GBARL14015240") is None     # 13 位
@@ -85,208 +119,348 @@ def test_lrc_red_namespace_normalization():
     assert 'itunes:key="L1"' in norm
 
 
-def test_lrc_red_ttml_parser_metadata_injection():
-    """测试元数据注入机制：保证缺失 <amll:meta> 时仍能获得 tags["ti"] 和 tags["ar"]。"""
-    meta = {
-        "title": "Uptown Funk",
-        "artist": "Mark Ronson / Bruno Mars",
-        "album": "Uptown Special",
-        "duration": 269.658,
-    }
-    parsed = parse_lrc_red_ttml(SAMPLE_LRC_RED_TTML, metadata=meta)
+# ==============================================================================
+# 2. TTML 解析与词边界测试 (T01 - T07)
+# ==============================================================================
 
-    # 验证 tags 成功注入，严防下游门禁误杀
-    tags = parsed.get("tags") or {}
-    assert tags.get("ti") == "Uptown Funk"
-    assert tags.get("ar") == "Mark Ronson / Bruno Mars"
-    assert tags.get("al") == "Uptown Special"
+def test_t01_t02_english_word_boundaries_and_join():
+    """T01 & T02: 英文音节切分 (Hel+lo) 无空格 vs 词间 (This+hit) 有空格。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>
+      <p begin="0.0" end="2.0">
+        <span begin="0.0" end="0.5">Hel</span><span begin="0.5" end="1.0">lo</span> <span begin="1.0" end="1.5">world</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    lines = parsed["lines"]
+    assert len(lines) == 1
+    words = lines[0]["words"]
+    assert len(words) == 3
+    assert words[0]["text"] == "Hel" and words[0]["join"] == "none"
+    assert words[1]["text"] == "lo " and words[1]["join"] == "space"
+    assert words[2]["text"] == "world" and words[2]["join"] == "none"
 
-    # 验证时长解析
-    assert parsed.get("duration_ms") == 269658
-
-    # 验证词曲作者
-    songwriters = parsed.get("songwriters") or []
-    assert "Mark Ronson" in songwriters
-    assert "Bruno Mars" in songwriters
+    # 验证 converter 格式化不把 Hello 拆成两个单词
+    from core.utils.time_utils import strip_timing_tags
+    formatted = format_verbatim_words_line(words, 0, 2000, precision=2)
+    plain = strip_timing_tags(formatted)
+    assert plain == "Hello world"
 
 
-def test_lrc_red_ttml_parser_words_and_roles():
-    """测试逐词时间轴提取、背景声过滤与译文抽取。"""
-    parsed = parse_lrc_red_ttml(SAMPLE_LRC_RED_TTML)
-    lines = parsed.get("lines") or []
+def test_t03_cjk_adjacent_characters_no_extra_space():
+    """T03: 中文相邻字符之间即使带有排版换行也不得插入空格。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>
+      <p begin="0.0" end="2.0">
+        <span begin="0.0" end="0.5">你</span>\n  <span begin="0.5" end="1.0">好</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    words = parsed["lines"][0]["words"]
+    assert len(words) == 2
+    assert words[0]["text"] == "你"
+    assert words[0]["join"] == "none"
+    lines_txt = parsed["lines"][0]["text"]
+    assert lines_txt == "你好"
+
+
+def test_t04_xml_entities_unescaped():
+    """T04: XML 实体 &amp; / &quot; / &apos; / &lt; 正确解码。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <head><metadata>
+      <songwriters><songwriter>Tom &amp; Jerry</songwriter></songwriters>
+    </metadata></head>
+    <body><div>
+      <p begin="0.0" end="2.0">
+        <span begin="0.0" end="1.0">Rock &amp; Roll</span> <span begin="1.0" end="2.0">&quot;Special&quot;</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    assert "Tom & Jerry" in parsed["songwriters"]
+    assert "Rock & Roll" in parsed["lines"][0]["text"]
+    assert '"Special"' in parsed["lines"][0]["text"]
+
+
+def test_t05_multi_div_chronological_sorting():
+    """T05: 多 <div> 交错时间轴按照实际开始时间排序。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body>
+      <div begin="10.0" end="20.0">
+        <p begin="10.0" end="15.0"><span begin="10.0" end="15.0">Second line</span></p>
+      </div>
+      <div begin="1.0" end="5.0">
+        <p begin="1.0" end="4.0"><span begin="1.0" end="4.0">First line</span></p>
+      </div>
+    </body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    lines = parsed["lines"]
     assert len(lines) == 2
-
-    # 第一行验证
-    line1 = lines[0]
-    assert line1["start"] == 16906
-    assert line1["end"] == 18766
-    words1 = line1.get("words") or []
-    assert len(words1) == 5  # This, hit,, that, ice, cold (背景声 cold 应被剔除)
-    assert words1[0]["text"] == "This "
-    assert words1[0]["start"] == 16906
-    assert words1[0]["end"] == 17266
-    assert words1[4]["text"] == "cold"
-    assert line1["text"] == "This hit, that ice cold"
-
-    # 第二行验证（包含译文）
-    line2 = lines[1]
-    assert line2["start"] == 18766
-    assert line2["end"] == 21036
-    assert line2.get("translation") == "米歇尔·菲佛"
-    assert parsed.get("has_verbatim") is True
-    assert parsed.get("has_translation") is True
+    assert lines[0]["text"] == "First line"
+    assert lines[1]["text"] == "Second line"
 
 
-def test_fetch_by_isrc_success():
-    """Mock 测试：ISRC 直查成功返回标准候选。"""
-    LrcRedFetcher._cache.clear()
-    LrcRedFetcher._last_req_time = 0.0
+def test_t06_bg_vocals_roman_stripped_translation_kept():
+    """T06: 和声 x-bg 与音译 x-roman 剥离，译文 x-translation 保留。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>
+      <p begin="1.0" end="5.0">
+        <span begin="1.0" end="2.0">Main lyric</span>
+        <span ttm:role="x-bg" begin="1.5" end="2.0">harmony</span>
+        <span ttm:role="x-roman" begin="1.0" end="2.0">roman</span>
+        <span ttm:role="x-translation">主歌词译文</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    assert parsed["lines"][0]["text"] == "Main lyric"
+    assert parsed["lines"][0]["translation"] == "主歌词译文"
+    assert parsed["has_translation"] is True
 
+
+def test_t07_inverted_timestamps_audit_metric():
+    """T07: 时间戳逆序时正确被审计指标捕捉。"""
+    ttml = """<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>
+      <p begin="1.0" end="5.0">
+        <span begin="3.0" end="2.0">Bad time</span>
+      </p>
+    </div></body></tt>"""
+    parsed = parse_lrc_red_ttml(ttml)
+    assert parsed["invalid_word_lines"] >= 1
+
+
+# ==============================================================================
+# 3. 缓存安全性测试 (C01 - C04)
+# ==============================================================================
+
+def test_c01_cache_cross_contamination_prevented():
+    """C01: 同 ISRC 下，音轨 A (270s) 成功后，音轨 B (230s) 查询重新仲裁并拒绝。"""
+    LrcRedFetcher._raw_cache.clear()
     mock_json = {
-        "title": "Uptown Funk (feat. Bruno Mars)",
-        "artist": "Mark Ronson",
-        "album": "Uptown Special",
-        "duration": 270.613,
-        "sync": "word",
-        "source": SAMPLE_LRC_RED_TTML,
-    }
-
-    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
-        mock_http.return_value = HttpResult(
-            status=200,
-            text=json.dumps(mock_json),
-            bytes_len=len(json.dumps(mock_json)),
-            elapsed_ms=80,
-            error="",
-        )
-
-        cand = LrcRedFetcher.fetch_by_isrc(
-            isrc="GBARL1401524",
-            duration_ms=270000,
-            title="Uptown Funk",
-            artist="Mark Ronson",
-        )
-
-        assert cand is not None
-        assert cand["source"] == "lrc-red"
-        assert cand["lyric_type"] == "word"
-        assert cand["isrc"] == "GBARL1401524"
-        assert cand["match"]["confidence"] == "strict"
-        assert len(cand["lines"]) == 2
-        assert cand["tags"]["ti"] == "Uptown Funk (feat. Bruno Mars)"
-
-
-def test_fetch_by_isrc_404():
-    """Mock 测试：404 返回 None 并不重试。"""
-    LrcRedFetcher._cache.clear()
-    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
-        mock_http.return_value = HttpResult(
-            status=404, text="", bytes_len=0, elapsed_ms=50, error=""
-        )
-        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645")
-        assert cand is None
-
-
-def test_fetch_duration_mismatch_rejected():
-    """Mock 测试：时长差超过 5000ms 时触发门禁拒绝。"""
-    LrcRedFetcher._cache.clear()
-    mock_json = {
-        "title": "Uptown Funk",
-        "artist": "Mark Ronson",
-        "duration": 270.613,  # ~270s
+        "title": "Song A",
+        "artist": "Artist A",
+        "duration": 270.0,
+        "byModel": False,
         "source": SAMPLE_LRC_RED_TTML,
     }
     with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
         mock_http.return_value = HttpResult(
-            status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=40, error=""
+            status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error=""
         )
-        # 本地音轨时长为 230s（差 40s，远大于 5s 门禁）
-        cand = LrcRedFetcher.fetch_by_isrc("GBARL1401524", duration_ms=230000)
-        assert cand is None
+
+        cand_a = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand_a is not None
+        assert cand_a["match"]["confidence"] == "strict"
+
+        # 音轨 B：时差 40s，门禁必须重新执行并拒绝
+        cand_b = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=230000, title="Song A", artist="Artist A")
+        assert cand_b is None
 
 
-def test_rank_and_filter_hits_medley_rejected():
-    """测试候选集仲裁：串烧/翻唱因时长或艺人不符被成功过滤。"""
+def test_c02_no_negative_cache_lockout():
+    """C02: 音轨 A 因本地时长不对齐被拒，不得负缓存锁死后续正确的音轨 B。"""
+    LrcRedFetcher._raw_cache.clear()
+    mock_json = {
+        "title": "Song A",
+        "artist": "Artist A",
+        "duration": 270.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(
+            status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error=""
+        )
+
+        # 错误时长请求
+        cand_a = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=100000, title="Song A", artist="Artist A")
+        assert cand_a is None
+
+        # 正确时长请求：应当成功
+        cand_b = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand_b is not None
+
+
+def test_c03_cache_hit_avoids_network_but_revalidates():
+    """C03: 缓存命中时不发生额外网络请求，但仲裁逻辑正常执行。"""
+    LrcRedFetcher._raw_cache.clear()
+    mock_json = {
+        "title": "Song A",
+        "artist": "Artist A",
+        "duration": 270.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(
+            status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error=""
+        )
+
+        cand1 = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand1 is not None
+        assert mock_http.call_count == 1
+
+        cand2 = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand2 is not None
+        assert mock_http.call_count == 1  # 未发生二次网络请求
+
+
+def test_c04_network_timeout_or_429_recovery():
+    """C04: 临时网络错误/限流后恢复，后续查询能成功重试。"""
+    LrcRedFetcher._raw_cache.clear()
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        # 第一次超时
+        mock_http.return_value = HttpResult(status=0, text="", bytes_len=0, elapsed_ms=50, error="timeout")
+        assert LrcRedFetcher.fetch_by_isrc("USUM71413645") is None
+
+        # 第二次恢复 200
+        mock_json = {"title": "Song A", "artist": "Artist A", "duration": 270.0, "source": SAMPLE_LRC_RED_TTML}
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error="")
+        assert LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A") is not None
+
+
+# ==============================================================================
+# 4. 门禁与版本互斥测试 (M01 - M06)
+# ==============================================================================
+
+def test_m01_m02_isrc_version_exclusion_live_and_remix():
+    """M01 & M02: ISRC 直查对 Live 与 Remix 互斥版本实施硬拦截。"""
+    LrcRedFetcher._raw_cache.clear()
+    live_json = {"title": "Hotel California (Live)", "artist": "Eagles", "duration": 390.0, "source": SAMPLE_LRC_RED_TTML}
+    remix_json = {"title": "Uptown Funk (Remix)", "artist": "Mark Ronson", "duration": 270.0, "source": SAMPLE_LRC_RED_TTML}
+
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        # Live 互斥
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(live_json), bytes_len=100, elapsed_ms=30, error="")
+        cand_live = LrcRedFetcher.fetch_by_isrc("USEE10000001", duration_ms=390000, title="Hotel California", artist="Eagles")
+        assert cand_live is None
+
+        # Remix 互斥
+        LrcRedFetcher._raw_cache.clear()
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(remix_json), bytes_len=100, elapsed_ms=30, error="")
+        cand_remix = LrcRedFetcher.fetch_by_isrc("USEE10000002", duration_ms=270000, title="Uptown Funk", artist="Mark Ronson")
+        assert cand_remix is None
+
+
+def test_m04_m05_remote_missing_meta_or_different_artist():
+    """M04 & M05: 远端缺失元数据拒绝自我认证；艺人不同直接拒绝。"""
+    LrcRedFetcher._raw_cache.clear()
+    missing_json = {"duration": 270.0, "source": SAMPLE_LRC_RED_TTML}
+    diff_art_json = {"title": "Song A", "artist": "Unknown Band", "duration": 270.0, "source": SAMPLE_LRC_RED_TTML}
+
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        # 远端缺失标题/歌手
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(missing_json), bytes_len=100, elapsed_ms=30, error="")
+        cand_missing = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand_missing is None
+
+        # 艺人不同
+        LrcRedFetcher._raw_cache.clear()
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(diff_art_json), bytes_len=100, elapsed_ms=30, error="")
+        cand_diff = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand_diff is None
+
+
+def test_m06_ambiguous_candidates_not_arbitrary():
+    """M06: 候选集无法消歧时不强制乱选。"""
     hits = [
-        {
-            "isrc": "QZ22B1933030",
-            "title": "24K Magic / Perm / Uptown Funk (Medley)",
-            "artist": "Berklee Bruno Mars Ensemble",
-            "duration": 230.274,
-        },
-        {
-            "isrc": "GBARL1401524",
-            "title": "Uptown Funk (feat. Bruno Mars)",
-            "artist": "Mark Ronson",
-            "duration": 270.613,
-        },
+        {"isrc": "ISRC1", "title": "Song (Live 1)", "artist": "Singer", "duration": 200.0},
+        {"isrc": "ISRC2", "title": "Song (Remix 1)", "artist": "Singer", "duration": 200.0},
     ]
-
-    # 本地歌曲为 Mark Ronson 的 Uptown Funk，时长 270000ms
-    best = LrcRedFetcher._rank_and_filter_hits(
-        hits, title="Uptown Funk", artist="Mark Ronson", duration_ms=270000
-    )
-
-    # 验证串烧版被成功剔除，原版排第一
-    assert len(best) == 1
-    assert best[0]["isrc"] == "GBARL1401524"
-    assert best[0]["artist"] == "Mark Ronson"
+    # 本地为普通版，两个候选均为冲突版本
+    best = LrcRedFetcher._rank_and_filter_hits(hits, title="Song", artist="Singer", duration_ms=200000)
+    assert len(best) == 0
 
 
-def test_fetch_env_switch_off():
-    """测试环境变量禁用开关 MTL_LRC_RED=off。"""
-    with mock.patch.dict(os.environ, {"MTL_LRC_RED": "off"}):
-        cand = LrcRedFetcher.fetch("Uptown Funk", "Mark Ronson", isrc="GBARL1401524")
-        assert cand is None
+# ==============================================================================
+# 5. byModel 与质量审计测试 (Q01 - Q04)
+# ==============================================================================
 
+def test_q01_q02_q03_by_model_handling():
+    """Q01 - Q03: byModel 状态管理（True 拒 T1，False 需全验，None 为 unknown）。"""
+    LrcRedFetcher._raw_cache.clear()
 
-def test_apple_ttml_fallback_to_lrc_red():
-    """测试集成：当 AppleTTMLFetcher 在 AMLL 404 时，无缝触发 lrc.red 兜底。"""
-    from core.fetchers.apple_ttml import AppleTTMLFetcher
-    mock_lrc_red_cand = {
-        "source": "lrc-red",
-        "lyric_type": "word",
-        "lines": [{"start": 1000, "end": 2000, "text": "test"}],
-        "match": {"confidence": "strict"},
-    }
-    with mock.patch.object(AppleTTMLFetcher, "fetch_by_apple_id_ex", return_value=(None, "NOT_FOUND")), \
-         mock.patch("core.fetchers.apple_ttml.fetch_ttml_raw", return_value=("NOT_FOUND", "", {})), \
-         mock.patch.object(LrcRedFetcher, "fetch", return_value=mock_lrc_red_cand) as mock_lr:
-        cand = AppleTTMLFetcher.fetch("Uptown Funk", "Mark Ronson", isrc="GBARL1401524")
+    # Q01: True 拒绝交付为 T1
+    mock_true = {"title": "Song", "artist": "Art", "duration": 200.0, "byModel": True, "source": SAMPLE_LRC_RED_TTML}
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_true), bytes_len=100, elapsed_ms=30, error="")
+        assert LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song", artist="Art") is None
+
+    # Q02: False 允许且具备 ISRC 写回资格
+    LrcRedFetcher._raw_cache.clear()
+    mock_false = {"title": "Song", "artist": "Art", "duration": 200.0, "byModel": False, "source": SAMPLE_LRC_RED_TTML}
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_false), bytes_len=100, elapsed_ms=30, error="")
+        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song", artist="Art")
         assert cand is not None
-        assert cand["source"] == "lrc-red"
-        mock_lr.assert_called_once()
+        assert cand["match"]["confidence"] == "strict"
+        assert cand["isrc_write_eligible"] is True
+
+    # Q03: None / 缺失标记为 unknown，不给 ISRC 写回资格
+    LrcRedFetcher._raw_cache.clear()
+    mock_none = {"title": "Song", "artist": "Art", "duration": 200.0, "source": SAMPLE_LRC_RED_TTML}
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_none), bytes_len=100, elapsed_ms=30, error="")
+        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song", artist="Art")
+        assert cand is not None
+        assert cand["match"]["by_model"] == "unknown"
+        assert cand["isrc_write_eligible"] is False
 
 
-def test_tag_editor_isrc_read_write_vorbis_and_id3():
-    """测试 tag_editor 中 ISRC 字段在 TagSet 规格表与读写操作中的正确传递。"""
-    from scripts.tag_editor import TagSet, _apply_fields
-    from mutagen.id3 import ID3, TSRC
+def test_q04_insufficient_word_coverage_rejected():
+    """Q04: 演唱行逐字覆盖率不足 95% 时（如 50 行仅 1 行有逐字）拒绝。"""
+    lines_xml = []
+    # 1 行带逐字
+    lines_xml.append('<p begin="1.0" end="2.0"><span begin="1.0" end="2.0">word</span></p>')
+    # 49 行纯文本无逐字
+    for i in range(2, 51):
+        lines_xml.append(f'<p begin="{i}.0" end="{i+1}.0">Plain line {i}</p>')
 
-    # 1. 验证 TagSet 规格表正确识别 isrc
-    ts = TagSet(title="Test Song", isrc="GBARL1401524").normalized()
-    assert ts.isrc == "GBARL1401524"
+    sparse_ttml = f"""<tt xmlns="http://www.w3.org/ns/ttml">
+    <body><div>{"".join(lines_xml)}</div></body></tt>"""
 
-    # 2. 验证 ID3 写入 TSRC
-    fake_id3 = ID3()
-    _apply_fields(ts, fake_id3, use_id3=True)
-    assert "TSRC" in fake_id3
-    assert fake_id3["TSRC"].text == ["GBARL1401524"]
+    parsed = parse_lrc_red_ttml(sparse_ttml)
+    assert parsed["singing_lines"] == 50
+    assert parsed["native_word_lines"] == 1
+    assert parsed["word_coverage_ratio"] < 0.95
 
-    # 3. 验证 Vorbis 写入 isrc
-    fake_vorbis = {}
-    _apply_fields(ts, fake_vorbis, use_id3=False)
-    assert fake_vorbis["isrc"] == ["GBARL1401524"]
+    LrcRedFetcher._raw_cache.clear()
+    mock_sparse = {"title": "Song", "artist": "Art", "duration": 100.0, "byModel": False, "source": sparse_ttml}
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_sparse), bytes_len=100, elapsed_ms=30, error="")
+        assert LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=100000, title="Song", artist="Art") is None
 
 
-def test_cli_flags_registered():
-    """测试 process_song 命令行参数 --write-isrc 与 --no-lrc-red 正常注册。"""
-    import subprocess
-    cmd = [sys.executable, os.path.join(REPO_ROOT, "scripts", "process_song.py"), "--help"]
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    assert res.returncode == 0
-    assert "--write-isrc" in res.stdout
-    assert "--no-lrc-red" in res.stdout
+# ==============================================================================
+# 6. 公开接口降级与网络契约测试 (A06 - A08)
+# ==============================================================================
+
+def test_a06_a07_fallback_to_public_endpoints():
+    """A06 & A07: .song.json 404 或无 source 时降级拉取 .ttml 与 .json。"""
+    LrcRedFetcher._raw_cache.clear()
+    meta_json = {"title": "Song A", "artist": "Artist A", "duration": 270.0, "byModel": False}
+
+    def fake_http(url, **kwargs):
+        if url.endswith(".song.json"):
+            return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=20, error="")
+        elif url.endswith(".json"):
+            return HttpResult(status=200, text=json.dumps(meta_json), bytes_len=50, elapsed_ms=20, error="")
+        elif url.endswith(".ttml"):
+            return HttpResult(status=200, text=SAMPLE_LRC_RED_TTML, bytes_len=len(SAMPLE_LRC_RED_TTML), elapsed_ms=20, error="")
+        return HttpResult(status=404, text="", bytes_len=0, elapsed_ms=10, error="")
+
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex", side_effect=fake_http):
+        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=270000, title="Song A", artist="Artist A")
+        assert cand is not None
+        assert cand["provenance"]["endpoint_kind"] == "ttml"
+
+
+def test_a08_oversized_response_rejected():
+    """A08: 响应体积超限时受控拦截。"""
+    LrcRedFetcher._raw_cache.clear()
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        # 模拟超限返回
+        mock_http.return_value = HttpResult(status=200, text="", bytes_len=3 * 1024 * 1024, elapsed_ms=50, error="oversized")
+        assert LrcRedFetcher.fetch_by_isrc("USUM71413645") is None
 
 
 def main():

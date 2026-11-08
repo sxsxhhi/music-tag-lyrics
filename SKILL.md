@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.0）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：未经允许绝不侵入 C 盘，HF 权重原生固化 F 盘。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.1）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：未经允许绝不侵入 C 盘，HF 权重原生固化 F 盘。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.0)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.1)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -331,23 +331,34 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、lrc.red 全球开放同步网络与 ISRC 检索（v1.8.0）
+## 十一、lrc.red 全球开放同步网络与 ISRC 检索（v1.8.1 正确性强化版）
 
-### 1. 架构定位
+### 1. 架构定位与网络预算
 在 T1 Apple TTML 体系内部接入 `lrc.red` 全球开放同步网络作为第二代 Apple 逐字流光歌词引擎：
 - **优先通道**：先查 AMLL 静态镜像（`amll-ttml-db`）；
-- **二级无缝兜底**：当 AMLL 404 或未收录时，自动启用 `lrc.red`，对聚合器调用层透明；
-- **全链路总预算**：共享 T1 14.0s 总超时预算，单曲内部预算 5.0s，单次请求超时 3.0s，速率限制 1 req/s。
+- **二级无缝兜底**：当 AMLL 404、未收录或华语非 strict 候选时，自动无缝平滑切入 `lrc.red`，对聚合器调用层透明；
+- **全链路总预算**：共享 T1 14.0s 总超时预算（AMLL 最长占用 8.5s），lrc.red 单曲内部预算 5.0s，单次请求超时 3.0s，速率限制 1 req/s；
+- **体积与端点兜底**：JSON 限制 1MB、TTML 限制 2MB 防 OOM；当 `.song.json` 404 时自动回退至公开 `.json` 与 `.ttml` 静态端点。
 
-### 2. ISRC 智能梯级检索
-1. **已有 ISRC 直查**：音频内嵌有合规 12 位 ISRC 时，直查 `https://lrc.red/s/{isrc}.song.json`（实测 <100ms）；
-2. **结构化匹配**：无 ISRC 时请求 `/match.json?track=...&artist=...`；
-3. **文本搜索兜底**：降级请求 `/search.json?q=...`，严格执行 ±5000ms 时长门禁与版本互斥，杜绝翻唱与串烧。
+### 2. 缓存隔离与元数据严防假认证（P0 级铁律）
+- **缓存双层解耦**：拆分远端原始网络响应记录（`_raw_cache`）与本地单曲上下文仲裁，彻底根除跨歌缓存串歌污染与偶发负缓存死锁；
+- **严禁本地回填**：远端响应若缺失艺人或标题，一律显式标为 missing 并降级为 loose 候选，严禁使用本地音频标签自我认证；
+- **版本互斥与门禁**：直查与搜索全链路统一部署版本互斥（Live/Remix/Medley 严格互斥）与时长硬闸（直查 ±5000ms，回写 ±3000ms）。
 
-### 3. ISRC 跨格式读取与受控回写（--write-isrc）
+### 3. byModel 歌词隔离与逐字质量审计
+- **模型歌词绝不冒充官方**：明确识别 `byModel=True` 模型生成歌词，禁止作为 T1 strict 官方原版交付，严禁作为 ISRC 回写凭证；
+- **逐字质量审计**：TTML 解析计算有效逐字覆盖率（必须 ≥ 0.95），过滤单字假逐字；
+- **TTML 格式规范**：完整支持 XML 实体反转义、多 div 真实时序自愈重排、英文单词自然空格连接及时间标签规范化。
+
+### 4. ISRC 跨格式读取与受控安全回写（--write-isrc）
 - **读取支持**：FLAC/OGG (`isrc`)、MP3/ID3 (`TSRC`)、WAV/DSF (`TSRC`)、M4A/MP4 (`----:com.apple.iTunes:ISRC`)；
-- **默认只读保护**：默认绝不覆写音频已有 ISRC；仅当显式传入 `--write-isrc` 且原音轨缺失 ISRC，同时满足官方 strict 匹配与时长差 ≤ 3000ms 时，才执行安全原子回写。
+- **默认只读保护**：默认绝不覆写音频已有 ISRC；仅当显式传入 `--write-isrc` 且原音轨缺失 ISRC 时，经五重门禁校验后方可原子安全回写：
+  1. 本地音频时长与远端音轨时长均有效且差值 ≤ 3000ms（杜绝仅靠 body_dur 或空时长）；
+  2. 匹配必须达到 strict 官方原版置信度；
+  3. 远端记录必须显式确证 `byModel=False`；
+  4. 音频文件已有 ISRC 绝对只读保留，严禁覆盖；
+  5. 必须走临时文件 + 原子替换，写入失败原文件哈希 100% 保持完好。
 
-### 4. 命令行参数与环境变量
+### 5. 命令行参数与环境变量
 - `--write-isrc`：允许向音频补齐满足严格门禁且缺失的 ISRC 标签（默认只读）；
 - `--no-lrc-red`：禁用 lrc.red 全球歌词网络（或设置环境变量 `MTL_LRC_RED=off`）。
