@@ -1,0 +1,16 @@
+{
+  "note": "QQ 音乐 QRC 合成密文夹具（非真实曲目，无版权内容）。用于 DES 解密与解析的端到端 KAT，禁止用引擎输出回填。",
+  "source_url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
+  "title": "示例曲目",
+  "artist": "示例艺人",
+  "album": "示例专辑",
+  "song_id": 1,
+  "duration_ms": 269000,
+  "plain_len": 8526,
+  "plain_sha256": "522889e227a0a62743f041fea090806c8f927b3f41534a4c33e789a91f4b4442",
+  "first_time_line": "[0,2250]",
+  "lyric_line_count": 63,
+  "word_count": 597,
+  "first_body_line_start_ms": 2250,
+  "expected_first_title": "示例曲目—示例艺术家组合"
+}

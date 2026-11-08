@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """QQ 音乐 QRC 逐字通道（v1.7.0）：解密、解析、fetcher、聚合器七源接缝。
 
-纯离线：A 组读真实密文夹具做 KAT，B 组用内联 QRC 文本，C/D 组全部 mock 网络。
+纯离线：A 组读合成密文夹具做 KAT，B 组用内联 QRC 文本，C/D 组全部 mock 网络。
 运行：python tests/test_qq_qrc.py
 """
 
@@ -38,8 +38,8 @@ from core.fetchers.qq import QQFetcher, DURATION_WINDOW_MS          # noqa: E402
 import core.aggregator as agg                                       # noqa: E402
 
 FIXTURES = os.path.join(REPO_ROOT, "tests", "fixtures")
-HEX_PATH = os.path.join(FIXTURES, "qq_qrc_qingtian.hex")
-META_PATH = os.path.join(FIXTURES, "qq_qrc_qingtian.json")
+HEX_PATH = os.path.join(FIXTURES, "qq_qrc_sample.hex")
+META_PATH = os.path.join(FIXTURES, "qq_qrc_sample.json")
 
 
 def _fixture_hex() -> str:
@@ -61,13 +61,13 @@ def _fixture_plain() -> str:
 # ===========================================================================
 
 def test_a1_real_ciphertext_kat():
-    """真实密文 KAT：解密结果长度与 SHA-256 必须与夹具元数据一致。"""
+    """合成密文 KAT：解密结果长度与 SHA-256 必须与夹具元数据一致。"""
     meta = _fixture_meta()
     plain = _fixture_plain()
     assert plain != ""
     assert len(plain) == meta["plain_len"], (len(plain), meta["plain_len"])
     assert hashlib.sha256(plain.encode()).hexdigest() == meta["plain_sha256"]
-    assert "[ti:晴天]" in plain
+    assert "[ti:示例曲目]" in plain
     assert meta["first_time_line"] in plain
 
 
@@ -286,7 +286,7 @@ def test_b14_converter_no_degrade():
 
 
 def test_b15_real_fixture_structure():
-    """真实夹具：63 行、597 个字、全部恒等式成立。"""
+    """合成夹具：63 行、597 个字、全部恒等式成立。"""
     meta = _fixture_meta()
     data = parse_qrc(_fixture_plain(), duration_ms=meta["duration_ms"])
     lines = data["lines"]
@@ -299,7 +299,7 @@ def test_b15_real_fixture_structure():
 
 
 def test_b16_real_fixture_no_overlap():
-    """真实夹具：行间零重叠、字间零重叠、无空字、无零时长。"""
+    """合成夹具：行间零重叠、字间零重叠、无空字、无零时长。"""
     data = parse_qrc(_fixture_plain(), duration_ms=269000)
     lines = data["lines"]
     for a, b in zip(lines, lines[1:]):
@@ -313,11 +313,11 @@ def test_b16_real_fixture_no_overlap():
 
 
 def test_b17_real_fixture_first_body_line():
-    """真实夹具首行是标题，起唱前有词曲行。"""
+    """合成夹具首行是标题，起唱前有词曲行。"""
     data = parse_qrc(_fixture_plain(), duration_ms=269000)
     lines = data["lines"]
     assert lines[0]["start"] == 0
-    assert "晴天" in lines[0]["text"]
+    assert "示例曲目" in lines[0]["text"]
 
 
 # ===========================================================================

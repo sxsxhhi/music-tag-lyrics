@@ -28,8 +28,8 @@ try:
 except ImportError:
     pass
 
-MOTHER_AUDIO = r"F:\TOOLs\AI's DATA\ABC\Music\只音\金海心 - 那么骄傲.flac"
-GOLDEN_LRC = os.path.join(REPO_ROOT, "tests", "fixtures", "golden_jinhaixin_2000.lrc")
+MOTHER_AUDIO = os.environ.get("MTL_MOTHER_AUDIO", "")
+GOLDEN_LRC = os.environ.get("MTL_GOLDEN_LRC", "")
 GOLDEN_VALLEYS = (40.87, 53.87, 125.15)
 LINE_TOL_MS = 1500        # 结构性门槛（捕捉级联/咬窗类缺陷）；逐行复刻人工精修不属于通用引擎职责，偏差如实报告
 VALLEY_TOL_S = 0.020      # 谷底容差 ±20ms（方案硬指标）
@@ -57,8 +57,8 @@ def main():
     except ImportError:
         print("SKIP: 无声学依赖（CI 场景）")
         return 0
-    if not os.path.isfile(MOTHER_AUDIO):
-        print(f"SKIP: 母盘不存在 {MOTHER_AUDIO}")
+    if not MOTHER_AUDIO or not os.path.isfile(MOTHER_AUDIO):
+        print("SKIP: 未设置 MTL_MOTHER_AUDIO（私有母盘音频路径），GPU 回归锚不适用")
         return 0
 
     golden = [(t, x) for t, x in parse_lrc(GOLDEN_LRC) if t >= 12.0]
