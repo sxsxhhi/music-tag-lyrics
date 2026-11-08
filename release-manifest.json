@@ -3,13 +3,14 @@
   "name": "music-tag-lyrics",
   "version": "1.8.1",
   "release_tag": "v1.8.1",
-  "build_timestamp_utc": "2026-11-08T11:16:09.523665+00:00",
-  "git_commit": "e221b70a44b37e74c8c4412412e69acfae17a40f",
+  "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
+  "build_timestamp_utc": "2026-11-08T13:00:37.239218+00:00",
+  "git_commit": "5bdebdbe3c1cb88e65d30d2b923eeff81a4d1c44",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.1.zip",
-    "size_bytes": 1914052,
-    "sha256": "9fe067a73d4320bf4decf163e07f966f4ae99ae3be37a82e1f1e2f748f3da89c",
-    "file_count": 113
+    "size_bytes": 1868583,
+    "sha256": "50a8c8c6ac835d2b34a4574287c4ce880b4d376e926b47faadc2f50bdd8e70ab",
+    "file_count": 95
   },
   "platforms_verified": [
     "Windows 11 (Python 3.13.9, RTX 3060 Laptop)",
