@@ -12,13 +12,16 @@ from typing import Set, List, FrozenSet
 
 VERSION_KEYWORDS = {
     "live", "现场", "演唱会", "remaster", "重制", "demo", "remix", "混音",
-    "acoustic", "不插电", "instrumental", "cover", "翻唱", "ver", "deluxe",
+    "acoustic", "不插电", "instrumental", "伴奏", "纯音乐", "cover", "翻唱", "ver", "deluxe",
     "mono", "explicit", "clean"
 }
 
-# 版本互斥硬拒 token（A1 去重）：apple_ttml 版本门与 amll_index 硬拒 3 共用，
-# 与 VERSION_KEYWORDS 是子集关系——这里只列「录音室/Live/Demo 互斥必须拒」的词。
-VERSION_EXCLUSION_TOKENS = frozenset({"live", "现场", "演唱会", "remix", "混音", "demo"})
+# 版本互斥硬拒 token（R06）：对称双向硬拒（Live/Studio, Remix/Original, Instrumental/Vocal, Cover/Original, Demo, Acoustic）
+VERSION_EXCLUSION_TOKENS = frozenset({
+    "live", "现场", "演唱会", "remix", "混音", "demo",
+    "instrumental", "伴奏", "纯音乐", "cover", "翻唱", "acoustic", "不插电"
+})
+
 
 GENERIC_ARTISTS = {
     "various artists", "群星", "合辑", "未知", "unknown", "va"

@@ -519,6 +519,83 @@ def test_a08_oversized_response_rejected():
         assert LrcRedFetcher.fetch_by_isrc("USUM71413645") is None
 
 
+def test_r04_isrc_write_requires_valid_local_artist():
+
+    """R04: 本地艺人缺失、为泛称(群星/Unknown)或与远端无交集时，严禁赋予 ISRC 写入资格。"""
+    LrcRedFetcher._raw_cache.clear()
+    mock_json = {
+        "title": "Song A",
+        "artist": "Adele",
+        "duration": 200.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error="")
+
+        # 1. 本地艺人缺失：即使标题与时长完全吻合，也绝对不得写回 ISRC
+        LrcRedFetcher._raw_cache.clear()
+        cand_no_artist = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="")
+        assert cand_no_artist is not None
+        assert cand_no_artist["isrc_write_eligible"] is False, "本地缺失歌手时严禁写回 ISRC"
+        assert cand_no_artist["match"]["confidence"] != "strict"
+
+        # 2. 本地艺人为泛称 (群星/Various Artists/Unknown)
+        for generic in ("群星", "Various Artists", "Unknown", "未知"):
+            LrcRedFetcher._raw_cache.clear()
+            cand_generic = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist=generic)
+            assert cand_generic is not None
+            assert cand_generic["isrc_write_eligible"] is False, f"本地歌手为泛称 '{generic}' 时严禁写回 ISRC"
+            assert cand_generic["match"]["confidence"] != "strict"
+
+        # 3. 本地艺人与远端不匹配（同歌名同长度不同歌手）
+        LrcRedFetcher._raw_cache.clear()
+        cand_diff_art = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="Taylor Swift")
+        # 艺人无交集会被直接丢弃候选
+        assert cand_diff_art is None
+
+        # 4. 本地艺人与远端正确匹配：正常放行
+        LrcRedFetcher._raw_cache.clear()
+        cand_ok = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="Adele")
+        assert cand_ok is not None
+        assert cand_ok["isrc_write_eligible"] is True
+
+
+def test_r05_by_model_false_never_claims_official():
+    """R05: byModel=False 仅代表非模型生成，不可自我宣告为 official 官方认证。"""
+    LrcRedFetcher._raw_cache.clear()
+    mock_json = {
+        "title": "Song A",
+        "artist": "Adele",
+        "duration": 200.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_json), bytes_len=100, elapsed_ms=30, error="")
+        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="Adele")
+        assert cand is not None
+        assert cand["provenance"]["origin_status"] == "unverified_origin", "byModel=False 不可标注为 official"
+
+
+def test_r06_version_symmetry_and_remaster_isrc_guard():
+    """R06: 录音版本硬门禁（双向互斥）及 Remaster 版本差异禁止写回 ISRC。"""
+    LrcRedFetcher._raw_cache.clear()
+    mock_remaster = {
+        "title": "Song A (Remastered 2020)",
+        "artist": "Adele",
+        "duration": 200.0,
+        "byModel": False,
+        "source": SAMPLE_LRC_RED_TTML,
+    }
+    with mock.patch("core.fetchers.lrc_red.http_get_text_ex") as mock_http:
+        mock_http.return_value = HttpResult(status=200, text=json.dumps(mock_remaster), bytes_len=100, elapsed_ms=30, error="")
+        # 本地为原版录音，远端为 Remaster 版：虽然时间轴可能兼容，但不可回写 ISRC
+        cand = LrcRedFetcher.fetch_by_isrc("USUM71413645", duration_ms=200000, title="Song A", artist="Adele")
+        assert cand is not None
+        assert cand["isrc_write_eligible"] is False, "Remaster 版本不对称时绝对不得写回 ISRC"
+
+
 def main():
     return _testkit.run(globals())
 

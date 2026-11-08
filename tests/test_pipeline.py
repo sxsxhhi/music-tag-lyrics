@@ -426,6 +426,181 @@ def test_atomic_write_many_keeps_pair():
         shutil.rmtree(work, ignore_errors=True)
 
 
+def test_ag01_chinese_loose_word_continues_to_qq_strict():
+    """AG-01 (R03): 华语命中 loose 逐字时，不得提前停止探测，必须继续向后探测并采纳 strict 优质源。"""
+    from unittest import mock
+    import core.aggregator as agg
+
+    cand_loose = {
+        "source": "lrc-red",
+        "lyric_type": "word",
+        "match": {"confidence": "loose"},
+        "lines": [{"start": 1000, "end": 220000, "text": "Loose", "words": [{"start": 1000, "end": 220000, "text": "Loose"}]}],
+    }
+    cand_qq_strict = {
+        "source": "qq",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "lines": [{"start": 1000, "end": 220000, "text": "Strict", "words": [{"start": 1000, "end": 220000, "text": "Strict"}]}],
+    }
+
+    qq_called = []
+
+    def mock_qq_fetch(*args, **kwargs):
+        qq_called.append(True)
+        return cand_qq_strict
+
+    with mock.patch.object(agg.AppleTTMLFetcher, "fetch", return_value=cand_loose), \
+         mock.patch.object(agg.NetEaseFetcher, "fetch", return_value=None), \
+         mock.patch.object(agg.QQFetcher, "fetch", side_effect=mock_qq_fetch), \
+         mock.patch.object(agg.KugouFetcher, "fetch", return_value=None):
+        res = agg.LyricAggregator.fetch_best_lyrics("青花瓷", "周杰伦", duration_ms=230000)
+        assert len(qq_called) == 1, "命中 loose 逐字后 QQ 必须继续被探测"
+        assert res is not None
+        assert res["source"] == "qq", "QQ strict 必须成功顶替 lrc.red loose"
+
+
+def test_ag02_chinese_insufficient_word_continues_search():
+    """AG-02 (R03): 华语命中 insufficient 逐字时，绝对不能提前停止。"""
+    from unittest import mock
+    import core.aggregator as agg
+
+    cand_insufficient = {
+        "source": "lrc-red",
+        "lyric_type": "word",
+        "match": {"confidence": "insufficient"},
+        "lines": [{"start": 1000, "end": 200000, "text": "Insufficient", "words": [{"start": 1000, "end": 200000, "text": "Insufficient"}]}],
+    }
+    cand_qq = {
+        "source": "qq",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "lines": [{"start": 1000, "end": 200000, "text": "QQ Word", "words": [{"start": 1000, "end": 200000, "text": "QQ Word"}]}],
+    }
+
+    probed_sources = []
+
+    with mock.patch.object(agg.AppleTTMLFetcher, "fetch", return_value=cand_insufficient), \
+         mock.patch.object(agg.NetEaseFetcher, "fetch", side_effect=lambda *a, **k: probed_sources.append("netease")), \
+         mock.patch.object(agg.QQFetcher, "fetch", return_value=cand_qq), \
+         mock.patch.object(agg.KugouFetcher, "fetch", return_value=None):
+        res = agg.LyricAggregator.fetch_best_lyrics("稻香", "周杰伦", duration_ms=210000)
+        assert "netease" in probed_sources, "insufficient 候选不得截断后续源"
+        assert res["source"] == "qq"
+
+
+def test_ag03_apple_strict_stops_search_for_chinese():
+    """AG-03 (R03): 华语命中 Apple strict 原生逐字时，提前终止搜索，不发起后续多余网络探测。"""
+    from unittest import mock
+    import core.aggregator as agg
+
+    cand_strict = {
+        "source": "apple-ttml",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "lines": [{"start": 1000, "end": 230000, "text": "Official", "words": [{"start": 1000, "end": 230000, "text": "Official"}]}],
+    }
+
+    subsequent_called = []
+
+    with mock.patch.object(agg.AppleTTMLFetcher, "fetch", return_value=cand_strict), \
+         mock.patch.object(agg.NetEaseFetcher, "fetch", side_effect=lambda *a, **k: subsequent_called.append("netease")), \
+         mock.patch.object(agg.QQFetcher, "fetch", side_effect=lambda *a, **k: subsequent_called.append("qq")), \
+         mock.patch.object(agg.KugouFetcher, "fetch", side_effect=lambda *a, **k: subsequent_called.append("kugou")):
+        res = agg.LyricAggregator.fetch_best_lyrics("安静", "周杰伦", duration_ms=240000)
+        assert res["source"] == "apple-ttml"
+        assert len(subsequent_called) == 0, "华语命中 strict 原生逐字后不应调用后续源"
+
+
+def test_ag04_foreign_strict_without_translation_continues_for_translation():
+    """AG-04 (R03): 外语 strict 逐字但无译文时，必须继续检索有译文候选并同源整包替换。"""
+    from unittest import mock
+    import core.aggregator as agg
+
+    cand_apple_no_trans = {
+        "source": "apple-ttml",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "has_translation": False,
+        "lines": [{"start": 1000, "end": 260000, "text": "Hello", "words": [{"start": 1000, "end": 260000, "text": "Hello"}]}],
+    }
+    cand_ne_trans = {
+        "source": "netease",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "has_translation": True,
+        "translation_source": "netease",
+        "lines": [{"start": 1000, "end": 260000, "text": "Hello", "translation": "你好", "words": [{"start": 1000, "end": 260000, "text": "Hello"}]}],
+    }
+
+    with mock.patch.object(agg.AppleTTMLFetcher, "fetch", return_value=cand_apple_no_trans), \
+         mock.patch.object(agg.NetEaseFetcher, "fetch", return_value=cand_ne_trans), \
+         mock.patch.object(agg.QQFetcher, "fetch", return_value=None), \
+         mock.patch.object(agg.KugouFetcher, "fetch", return_value=None):
+        res = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=270000)
+        assert res["source"] == "netease", "外语缺失译文时应被后续带译文且同为逐字的源整包替换"
+
+
+def test_ag05_foreign_loose_with_translation_upgraded_by_strict():
+    """AG-05 (R03): 外语 loose 逐字即使带译文，遇到后续 strict 逐字带译文时也能正常提升。"""
+    from unittest import mock
+    import core.aggregator as agg
+
+    cand_loose_trans = {
+        "source": "lrc-red",
+        "lyric_type": "word",
+        "match": {"confidence": "loose"},
+        "has_translation": True,
+        "lines": [{"start": 1000, "end": 260000, "text": "Hello", "translation": "你好", "words": [{"start": 1000, "end": 260000, "text": "Hello"}]}],
+    }
+    cand_strict_trans = {
+        "source": "qq",
+        "lyric_type": "word",
+        "match": {"confidence": "strict"},
+        "has_translation": True,
+        "lines": [{"start": 1000, "end": 260000, "text": "Hello", "translation": "你好", "words": [{"start": 1000, "end": 260000, "text": "Hello"}]}],
+    }
+
+    with mock.patch.object(agg.AppleTTMLFetcher, "fetch", return_value=cand_loose_trans), \
+         mock.patch.object(agg.NetEaseFetcher, "fetch", return_value=None), \
+         mock.patch.object(agg.QQFetcher, "fetch", return_value=cand_strict_trans), \
+         mock.patch.object(agg.KugouFetcher, "fetch", return_value=None):
+        res = agg.LyricAggregator.fetch_best_lyrics("Hello", "Adele", duration_ms=270000)
+        assert res["source"] == "qq", "strict 有译文必须能替换 loose 有译文"
+
+
+def test_ver01_ver04_version_exclusion_bidirectional():
+    """VER-01 ~ VER-04 (R06): 录音版本硬门禁双向互斥验证。"""
+    from core.utils.version_guard import (
+        matches_version_policy,
+        is_live_version,
+        is_remix_version,
+        is_instrumental_version,
+        is_cover_version,
+    )
+
+    # 1. VER-01: Studio vs Live 双向硬拒
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Live)") is False
+    assert matches_version_policy(target_is_live=True, cand_title="Song (Studio)") is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song") is True
+    assert matches_version_policy(target_is_live=True, cand_title="Song (Live)") is True
+
+    # 2. VER-02: Original vs Remix 双向硬拒
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Remix)", target_is_remix=False) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_remix=True) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Remix)", target_is_remix=True) is True
+
+    # 3. VER-03: Vocal vs Instrumental 双向硬拒
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Instrumental)", target_is_instrumental=False) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_instrumental=True) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song (伴奏)", target_is_instrumental=False) is False
+
+    # 4. VER-04: Original vs Cover 双向硬拒
+    assert matches_version_policy(target_is_live=False, cand_title="Song (Cover)", target_is_cover=False) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song", target_is_cover=True) is False
+    assert matches_version_policy(target_is_live=False, cand_title="Song (翻唱)", target_is_cover=False) is False
+
+
 def main():
     """统一三态 runner（v1.5.1-E1）：PASS / SKIP / FAIL，SKIP 不计入 PASS。"""
     return _testkit.run(globals())

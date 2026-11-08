@@ -10,6 +10,8 @@ import re
 
 LIVE_KEYWORDS = ("live", "现场", "巡回", "巡演", "演唱会", "不插电", "acoustic")
 DEMO_KEYWORDS = ("demo", "小样")
+INSTRUMENTAL_KEYWORDS = ("instrumental", "伴奏", "纯音乐", "karaoke", "off vocal")
+COVER_KEYWORDS = ("cover", "翻唱")
 from typing import Optional
 
 REMIX_PATTERN = re.compile(
@@ -37,6 +39,21 @@ def is_remix_version(text: str) -> bool:
         return False
     return bool(REMIX_PATTERN.search(text))
 
+def is_instrumental_version(text: str) -> bool:
+    """Checks whether the text explicitly designates an instrumental / accompaniment edition."""
+    if not text:
+        return False
+    t_lower = text.lower()
+    return any(k in t_lower for k in INSTRUMENTAL_KEYWORDS)
+
+def is_cover_version(text: str) -> bool:
+    """Checks whether the text explicitly designates a cover / tribute edition."""
+    if not text:
+        return False
+    t_lower = text.lower()
+    return any(k in t_lower for k in COVER_KEYWORDS)
+
+
 def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
     """与酷狗/网易原判断逐字节相同：全等、去括号全等、或互为子串。"""
     c_t = (cand_title or "").strip().lower()
@@ -58,7 +75,13 @@ def strip_subtitle_brackets(title: str) -> str:
     """
     if not title:
         return ""
-    if is_live_version(title) or is_demo_version(title) or is_remix_version(title):
+    if (
+        is_live_version(title)
+        or is_demo_version(title)
+        or is_remix_version(title)
+        or is_instrumental_version(title)
+        or is_cover_version(title)
+    ):
         return title.strip()
     # Strip trailing bracketed subtitles
     cleaned = re.sub(r"[\(（][^)）]+[\)）]$", "", title).strip()
@@ -69,6 +92,8 @@ def matches_version_policy(
     cand_title: str,
     cand_album: str = "",
     target_is_remix: Optional[bool] = None,
+    target_is_instrumental: Optional[bool] = None,
+    target_is_cover: Optional[bool] = None,
 ) -> bool:
     """
     Enforces bidirectional strict version exclusion:
@@ -77,6 +102,12 @@ def matches_version_policy(
     - If target_is_remix is provided:
       - If target is Remix: candidate MUST be remix (either in title or album).
       - If target is Original (non-remix): candidate MUST NOT be remix.
+    - If target_is_instrumental is provided:
+      - If target is Instrumental: candidate MUST be instrumental.
+      - If target is Vocal: candidate MUST NOT be instrumental.
+    - If target_is_cover is provided:
+      - If target is Cover: candidate MUST be cover.
+      - If target is Original: candidate MUST NOT be cover.
     """
     cand_is_live = is_live_version(cand_title) or is_live_version(cand_album)
     if target_is_live:
@@ -95,7 +126,26 @@ def matches_version_policy(
             if cand_is_remix:
                 return False
 
+    if target_is_instrumental is not None:
+        cand_is_inst = is_instrumental_version(cand_title) or is_instrumental_version(cand_album)
+        if target_is_instrumental:
+            if not cand_is_inst:
+                return False
+        else:
+            if cand_is_inst:
+                return False
+
+    if target_is_cover is not None:
+        cand_is_cover = is_cover_version(cand_title) or is_cover_version(cand_album)
+        if target_is_cover:
+            if not cand_is_cover:
+                return False
+        else:
+            if cand_is_cover:
+                return False
+
     return True
+
 
 def is_duration_acceptable(
     cand_dur_ms: int,

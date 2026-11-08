@@ -38,13 +38,15 @@ from ..utils.text_match import (
     norm_album,
     version_tokens,
     VERSION_EXCLUSION_TOKENS,
+    GENERIC_ARTISTS,
 )
 from ..version import __version__
 
 logger = logging.getLogger(__name__)
 
 LRC_RED_BASE = "https://lrc.red"
-UA_LRC_RED = f"AntigravityLyricsTool/{__version__} (contact: sxhxu@qq.com)"
+UA_LRC_RED = f"music-tag-lyrics/{__version__} (+https://github.com/sxsxhhi/music-tag-lyrics; contact: sxhxu@qq.com)"
+
 
 REQ_TIMEOUT_S = 3.0
 SONG_BUDGET_S = 5.0
@@ -314,34 +316,51 @@ class LrcRedFetcher:
 
         by_model_state = "false" if by_model_raw is False else "unknown"
 
-        # 6. 置信度判定（P0-2: 严禁自我认证）
-        has_full_identity = bool(r_title and r_artist)
+        # 6. 置信度判定（P0-2: 严禁自我认证；R04: 本地艺人缺失时绝对不写 ISRC，且降级置信度）
+        local_art = artist_tokens(artist) if artist else frozenset()
+        remote_art = artist_tokens(r_artist) if r_artist else frozenset()
+        local_art_valid = bool(local_art and not any(a in GENERIC_ARTISTS for a in local_art))
+        remote_art_valid = bool(remote_art and not any(a in GENERIC_ARTISTS for a in remote_art))
+        art_match = bool(local_art_valid and remote_art_valid and (local_art & remote_art))
+
         title_strict_match = bool(local_norm_t_strict and remote_norm_t_strict and local_norm_t_strict == remote_norm_t_strict)
 
         # 远端若缺失标题/艺人关键凭证，绝不判定 strict
-        if not has_full_identity:
+        if not (r_title and r_artist):
             confidence = "insufficient"
             logger.info("   ℹ️ [lrc-red] 远端元数据缺失标题/歌手，标记 insufficient_evidence")
             if title or artist:
                 # 调用方提供了标题或歌手进行查询，但远端缺失对应信息，不能自我认证通过
                 return None
+        elif not local_art_valid or not art_match:
+            # R04: 本地无明确非泛称歌手或歌手无交集时，置信度降为 insufficient/loose，绝不 strict
+            confidence = "insufficient" if not local_art_valid else "loose"
         elif title_strict_match:
             confidence = "strict"
         else:
             confidence = "loose"
 
-        # 7. ISRC 回写资格判定（P0-5 封闭门禁）
+        # 7. ISRC 回写资格判定（P0-5 封闭门禁 + R04/R05/R06 严密加固）
         dur_diff_ok = (
             duration_ms > 0
             and remote_dur_ms > 0
             and abs(duration_ms - remote_dur_ms) <= 3000
         )
+        local_ver_all = version_tokens(title) if title else set()
+        remote_ver_all = version_tokens(r_title) if r_title else set()
+        version_identical = (local_ver_all == remote_ver_all)
+
+        has_full_identity = bool(
+            r_title and r_artist and local_art_valid and remote_art_valid and art_match
+        )
+
         isrc_write_eligible = (
             confidence == "strict"
             and by_model_raw is False
             and dur_diff_ok
             and title_strict_match
             and has_full_identity
+            and version_identical
             and is_valid_isrc(clean_isrc)
         )
 
@@ -366,12 +385,13 @@ class LrcRedFetcher:
             "provenance": {
                 "provider": "lrc.red",
                 "by_model": by_model_state,
-                "origin_status": "official" if by_model_raw is False else "unverified_origin",
+                "origin_status": "unverified_origin",
                 "endpoint": raw_record["endpoint"],
                 "endpoint_kind": raw_record["endpoint_kind"],
             },
         }
         return candidate
+
 
     @classmethod
     def fetch_by_isrc(

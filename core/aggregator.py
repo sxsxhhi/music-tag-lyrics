@@ -2,7 +2,7 @@
 """多源歌词调度：Apple TTML → 网易 → QQ → 酷狗 → AMLL → LRCSHARE → LRCLIB。外语原文与译文必须同一源整包。"""
 
 import logging
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Union
 
 from .fetchers.apple_ttml import AppleTTMLFetcher
 from .fetchers.amll import AMLLFetcher
@@ -108,18 +108,79 @@ def _is_word_level(cand: Optional[Dict[str, Any]]) -> bool:
     return any(bool(l.get("words")) for l in cand.get("lines") or [])
 
 
-def _rank(cand: Optional[Dict[str, Any]], is_foreign: bool) -> int:
-    """外语：译文是硬前提；华语：只要逐字。返回 -1..3。"""
+def _confidence_level(cand: Optional[Dict[str, Any]]) -> str:
+    """提取候选的身份/逐字置信度：strict / loose / insufficient / none。"""
+    if not cand:
+        return "none"
+    match = cand.get("match") or {}
+    conf = match.get("confidence")
+    if conf:
+        return str(conf).strip().lower()
+    # 兼容原生国内源（网易 YRC / QQ QRC / 酷狗 KRC / AMLL）：未带 match.confidence 但声明 word 的按 strict
+    if _is_word_level(cand):
+        return "strict"
+    return "none"
+
+
+def _is_strict_word(cand: Optional[Dict[str, Any]]) -> bool:
+    return _is_word_level(cand) and _confidence_level(cand) == "strict"
+
+
+def _rank(cand: Optional[Dict[str, Any]], is_foreign: bool) -> Union[int, float]:
+    """质量等级真值表 (R03, R16):
+    保持与既有基准向后兼容（QQ/NetEase 默认 strict 逐字与行级保持 3 / 2 / 1 / 0），
+    同时引入有理数级精度严格裁决 loose 与 insufficient：
+
+    华语 (not is_foreign):
+      -1: 无候选
+       2: 行级 (基准)
+       2.2: insufficient 逐字
+       2.5: loose 逐字
+       3: strict 逐字 (基准)
+
+    外语 (is_foreign):
+      -1: 无候选
+       0: 无译文行级 (基准)
+       0.5: 无译文 insufficient 逐字
+       0.8: 无译文 loose 逐字
+       1: 无译文 strict 逐字 (基准)
+       2: 有译文行级 (基准)
+       2.5: 有译文 insufficient 逐字
+       2.8: 有译文 loose 逐字
+       3: 有译文 strict 逐字 (基准)
+    """
     if not cand:
         return -1
     is_word = _is_word_level(cand)
-    # P1-2: 消费 match["confidence"] 区分 strict/loose
-    if is_word and cand.get("match", {}).get("confidence") == "loose":
-        word = 0
+    conf = _confidence_level(cand) if is_word else "none"
+    has_trans = candidate_has_translation(cand)
+
+    if not is_foreign:
+        if not is_word:
+            return 2
+        if conf == "strict":
+            return 3
+        if conf == "loose":
+            return 2.5
+        return 2.2  # insufficient or others
+
+    # 外语
+    if not has_trans:
+        if not is_word:
+            return 0
+        if conf == "strict":
+            return 1
+        if conf == "loose":
+            return 0.8
+        return 0.5
     else:
-        word = 1 if is_word else 0
-    trans = 1 if candidate_has_translation(cand) else 0
-    return (trans * 2 + word) if is_foreign else (2 + word)
+        if not is_word:
+            return 2
+        if conf == "strict":
+            return 3
+        if conf == "loose":
+            return 2.8
+        return 2.5
 
 
 def _adopt(
@@ -172,12 +233,18 @@ class LyricAggregator:
         trace: List[str] = []
 
         def need_more(c: Optional[Dict[str, Any]]) -> bool:
-            # v1.7.0：判据从「有候选即停」改成「非逐字就继续」。
-            # 否则网易（T2）返回行级后会立刻锁死，永远探不到 QQ（T3）的逐字。
-            # 外语仍保留「逐字但缺译文」时继续探测的旧策略。
-            return (not _is_word_level(c)) or (
-                is_foreign and not candidate_has_translation(c)
-            )
+            """R03 调度决策真值表：
+            - 无候选：必须继续搜索
+            - 华语：只有达到 strict 原生逐字才允许提前停止；loose/insufficient 必须继续探测后续高质量源
+            - 外语：必须同时具备 strict 原生逐字且拥有有效中文译文，才允许提前停止
+            """
+            if not c:
+                return True
+            if not is_foreign:
+                return not _is_strict_word(c)
+            # 外语：不仅要 strict 逐字，还必须带有效译文
+            return not (_is_strict_word(c) and candidate_has_translation(c))
+
 
         def _probe(fetch_fn: Callable[[], Optional[Dict[str, Any]]], source: str = "") -> Optional[Dict[str, Any]]:
             try:
