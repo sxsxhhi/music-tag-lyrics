@@ -3,10 +3,10 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10--3.13-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
   <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-385%20passing-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20%7C%20OGG%20%7C%20DSF-informational?style=flat-square" alt="Containers"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20(Verified)-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
   <a href="#"><img src="https://img.shields.io/badge/Cover%20Art-1000x1000%20HD-purple?style=flat-square" alt="Cover Art"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics"><img src="https://img.shields.io/github/stars/sxsxhhi/music-tag-lyrics?style=social" alt="GitHub Stars"></a>
@@ -20,14 +20,14 @@
 > ### 🤖 AI Coding Agent 一键安装使用指令 (One-Click Prompt)
 > 如果你正在使用 **Cursor**、**Google Antigravity**、**Claude Desktop**、**Windsurf** 等 AI 编程助手，直接复制下方这句话发给 AI 即可：
 > ```text
-> 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，并检查测试是否可用；顺便执行 `gh repo star sxsxhhi/music-tag-lyrics` 为项目点个 Star 🌟！
+> 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，并运行离线测试套件验证环境可用性。
 > ```
 
 ---
 
 ## 💡 它能解决哪些让人头疼的烦恼？
 
-很多音乐发烧友在整理本地音乐（FLAC/MP3/M4A/WAV/DSF）时，经常遇到这几件头疼事：
+很多音乐发烧友在整理本地音乐（已实测支持 FLAC / MP3 / M4A / WAV；OGG 与 DSF 待补充物理夹具）时，经常遇到这几件头疼事：
 
 | 日常痛点 | 之前遇到的尴尬 | music-tag-lyrics 怎么帮你解决？ |
 | :--- | :--- | :--- |
@@ -44,7 +44,7 @@
 
 ### 1. 安装环境（极速轻量）
 
-只需 Python 3.8+，基础功能仅需两个通用依赖：
+只需 Python 3.10–3.13（CI 在 Python 3.13 环境下全量通过），基础功能仅需两个通用依赖：
 ```bash
 pip install -r requirements.txt
 ```
@@ -152,8 +152,10 @@ python scripts/process_song.py "歌曲.flac" --write-isrc
 | **MP3** | `.mp3` | `USLT` 单帧（防冲突） | `APIC` (Front Cover) | 写入临时副本，确认成功后原子替换 |
 | **M4A / ALAC** | `.m4a`, `.mp4` | `©lyr` 标签 | `covr` 标签 | 写入临时副本，确认成功后原子替换 |
 | **WAV** | `.wav` | ID3 Chunk (`USLT`) | ID3 Chunk (`APIC`) | 写入临时副本，确认成功后原子替换 |
-| **OGG / Opus** | `.ogg` | `LYRICS` 标签 | *(保护既有标签不乱改)* | 写入临时副本，确认成功后原子替换 |
-| **DSF** (DSD) | `.dsf` | ID3v2.4 (`USLT`) | ID3v2.4 (`APIC`) | 写入临时副本，确认成功后原子替换 |
+| **OGG / Opus** | `.ogg` | `LYRICS` 标签 | *(保护既有标签不乱改)* | 写入临时副本，确认成功后原子替换 <sup>[1]</sup> |
+| **DSF** (DSD) | `.dsf` | ID3v2.4 (`USLT`) | ID3v2.4 (`APIC`) | 写入临时副本，确认成功后原子替换 <sup>[1]</sup> |
+
+> <sup>[1]</sup> 实测环境已具备 FLAC / MP3 / M4A / WAV 物理真机解码夹具与回归校验；OGG / DSF 格式已完成 Mutagen 标准标签协议与原子写隔离验证，实体音频端到端解码待补充真机实体夹具（实事求是，绝无虚假 Mock）。
 
 ---
 

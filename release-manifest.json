@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "name": "music-tag-lyrics",
+  "version": "1.8.1",
+  "release_tag": "v1.8.1",
+  "build_timestamp_utc": "2026-11-08T10:45:46.761852+00:00",
+  "git_commit": "9e3d79f322adf3b027564d87b5ec7a907f7ce43f",
+  "release_asset": {
+    "filename": "music-tag-lyrics-skill-v1.8.1.zip",
+    "size_bytes": 1901197,
+    "sha256": "a8143505767d42d04b7c3debf377eeb6d5a5a402f19582331b4dee4fd5bca935",
+    "file_count": 108
+  },
+  "platforms_verified": [
+    "Windows 11 (Python 3.13.9, RTX 3060 Laptop)",
+    "Ubuntu 24.04 (GitHub Actions CI, Python 3.13)"
+  ],
+  "python_compatibility": "Python 3.10 - 3.13",
+  "container_support_matrix": {
+    "FLAC (.flac)": "Verified (38 real audio tracks)",
+    "MP3 (.mp3)": "Verified (Real ID3v2.3/2.4 USLT)",
+    "M4A / AAC (.m4a)": "Verified (Real QuickTime atoms)",
+    "WAV (.wav)": "Verified (Real RIFF ID3 chunk)",
+    "DSF (.dsf)": "Pending Physical Fixtures Verification",
+    "OGG (.ogg)": "Pending Physical Fixtures Verification"
+  },
+  "quality_and_safety_guarantees": {
+    "mother_disk_protection": "STRICT_ENFORCED (只音\\ mother disk zero-touch)",
+    "sample_audio_contamination": "ZERO_CONTAMINATION (40/40 tracks verified by SHA-256)",
+    "network_tripwire": "ACTIVE (offline tests protected against public egress)",
+    "isrc_safety_gate": "STRICT_VERIFIED (unknown artist & version mismatch blocked)"
+  }
+}

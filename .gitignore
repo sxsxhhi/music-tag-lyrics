@@ -27,3 +27,6 @@ _baseline_*/
 .test-work/
 .test-work*/
 
+# Release distribution artifacts
+dist/
+
