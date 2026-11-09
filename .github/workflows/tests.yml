@@ -65,5 +65,7 @@ jobs:
         run: python tests/test_isrc_integration.py
       - name: Cache paths & drive isolation
         run: python tests/test_cache_paths.py
+      - name: Release build determinism (H01)
+        run: python tests/test_release_build.py
       - name: Path & PII leak guard
         run: python scripts/check_no_leaks.py
