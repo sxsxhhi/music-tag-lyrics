@@ -221,19 +221,31 @@ def sync_to(
                 except OSError:
                     continue
             stats["pruned"] += 1
-        # 清理陈旧空目录与被排除目录
-        if not dry_run and target.is_dir():
-            for root, dirs, _files in os.walk(target, topdown=False):
-                for d in dirs:
-                    dir_path = Path(root) / d
-                    if is_dir_excluded(d):
-                        shutil.rmtree(dir_path, ignore_errors=True)
-                        continue
-                    if dir_path.is_dir() and not any(dir_path.iterdir()):
-                        try:
-                            dir_path.rmdir()
-                        except OSError:
-                            pass
+
+    # 清理所有被排除的运行时目录（如 __pycache__, .pytest_cache）与被排除的文件（如 *.pyc, *.pyo）及陈旧空目录
+    if not no_prune and not dry_run and target.is_dir():
+        for root, dirs, files in os.walk(target, topdown=False):
+            for f in files:
+                if f == MANIFEST_NAME:
+                    continue
+                rel_f = Path(root).relative_to(target) / f if root != str(target) else Path(f)
+                rel_posix = rel_f.as_posix()
+                if is_file_excluded(rel_posix, f):
+                    try:
+                        (Path(root) / f).unlink()
+                        stats["pruned"] += 1
+                    except OSError:
+                        pass
+            for d in dirs:
+                dir_path = Path(root) / d
+                if is_dir_excluded(d):
+                    shutil.rmtree(dir_path, ignore_errors=True)
+                    continue
+                if dir_path.is_dir() and not any(dir_path.iterdir()):
+                    try:
+                        dir_path.rmdir()
+                    except OSError:
+                        pass
     elif not no_prune and previous is None and target.is_dir():
         stats["skipped_prune"] = -1  # 首次同步：无受管清单，不清理未知文件
 

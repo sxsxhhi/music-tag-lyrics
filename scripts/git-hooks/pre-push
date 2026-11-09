@@ -81,6 +81,8 @@ if [ -z "$PY" ]; then
     exit 0
 fi
 
+export PYTHONDONTWRITEBYTECODE=1
+
 # ---- 通用规则（两种模式都跑） --------------------------------------------- #
 if ! "$PY" "$SCANNER_REL"; then
     echo "" >&2

@@ -50,7 +50,7 @@ SYNTH_SAFE_TOOL = (
 
 def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
+        [sys.executable, "-B", str(SCRIPT), *args],
         cwd=str(REPO_ROOT),
         text=True,
         encoding="utf-8",
@@ -249,19 +249,37 @@ def test_private_filename_in_zip_member_name_blocked():
 
 
 def test_private_segment_in_filename_with_extension_blocked():
-    """P0/H02: segment 规则在带扩展名的文件名中必须能命中（如 normal/DIR.txt）。"""
+    """P0/H02: segment 规则在带单扩展名或多层扩展名的文件名中必须能命中。"""
     fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
-    z = _tmp_zip({"normal/" + SYNTH_SEG + ".txt": "hello\n"})
-    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "PRIVATE_SEGMENT" in result.stdout
-    assert SYNTH_SEG not in result.stdout
+    # 单扩展名 .txt
+    z1 = _tmp_zip({"normal/" + SYNTH_SEG + ".txt": "hello\n"})
+    result1 = _run("--require-private", "--private-file", str(fp), "--zip", str(z1))
+    assert result1.returncode == 1, result1.stdout + result1.stderr
+    assert "PRIVATE_SEGMENT" in result1.stdout
+    assert SYNTH_SEG not in result1.stdout
+
+    # 多层扩展名 .tar.gz
+    z2 = _tmp_zip({"normal/" + SYNTH_SEG + ".tar.gz": "hello\n"})
+    result2 = _run("--require-private", "--private-file", str(fp), "--zip", str(z2))
+    assert result2.returncode == 1, result2.stdout + result2.stderr
+    assert "PRIVATE_SEGMENT" in result2.stdout
+    assert SYNTH_SEG not in result2.stdout
+
+    # 多层扩展名 .snapshot.json
+    z3 = _tmp_zip({"normal/" + SYNTH_SEG + ".snapshot.json": "hello\n"})
+    result3 = _run("--require-private", "--private-file", str(fp), "--zip", str(z3))
+    assert result3.returncode == 1, result3.stdout + result3.stderr
+    assert "PRIVATE_SEGMENT" in result3.stdout
+    assert SYNTH_SEG not in result3.stdout
 
 
 def test_private_segment_in_text_path_with_extension_blocked():
-    """P0/H02: 正文中带扩展名的路径也必须命中 segment 规则。"""
+    """P0/H02: 正文中带单层/多层扩展名的路径也必须命中 segment 规则。"""
     fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
-    z = _tmp_zip({"docs/guide.md": "数据源路径为 Z:/audio/" + SYNTH_SEG + ".flac\n"})
+    z = _tmp_zip({
+        "docs/guide.md": "数据源路径为 Z:/audio/" + SYNTH_SEG + ".tar.gz 归档\n",
+        "docs/config.json": '{"backup": "Z:/backup/' + SYNTH_SEG + '.snapshot.json"}\n',
+    })
     result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
     assert result.returncode == 1, result.stdout + result.stderr
     assert "PRIVATE_SEGMENT" in result.stdout
@@ -274,6 +292,9 @@ def test_segment_mode_negative_cases_not_flagged():
     z = _tmp_zip({
         "normal/prefix" + SYNTH_SEG + ".txt": "content\n",
         "normal/" + SYNTH_SEG + "suffix.txt": "content\n",
+        "normal/prefix_" + SYNTH_SEG + ".tar.gz": "content\n",
+        "normal/" + SYNTH_SEG + "_suffix.snapshot.json": "content\n",
+        "normal/NO_SENSITIVE.txt": "clean content\n",
         "docs/note.md": "some text with foo" + SYNTH_SEG + "bar in prose\n",
     })
     result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))

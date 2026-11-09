@@ -53,13 +53,16 @@ def discover(keyword: str = "") -> list[Path]:
 def run_one(path: Path, verbose: bool) -> dict:
     """子进程执行单个套件，返回 {name, passed, total, skipped, failed, rc, secs}。"""
     t0 = time.time()
+    env = dict(subprocess.os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run(
-        [sys.executable, str(path)],
+        [sys.executable, "-B", str(path)],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     secs = time.time() - t0
     out = (proc.stdout or "") + (proc.stderr or "")

@@ -128,14 +128,14 @@ class PrivateRule:
             return _bounded_match(lowered, self.folded, TOKEN_WORD_EXTRA)
         if _bounded_match(lowered, self.folded, SEGMENT_WORD_EXTRA):
             return True
-        # P0/H02: 正文路径语法识别（前有路径/文本界，后接可选扩展名及路径/文本界）
-        # 例：.../SYNTH_PRIVATE_DIR_97.txt 或 /test/SYNTH_PRIVATE_DIR_97.flac
+        # P0/H02: 正文路径语法识别（前有路径/文本界，后接可选扩展名（支持单/多扩展名如 .tar.gz）及路径/文本界）
+        # 例：.../SYNTH_PRIVATE_DIR_97.txt 或 /test/SYNTH_PRIVATE_DIR_97.tar.gz
         if self.mode == "segment":
             if self._path_segment_re is None:
                 pat = (
                     r"(?:^|(?<=[\/\\\"\'\`\(\[\{\s:=]))"
                     + re.escape(self.folded)
-                    + r"(?=(?:\.[a-zA-Z0-9_-]+)?(?:[\/\\\"\'\`\)\]\}\s,;:!?]|$))"
+                    + r"(?=(?:\.[a-zA-Z0-9_-]+)*(?:[\/\\\"\'\`\)\]\}\s,;:!?]|$))"
                 )
                 self._path_segment_re = re.compile(pat, re.IGNORECASE)
             return bool(self._path_segment_re.search(lowered))
@@ -322,16 +322,20 @@ def _decode_scannable(payload: bytes, name: str) -> tuple[str | None, str | None
 
 
 def _matches_path_segment(path_str: str, needle_folded: str) -> bool:
-    """检查 needle_folded 是否作为路径段或文件名 stem 在 path_str 中完整出现。"""
+    """检查 needle_folded 是否作为路径段或文件名 stem 在 path_str 中完整出现。
+
+    支持单扩展名（如 name.txt）及多层扩展名（如 name.tar.gz、name.snapshot.json）。
+    """
     norm = path_str.replace("\\", "/")
     parts = [p for p in norm.split("/") if p]
     for p in parts:
         p_fold = p.casefold()
         if p_fold == needle_folded:
             return True
-        if "." in p_fold:
-            stem = p_fold.rsplit(".", 1)[0]
-            if stem == needle_folded:
+        if p_fold.startswith(needle_folded + "."):
+            suffix = p_fold[len(needle_folded):]
+            ext_parts = suffix.split(".")[1:]
+            if ext_parts and all(part and part.replace("-", "").replace("_", "").isalnum() for part in ext_parts):
                 return True
     return False
 

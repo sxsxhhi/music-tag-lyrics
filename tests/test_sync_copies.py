@@ -248,6 +248,29 @@ def test_adopt_existing_allows_first_prune():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def test_sync_prunes_excluded_pycache_and_pyc():
+    """同步时必须无条件清理目标目录中遗留的 __pycache__ 与 *.pyc 文件。"""
+    base = _tmp()
+    target = base / "mirror"
+    target.mkdir()
+    pycache = target / "core" / "__pycache__"
+    pycache.mkdir(parents=True, exist_ok=True)
+    pyc_file = pycache / "converter.cpython-313.pyc"
+    pyc_file.write_bytes(b"\x00\x01\x02\x03")
+    loose_pyc = target / "stray.pyc"
+    loose_pyc.write_bytes(b"\x00\x01\x02\x03")
+    try:
+        stats = sync_mod.sync_to(target)
+        assert not pycache.exists(), "__pycache__ 目录未被清理"
+        assert not pyc_file.exists(), "pyc 文件未被清理"
+        assert not loose_pyc.exists(), "散落的 pyc 文件未被清理"
+        assert stats["manifest_written"] is True
+    finally:
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

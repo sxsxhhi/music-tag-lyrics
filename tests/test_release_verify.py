@@ -64,7 +64,7 @@ def _make_repo() -> Path:
 
 def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(repo / "scripts" / "build_release_manifest.py"), *args],
+        [sys.executable, "-B", str(repo / "scripts" / "build_release_manifest.py"), *args],
         cwd=str(repo),
         text=True,
         encoding="utf-8",
