@@ -83,6 +83,8 @@ jobs:
         run: python tests/test_sync_copies.py
       - name: Process outcome contract (H12/H13)
         run: python tests/test_process_outcome.py
+      - name: Benchmark script contract (H13, dev-only)
+        run: python tests/test_benchmark_contract.py
       - name: Release verification entry (H14)
         run: python tests/test_release_verify.py
       - name: lrc.red terms compliance (H18)

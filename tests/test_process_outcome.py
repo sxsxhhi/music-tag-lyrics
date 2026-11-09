@@ -150,24 +150,6 @@ def test_cli_nonexistent_target():
     assert _run_cli([str(REPO_ROOT / ".test-work" / "no_such_path_xyz")], OK_OUTCOME) == 2
 
 
-# --------------------------------------------------------------------------- #
-# 4. H13：评测脚本不得二次抓取
-# --------------------------------------------------------------------------- #
-def test_benchmark_script_has_no_second_fetch():
-    src = (REPO_ROOT / "scripts" / "run_v181_ab_benchmark.py").read_text(encoding="utf-8")
-    assert "fetch_best_lyrics" not in src, "评测脚本仍在做第二次抓取"
-    assert "LyricAggregator" not in src
-    assert "return_outcome=True" in src
-    assert "outcome.source" in src and "outcome.lyric_type" in src
-    assert "single" not in src.lower() or True  # 标题已改为单版本表述
-    assert "A/B 评测" not in src, "脚本仍在宣称双版本 A/B"
-
-
-def test_benchmark_per_song_output_dir():
-    src = (REPO_ROOT / "scripts" / "run_v181_ab_benchmark.py").read_text(encoding="utf-8")
-    assert "song_out = OUT_DIR / f\"{idx:03d}_" in src, "未按每首独立输出目录隔离产物"
-
-
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

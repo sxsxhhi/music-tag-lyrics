@@ -50,6 +50,14 @@ EXCLUDE_FILES = {
     "baseline.json",
     # 同步工具自身的受管清单（仅存在于镜像目录，不应随分发包传播）
     ".mtl-sync-manifest.json",
+    # 只测「不进分发的开发工具」的套件：随包分发会在包内自测时必然失败
+    # （它们引用的 build_release_manifest / sync_skill_copies / run_*_ab_benchmark /
+    #   git-hooks 本身都被排除，测试留在包内只会制造假故障）
+    "test_release_build.py",
+    "test_release_verify.py",
+    "test_sync_copies.py",
+    "test_prepush_hook.py",
+    "test_benchmark_contract.py",
 }
 
 # 通配文件名排除模式（P2-02：私有基准测试脚本等）
