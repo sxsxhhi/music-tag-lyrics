@@ -13,6 +13,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+from core.version import __version__
+ZIP_NAME = f"music-tag-lyrics-skill-v{__version__}.zip"
 
 try:
     import _testkit
@@ -74,7 +76,7 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def _zip_path(repo: Path) -> Path:
-    return repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip"
+    return repo / "dist" / ZIP_NAME
 
 
 def test_verify_positive_and_remote_unverified_note():
@@ -137,7 +139,7 @@ def test_verify_rejects_dev_package():
         assert _run(repo, "--release").returncode == 0
         (repo / "core" / "a.py").write_text("A = 2\n", encoding="utf-8", newline="\n")
         assert _run(repo, "--dev-package").returncode == 0
-        dev_zip = repo / "dist" / "dev" / "music-tag-lyrics-skill-v1.8.1.zip"
+        dev_zip = repo / "dist" / "dev" / ZIP_NAME
         dev_manifest = repo / "dist" / "dev" / "release-manifest.dev.json"
         proc = _run(
             repo, "--verify-release", "--zip", str(dev_zip), "--manifest", str(dev_manifest)

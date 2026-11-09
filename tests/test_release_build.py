@@ -33,6 +33,8 @@ if hasattr(sys.stderr, "reconfigure"):
 BUILDER = REPO_ROOT / "scripts" / "build_release_manifest.py"
 DIST_VIEW = REPO_ROOT / "scripts" / "_dist_view.py"
 VERSION_PY = REPO_ROOT / "core" / "version.py"
+from core.version import __version__
+ZIP_NAME = f"music-tag-lyrics-skill-v{__version__}.zip"
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "mtl-test",
@@ -112,13 +114,13 @@ def test_untracked_files_never_enter_package():
 
         rel = _run(repo, "--release")
         assert rel.returncode == 0, rel.stderr
-        names = _zip_names(repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip")
+        names = _zip_names(repo / "dist" / ZIP_NAME)
         for bad in ("private-test.env", "secret.key", "data.sqlite", "unknown.xyz"):
             assert bad not in names, f"未跟踪文件进入正式包: {bad}"
 
         dev = _run(repo, "--dev-package")
         assert dev.returncode == 0, dev.stderr
-        dev_names = _zip_names(repo / "dist" / "dev" / "music-tag-lyrics-skill-v1.8.1.zip")
+        dev_names = _zip_names(repo / "dist" / "dev" / ZIP_NAME)
         for bad in ("private-test.env", "secret.key", "data.sqlite", "unknown.xyz"):
             assert bad not in dev_names, f"未跟踪文件进入开发包: {bad}"
     finally:
@@ -136,7 +138,7 @@ def test_tracked_risky_file_aborts_build():
         assert proc.returncode != 0, "已跟踪 .env 竟构建成功"
         assert "LEAK_RISKY_ENV_FILE" in proc.stderr, proc.stderr
         assert "config/.env.local" in proc.stderr
-        assert not (repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip").exists()
+        assert not (repo / "dist" / ZIP_NAME).exists()
     finally:
         _cleanup(repo)
 
@@ -193,7 +195,7 @@ def test_members_complete_and_unique():
     try:
         proc = _run(repo, "--release")
         assert proc.returncode == 0, proc.stderr
-        names = _zip_names(repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip")
+        names = _zip_names(repo / "dist" / ZIP_NAME)
         assert len(names) == len(set(names)), "ZIP 成员重复"
         assert names == sorted(names), "ZIP 成员未按稳定顺序排列"
         assert "core/a.py" in names and "core/b.py" in names
@@ -214,7 +216,7 @@ def test_idempotent_build_loop():
     try:
         first = _run(repo, "--release")
         assert first.returncode == 0, first.stderr
-        zip_path = repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip"
+        zip_path = repo / "dist" / ZIP_NAME
         sha1 = _sha(zip_path)
         m1 = (repo / "release-manifest.json").read_bytes()
         d1 = (repo / "docs" / "release-manifest.json").read_bytes()
@@ -243,7 +245,7 @@ def test_zip_bytes_independent_of_mtime():
     repo = _make_repo({"core/a.py": "A = 1\n"})
     try:
         assert _run(repo, "--release").returncode == 0
-        zip_path = repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip"
+        zip_path = repo / "dist" / ZIP_NAME
         sha1 = _sha(zip_path)
 
         future = time.time() + 86400
@@ -263,7 +265,7 @@ def test_zipinfo_normalized():
     repo = _make_repo({"core/a.py": "A = 1\n"})
     try:
         assert _run(repo, "--release").returncode == 0
-        with zipfile.ZipFile(repo / "dist" / "music-tag-lyrics-skill-v1.8.1.zip") as zf:
+        with zipfile.ZipFile(repo / "dist" / ZIP_NAME) as zf:
             for info in zf.infolist():
                 assert info.date_time == (1980, 1, 1, 0, 0, 0), info.filename
                 assert info.create_system == 3, info.filename

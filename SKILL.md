@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.1）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.2）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.1)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.2)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -369,3 +369,31 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 ### 5. 命令行参数与环境变量
 - `--write-isrc`：允许向音频补齐满足严格门禁且缺失的 ISRC 标签（默认只读）；
 - `--no-lrc-red`：禁用 lrc.red 全球歌词网络（或设置环境变量 `MTL_LRC_RED=off`）。
+
+
+---
+
+## 十一、双格式标准化、全曲制作署名剥离与前奏调度（v1.8.2）
+
+### 1. 核心需求定位与架构
+- **R1: ELRC ↔ TTML 双向独立结构对齐与微秒级时间轴审计**：行级与字级时间戳双向对齐容差 ≤ 1ms；`div` 容器与行级边界对齐容差 ≤ 2ms；双语翻译行与 `for="Ln"` 属性严格对应；检测跨格式结构漂移、缺字漏行与时间轴反序并分类为结构性错误。
+- **R2: 全曲制作署名精准识别与安全剥离**：全曲双向扫描识别位于开头（Intro）、正文中间（Mid-track）与结尾（Outro）的纯制作信息并予以剥离回填至元数据；**绝对保留**真实演唱、念白、对白、副歌、原唱标记、采样溯源以及带演唱者声部标记（`[A]:` / `[B]:`）；对无法100%判定的存疑行标记为 `REVIEW_REQUIRED` 绝不武断删除。
+- **R3: 首唱时间 T 判定与 A/B 前奏显示调度**：以第一句真实演唱的首字时间戳为基准 $T$；$T < 3000\text{ms}$ 时静默不显示；$3000\text{ms} \le T < 8000\text{ms}$ 时仅显示方案 A（$T_A \in [0, 4T/5]$）；$T \ge 8000\text{ms}$ 时顺序调度方案 A（$[0, 3T/5]$）与方案 B（$[3T/5, 4T/5]$）；所有时间边界统一向下取整（地板除）；**任何情况下严禁篡改演唱字块与时间戳**。
+- **R4: 双格式标准导出与 FLAC/MP3/WAV 容器读写**：
+  - ELRC 严格导出 3 位小数毫秒时间戳 `[mm:ss.xxx]`、单字闭合 `<mm:ss.xxx>` 及词间空格；
+  - TTML 严格导出标准 XML、命名空间单行规范、`iTunesMetadata/translations for="Ln"` 译文绑定及词尾空格；
+  - 容器元数据映射：FLAC (`lyrics`/`ttmllyric`)、MP3/WAV (`USLT::eng`/`TXXX:TTMLLYRIC`)；默认只读安全探测，显式 `--write-tags` 时执行工作副本隔离写入、磁盘回读双校验与原子替换。
+
+### 2. 命令行入口 (standardize_song.py)
+```powershell
+python scripts/standardize_song.py <file-or-dir> [options]
+
+选项：
+  --mode {audit,standardize}  运行模式（默认 audit：只读审计与结构对比）
+  --lyrics-file PATH          显式指定外部歌词文件（.lrc 或 .ttml）
+  --output-dir DIR            标准化歌词导出的目标目录（默认与音频同目录）
+  --no-tags                   仅输出 .lrc / .ttml 歌词文件，不修改音频元数据（默认安全模式）
+  --write-tags                允许安全回写音频内嵌歌词（必须经过磁盘回读校验）
+  --in-place                  允许在原文件目录原地更新歌词文件
+  --report FILE               输出 JSON 格式的审计与标准化结构报告
+```
