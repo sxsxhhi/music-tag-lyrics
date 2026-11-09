@@ -23,6 +23,9 @@ import sys
 import urllib.parse
 from typing import Any, Dict, Set
 
+# 离线测试默认注入合规的测试邮箱，确保 LrcRedFetcher mock 请求不被条款守卫阻断
+os.environ.setdefault("MTL_LRC_RED_CONTACT", "test-runner@example.invalid")
+
 
 class SkipTest(Exception):
     """用例因环境缺失被跳过（不计入 PASS，也不计失败）。"""

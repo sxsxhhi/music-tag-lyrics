@@ -51,18 +51,28 @@ LRC_RED_ATTRIBUTION = "https://lrc.red"
 #   2) 展示数据时必须清晰署名并回链 lrc.red。
 # 公开源码不硬编码任何私人邮箱：联系方式由维护者通过 MTL_LRC_RED_CONTACT 注入。
 LRC_RED_CONTACT_ENV = "MTL_LRC_RED_CONTACT"
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
-def _lrc_red_contact() -> str:
-    value = os.environ.get(LRC_RED_CONTACT_ENV, "").strip()
-    return value or "see https://github.com/sxsxhhi/music-tag-lyrics/issues"
+def _lrc_red_contact() -> tuple[bool, str]:
+    """校验并返回 (是否为合规联系邮箱, 邮箱地址)。
+
+    根据 lrc.red 条款要求，User-Agent 必须包含有效联系邮箱。
+    若未设置或格式非法，返回 (False, "")。
+    """
+    val = os.environ.get(LRC_RED_CONTACT_ENV, "").strip()
+    if val and _EMAIL_RE.match(val):
+        return True, val
+    return False, ""
 
 
 def build_lrc_red_ua() -> str:
-    """按条款构造 User-Agent（应用名 + 链接 + 联系方式）。"""
+    """按条款构造 User-Agent（应用名 + 链接 + 联系邮箱）。"""
+    valid, contact = _lrc_red_contact()
+    contact_str = contact if valid else "unconfigured"
     return (
         f"music-tag-lyrics/{__version__} "
-        f"(+https://github.com/sxsxhhi/music-tag-lyrics; contact: {_lrc_red_contact()})"
+        f"(+https://github.com/sxsxhhi/music-tag-lyrics; contact: {contact_str})"
     )
 
 
@@ -129,6 +139,10 @@ class LrcRedFetcher:
         """请求 JSON 数据，做体积上限与状态码拦截。"""
         # H05：冷却检查下沉到共同请求入口，任何调用方（ISRC/match/search/备用端点）
         # 都无法绕过；返回 0 表示「本次未发出请求」，与真实 HTTP 状态严格区分。
+        valid_email, _ = _lrc_red_contact()
+        if not valid_email:
+            logger.warning("   ⚠️ [lrc-red] 未配置合规联系邮箱（MTL_LRC_RED_CONTACT 须为有效邮箱），跳过该源")
+            return 0, None
         if cls._cooldown_remaining() > 0:
             logger.debug("   [lrc-red] 429 冷却中，跳过 JSON 请求")
             return 0, None
@@ -168,6 +182,10 @@ class LrcRedFetcher:
     ) -> Tuple[int, Optional[str]]:
         """请求文本/TTML 数据，做体积上限拦截。"""
         # H05：与 _http_get_json 共用同一冷却判定，杜绝备用端点绕过
+        valid_email, _ = _lrc_red_contact()
+        if not valid_email:
+            logger.warning("   ⚠️ [lrc-red] 未配置合规联系邮箱（MTL_LRC_RED_CONTACT 须为有效邮箱），跳过该源")
+            return 0, None
         if cls._cooldown_remaining() > 0:
             logger.debug("   [lrc-red] 429 冷却中，跳过文本请求")
             return 0, None
@@ -767,6 +785,10 @@ class LrcRedFetcher:
         3. /search.json 文本搜索。
         """
         if os.environ.get("MTL_LRC_RED") == "off":
+            return None
+        valid_email, _ = _lrc_red_contact()
+        if not valid_email:
+            logger.warning("   ⚠️ [lrc-red] 未配置合规联系邮箱（MTL_LRC_RED_CONTACT 须为有效邮箱），跳过该源")
             return None
 
         if deadline is None:

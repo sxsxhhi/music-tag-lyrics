@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10--3.13-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-423%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-555%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
 
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20(Verified)-informational?style=flat-square" alt="Containers"></a>
@@ -165,25 +165,25 @@ python scripts/process_song.py "歌曲.flac" --write-isrc
 本项目配备了极其严苛的工程测试用例网络，涵盖各种奇怪歌词格式、字符集、连读念白与边界条件：
 
 ```bash
-# 一键运行全部 38 个离线测试套件（561 项用例：550 通过 / 11 条件跳过，0 失败）
+# 1. Git 完整开发仓库：运行全部 38 个离线测试套件（566 项用例：555 通过 / 11 条件跳过，0 失败）
 python tests/run_all.py
 
+# 2. 分发安装包（已按分发视图剔除构建/同步等仅仓库侧工具）：运行 33 个离线测试套件（529 项用例：518~528 通过 / 1~11 条件跳过，0 失败）
+python tests/run_all.py
 
-
-**验证范围（如实声明）**
-
-- 上方数字是 **Ubuntu 24.04 / Python 3.13 的公开 CI 结果**，不代表所有平台；
-- 缓存默认优先落在 Skill 目录 `.cache/`，该目录不可写时会按五级回退继续尝试系统缓存与 TEMP 并告警；
-  `MTL_STRICT_STORAGE=1` 只约束**应用缓存目录**，不等于「整个进程不写系统盘」；
-- Windows / GPU / 声学对齐（Demucs、Whisper、Wav2Vec2）属于维护者本地验证范围，公开 CI 未独立核验，
-  相关用例在 CI 中以条件跳过呈现；
-- 容器矩阵中标注 `Verified in public CI` 的项有公开夹具支撑；标注 `Verified locally only` /
-  `Not verified` 的项不作为公开保证。
-
-# 快速运行指定模块测试
+# 3. 快速运行指定模块测试
 python tests/run_all.py -k line_axis
 python tests/run_all.py -k canto
 ```
+
+**验证范围（如实声明）**
+
+- **双层测试基线说明**：
+  - **Git 完整开发仓库**：包含全部 38 个离线测试套件（共 566 项用例，本地实测基线为 555 PASS / 11 SKIP / 0 FAIL）；
+  - **Release / Skill 分发包**：为保持分发包轻量且避免未分发的开发工具在包内引发假故障，分发视图依据 `scripts/_dist_view.py` 剔除了仅用于本地构建、镜像同步及 Git 钩子的开发侧工具及对应 5 个专用测试套件（`test_release_build`, `test_release_verify`, `test_sync_copies`, `test_prepush_hook`, `test_benchmark_contract`），包内包含 33 个套件共 529 项用例（在含完整 torch 容器中实测 528 PASS / 1 SKIP；在纯 CPU 环境实测 518 PASS / 11 SKIP / 0 FAIL）；
+- 上方数字是环境实测基线，Windows / GPU / 声学对齐（Demucs、Whisper、Wav2Vec2）属于维护者本地验证范围，公开 CI 未独立核验，相关用例在 CI 中以条件跳过呈现；
+- 缓存默认优先落在 Skill 目录 `.cache/`，该目录不可写时会按五级回退继续尝试系统缓存与 TEMP 并告警；`MTL_STRICT_STORAGE=1` 只约束**应用缓存目录**，不等于「整个进程不写系统盘」；
+- 容器矩阵中标注 `Verified in public CI` 的项有公开夹具支撑；标注 `Verified locally only` / `Not verified` 的项不作为公开保证。
 
 ---
 
@@ -205,7 +205,7 @@ python tests/run_all.py -k canto
 | `MTL_ZH_GATE` | `on` | `on` 粤语歌熔断转普通话时必须通过横向打分验货，低于 `-8.0` 则拒绝出货 |
 | `MTL_CACHE_DIR` | 空 | 缓存目录；为空时按五级回退（Skill `.cache/` → 系统缓存 → TEMP） |
 | `MTL_STRICT_STORAGE` | `0` | `1` 时只接受已存在、绝对、可写的 `MTL_CACHE_DIR`，缺失/相对/不可写即报错，不回退 |
-| `MTL_LRC_RED_CONTACT` | 空 | lrc.red 官方条款要求 UA 内含联系方式；在此填入可联系的邮箱或项目地址 |
+| `MTL_LRC_RED_CONTACT` | 空 | lrc.red 官方条款要求 UA 内含联系邮箱；未配置或邮箱格式非法时将自动优雅跳过该源以避免违规，建议填入合规联系邮箱（如 user@example.com） |
 
 </details>
 
@@ -213,9 +213,9 @@ python tests/run_all.py -k canto
 
 ## 🙏 数据来源与署名
 
-歌词数据来自 [lrc.red](https://lrc.red)。按其 API 条款要求：请求 User-Agent 需说明应用并提供可联系方式
-（本工具通过 `MTL_LRC_RED_CONTACT` 注入，源码不内置任何私人邮箱）；展示 lrc.red 数据时应清晰署名并回链。
-候选结果的 `provenance.attribution` 已带上该链接，便于下游展示时使用。
+歌词数据来自 [lrc.red](https://lrc.red)。按其 API 服务条款（Terms of Use）要求：
+1. **User-Agent 身份与联系邮箱**：请求 UA 需包含应用标识并提供有效联系邮箱（本工具通过环境变量 `MTL_LRC_RED_CONTACT` 显式注入，源码不内置任何私人邮箱；若未配置或邮箱格式不合规，引擎将自动优雅旁路并打印日志，绝不发送不合规的匿名/假联系方式请求）；
+2. **清晰署名与回链**：展示与导出来自 lrc.red 的歌词时必须明确署名并回链。在导出 Enhanced LRC (`.lrc`) 及椒盐音乐 (`.spl`) 文件时，标准头部元数据已自动注入 `[re:lrc.red (https://lrc.red)]` 署名回链标签，候选结果元数据亦在 `provenance.attribution` 中完整挂载回链。
 
 ---
 
@@ -223,8 +223,7 @@ python tests/run_all.py -k canto
 
 | 版本 | 发布日期 | 亮点概述 |
 | :---: | :---: | :--- |
-| **最新** | `2026-11-08` | **缓存五级回退与存储路径可控 · 分发包瘦身过滤 · 自动化测试扩展至 38 套件 561 用例**<br/>• 改造 `core/utils/cache_paths.py` 五级候选链：默认优先使用 skill 根目录 `.cache/`（跟随工作区所在卷）；该目录不可写时按五级回退继续尝试系统缓存与 TEMP，并输出一次性告警；如需严格限定为单一目录须显式启用 `MTL_STRICT_STORAGE=1`；<br/>• 抽离 `scripts/_dist_view.py` 统一定义分发视图与排除规则，公开分发包剔除本机私有开发脚本、过程审计报告与版权夹具，包体积显著瘦身且工作树 sha256 零不一致；<br/>• 打包脚本与 `core.version` 单一信源全面对齐，Manifest 排除自身打包消除自指死锁；<br/>• 新增 `tests/test_cache_paths.py` 校验缓存优先落于 skill 目录、回退有告警、严格模式 fail-closed，并纳入 CI，全量离线自动化测试扩展至 38 套件 561 用例（550 通过 / 11 条件跳过 / 0 失败）。 |
-| **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 423 项测试（412 通过 / 11 跳过）**<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 消除元数据假认证：严禁本地数据回填远端凭证，远端缺失元数据显式标为 missing 并降为 loose 候选；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• 区分 `byModel=True` 模型生成与官方逐字凭证，严禁模型轴交付为 T1 或写回 ISRC；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 完善 TTML 解析：XML 实体反转义、英文空格保持与时间标签规范化、多 div 时序自愈与质量指标审计；<br/>• 新增 `tests/test_v181_repro.py` 与 `tests/test_isrc_integration.py`，全量测试扩展至 24 套件 423 用例（412 通过 / 11 条件跳过）。 |
+| **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 缓存五级回退与分发瘦身 · 38 套件 566 用例全绿**<br/>• 修复 H02 私有指纹 segment 规则对带扩展名文件名的匹配漏检，补齐路径全等与 stem 全等检测；<br/>• 落实 H18 lrc.red 官方条款契约：`MTL_LRC_RED_CONTACT` 严格校验邮箱格式，缺省或非法时优雅跳过该源；导出 LRC/SPL 规范注入 `[re:lrc.red (https://lrc.red)]` 署名回链；<br/>• 改造 `core/utils/cache_paths.py` 五级候选链：默认优先使用 skill 根目录 `.cache/`（跟随工作区所在卷）；该目录不可写时按五级回退继续尝试系统缓存与 TEMP 并告警；如需严格限定单一目录须显式启用 `MTL_STRICT_STORAGE=1`；<br/>• 抽离 `scripts/_dist_view.py` 统一定义分发视图与排除规则，公开分发包剔除本机私有开发脚本、过程审计报告与版权夹具，包体积显著瘦身且工作树 sha256 零不一致；<br/>• 打包脚本与 `core.version` 单一信源全面对齐，Manifest 排除自身打包消除自指死锁；<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 全量离线自动化测试扩展至 38 套件 566 用例（555 通过 / 11 条件跳过 / 0 失败；分发包内为 33 套件 529 用例）。 |
 
 | **v1.8.0** | `2026-11-07` | **lrc.red 全球 ISRC 逐字网络接入 · Apple TTML 双引擎调度 · 366 项测试全绿**<br/>• 引入 lrc.red 全球歌词开放同步网络，作为 Apple TTML 的原生双引擎补充；<br/>• 支持基于本地 ISRC 编码直查 Apple Music TTML 逐字流光歌词；<br/>• 实现 lrc.red 专属 TTML 命名空间与逐字结构解析器。 |
 | **v1.7.0** | `2026-11-04` | **QQ 音乐 QRC 逐字通道 · 七源调度 · need_more 判据修复 · 353 项测试全绿**<br/>• 新增 QQ 音乐 QRC 逐字源：移植 QQ 非标准位序的 3DES 解密（标准 DES 库解不出来），解析 XML 包装的 `字(起,长)` 格式；<br/>• 调度顺序改为 **Apple → 网易 → QQ → 酷狗 → AMLL → LRCSHARE → LRCLIB**；<br/>• 修复 `need_more`：从「有候选即停」改为「非逐字就继续」，否则网易行级会锁死 QQ 逐字；<br/>• QQ 只交逐字，行级候选直接放弃；不消费未验证的 trans/roma 字段；<br/>• 新增 `tests/test_qq_qrc.py`（53 条），套件总数 21。 |

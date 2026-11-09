@@ -96,6 +96,7 @@ def test_candidate_carries_attribution():
     def fake(url, **kwargs):
         return HttpResult(status=200, text=payload, bytes_len=len(payload), elapsed_ms=5, error="")
 
+    old = _with_contact("ops@example.invalid")
     LrcRedFetcher.clear_cache()
     try:
         with mock.patch("core.fetchers.lrc_red.http_get_text_ex", side_effect=fake):
@@ -106,7 +107,30 @@ def test_candidate_carries_attribution():
         assert cand["provenance"]["attribution"] == "https://lrc.red"
         assert cand["provenance"]["provider"] == "lrc.red"
     finally:
+        _restore(old)
         LrcRedFetcher.clear_cache()
+
+
+def test_requests_blocked_when_contact_missing_or_invalid():
+    """未设置合规邮箱时，不得向远端发起 HTTP 请求。"""
+    called = []
+
+    def fake(url, **kwargs):
+        called.append(url)
+        return HttpResult(status=200, text="{}", bytes_len=2, elapsed_ms=1, error="")
+
+    for invalid_val in [None, "", "not-an-email", "see https://github.com/issues"]:
+        old = _with_contact(invalid_val)
+        LrcRedFetcher.clear_cache()
+        called.clear()
+        try:
+            with mock.patch.object(lr_mod, "_get_http_func", return_value=fake):
+                status, data = LrcRedFetcher._http_get_json("https://lrc.red/s/FAKE.json")
+                assert status == 0 and data is None
+                assert len(called) == 0, f"在联系方式为 {invalid_val!r} 时不应发出请求"
+        finally:
+            _restore(old)
+            LrcRedFetcher.clear_cache()
 
 
 

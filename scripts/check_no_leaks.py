@@ -106,7 +106,7 @@ class PrivateConfigError(RuntimeError):
 # 私有词表
 # --------------------------------------------------------------------------- #
 class PrivateRule:
-    __slots__ = ("mode", "value", "audited", "index", "folded")
+    __slots__ = ("mode", "value", "audited", "index", "folded", "_path_segment_re")
 
     def __init__(self, mode: str, value: str, audited: bool, index: int):
         self.mode = mode
@@ -114,6 +114,7 @@ class PrivateRule:
         self.audited = audited
         self.index = index
         self.folded = value.casefold()
+        self._path_segment_re = None
 
     @property
     def label(self) -> str:
@@ -125,7 +126,20 @@ class PrivateRule:
             return self.folded in lowered
         if self.mode == "token":
             return _bounded_match(lowered, self.folded, TOKEN_WORD_EXTRA)
-        return _bounded_match(lowered, self.folded, SEGMENT_WORD_EXTRA)
+        if _bounded_match(lowered, self.folded, SEGMENT_WORD_EXTRA):
+            return True
+        # P0/H02: 正文路径语法识别（前有路径/文本界，后接可选扩展名及路径/文本界）
+        # 例：.../SYNTH_PRIVATE_DIR_97.txt 或 /test/SYNTH_PRIVATE_DIR_97.flac
+        if self.mode == "segment":
+            if self._path_segment_re is None:
+                pat = (
+                    r"(?:^|(?<=[\/\\\"\'\`\(\[\{\s:=]))"
+                    + re.escape(self.folded)
+                    + r"(?=(?:\.[a-zA-Z0-9_-]+)?(?:[\/\\\"\'\`\)\]\}\s,;:!?]|$))"
+                )
+                self._path_segment_re = re.compile(pat, re.IGNORECASE)
+            return bool(self._path_segment_re.search(lowered))
+        return False
 
 
 def _is_word_char(ch: str, extra: set) -> bool:
@@ -307,11 +321,31 @@ def _decode_scannable(payload: bytes, name: str) -> tuple[str | None, str | None
         return None, "UNSCANNABLE_MEMBER"
 
 
+def _matches_path_segment(path_str: str, needle_folded: str) -> bool:
+    """检查 needle_folded 是否作为路径段或文件名 stem 在 path_str 中完整出现。"""
+    norm = path_str.replace("\\", "/")
+    parts = [p for p in norm.split("/") if p]
+    for p in parts:
+        p_fold = p.casefold()
+        if p_fold == needle_folded:
+            return True
+        if "." in p_fold:
+            stem = p_fold.rsplit(".", 1)[0]
+            if stem == needle_folded:
+                return True
+    return False
+
+
 def _scan_member_name(name: str, rules: list[PrivateRule], hits: list, allowed: list, verbose: bool, prefix: str):
     label = _safe_label(name, prefix)
     normalized = name.replace(chr(92), "/")
     if _high_risk_name(normalized):
         hits.append((label, 0, "HIGH_RISK_FILENAME"))
+    # P0/H02: 路径成员名称专用 segment 检查（覆盖目录段与文件名 stem，如 normal/SYNTH_PRIVATE_DIR_97.txt）
+    for rule in rules:
+        if rule.mode == "segment" and _matches_path_segment(normalized, rule.folded):
+            hits.append((label, 0, rule.label))
+            break
     # 路径整体扫描兼顾 private segment/literal/token 三类词条以及通用 PII。
     scan_text(normalized, label, rules, hits, allowed, verbose)
     return label

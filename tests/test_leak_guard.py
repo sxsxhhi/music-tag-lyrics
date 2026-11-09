@@ -248,6 +248,38 @@ def test_private_filename_in_zip_member_name_blocked():
     assert SYNTH_LIT not in result.stdout
 
 
+def test_private_segment_in_filename_with_extension_blocked():
+    """P0/H02: segment 规则在带扩展名的文件名中必须能命中（如 normal/DIR.txt）。"""
+    fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
+    z = _tmp_zip({"normal/" + SYNTH_SEG + ".txt": "hello\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "PRIVATE_SEGMENT" in result.stdout
+    assert SYNTH_SEG not in result.stdout
+
+
+def test_private_segment_in_text_path_with_extension_blocked():
+    """P0/H02: 正文中带扩展名的路径也必须命中 segment 规则。"""
+    fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
+    z = _tmp_zip({"docs/guide.md": "数据源路径为 Z:/audio/" + SYNTH_SEG + ".flac\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "PRIVATE_SEGMENT" in result.stdout
+    assert SYNTH_SEG not in result.stdout
+
+
+def test_segment_mode_negative_cases_not_flagged():
+    """P0/H02 负例验证：带有前后缀的长词不得产生误报。"""
+    fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
+    z = _tmp_zip({
+        "normal/prefix" + SYNTH_SEG + ".txt": "content\n",
+        "normal/" + SYNTH_SEG + "suffix.txt": "content\n",
+        "docs/note.md": "some text with foo" + SYNTH_SEG + "bar in prose\n",
+    })
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_private_name_in_tsv_content_blocked():
     fp = _tmp_file("literal:" + SYNTH_LIT + "\n")
     z = _tmp_zip({"core/data/sample.tsv": "item\t" + SYNTH_LIT + "\n"})

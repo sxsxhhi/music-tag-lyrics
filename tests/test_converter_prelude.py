@@ -54,7 +54,7 @@ def _strip(line):
 def _body_rows(out):
     """去掉 [ti:]/[ar:] 两行后的所有非空行。"""
     rows = [l for l in out.split("\n") if l.strip()]
-    return [l for l in rows if not re.match(r"^\[(ti|ar|al|by|offset):", l)]
+    return [l for l in rows if not re.match(r"^\[(ti|ar|al|by|re|offset):", l)]
 
 
 def test_title_span_meets_acoustic_floor():
@@ -134,6 +134,19 @@ def test_no_credit_still_works():
     title_row = _body_rows(out)[0]
     t = _tags(title_row)
     assert t[0] == 1000 and t[-1] == 5500, f"标题区间异常：{t[0]}->{t[-1]}"
+
+
+
+
+def test_lrc_red_source_exports_attribution_tag():
+    """H18: 当数据来源为 lrc-red 时，to_spl 输出必须包含 [re:lrc.red (https://lrc.red)] 署名标签。"""
+    data = {"source": "lrc-red", "tags": {}, "lines": [_line("正文一句", 5000, 10000)]}
+    out = to_spl(data, title="歌曲", artist="歌手")
+    assert "[re:lrc.red (https://lrc.red)]" in out, f"缺少 lrc.red 署名标签: {out}"
+
+    data_other = {"source": "netease", "tags": {}, "lines": [_line("正文一句", 5000, 10000)]}
+    out_other = to_spl(data_other, title="歌曲", artist="歌手")
+    assert "[re:lrc.red" not in out_other
 
 
 def main():
