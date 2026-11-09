@@ -91,5 +91,17 @@ jobs:
         run: python tests/test_lrc_red_terms.py
       - name: pre-push hook fail-closed (H02)
         run: python tests/test_prepush_hook.py
+      - name: v1.8.2 standard content cleaner (R2)
+        run: python tests/test_standard_content.py
+      - name: v1.8.2 standard prelude scheduler (R3)
+        run: python tests/test_standard_prelude.py
+      - name: v1.8.2 standard ELRC/TTML roundtrip auditor (R1)
+        run: python tests/test_elrc_ttml_roundtrip.py
+      - name: v1.8.2 standard container tags adapter (R4)
+        run: python tests/test_standard_container_tags.py
+      - name: v1.8.2 standard CLI entry
+        run: python tests/test_standard_cli.py
+      - name: v1.8.2 hardening and fault injection regression
+        run: python tests/test_v182_hardening.py
       - name: Path & PII leak guard
         run: python scripts/check_no_leaks.py

@@ -2,6 +2,7 @@
 """Apple Music TTML 解析：保留词边界 join、x-translation、x-bg 不进主唱。"""
 
 import re
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 
 from ..utils.text_utils import is_fullwidth_char, is_hanzi_char, is_kana_char
@@ -137,9 +138,31 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
             if _parsed and _parsed > 0:
                 body_dur_ms = _parsed
 
+    # v1.8.2: legacy parser must not silently erase Apple head translations.
+    # Keep permissive old-source parsing when no iTunesMetadata is present;
+    # strict XML + key validation is required when it is present.
+    head_translation = {}
+    if 'iTunesMetadata' in ttml_text:
+        if '<!DOCTYPE' in ttml_text.upper() or '<!ENTITY' in ttml_text.upper():
+            raise ValueError('Unsafe TTML DTD/entity input')
+        try:
+            xml_root = ET.fromstring(ttml_text)
+        except ET.ParseError as exc:
+            raise ValueError('Cannot parse TTML head translations') from exc
+        for node in xml_root.findall('.//{*}iTunesMetadata/{*}translations/{*}translation/{*}text'):
+            key = node.attrib.get('for')
+            if not key or key in head_translation:
+                raise ValueError('Missing/duplicate TTML translation target')
+            head_translation[key] = (node.text or '').strip()
+        valid_keys = {next((v for k,v in p.attrib.items() if k.endswith('}key') or k=='key'), None)
+                      for p in xml_root.findall('.//{*}body/{*}div/{*}p')}
+        if not set(head_translation).issubset(valid_keys):
+            raise ValueError('Hanging TTML head translation reference')
+
     lines: List[Dict[str, Any]] = []
     for pm in _P_RE.finditer(ttml_text):
         p_attrs = _attrs(pm.group(1))
+        p_key = p_attrs.get('itunes:key') or p_attrs.get('key')
         p_begin = _ms(p_attrs, "begin")
         if p_begin is None:
             continue
@@ -237,6 +260,12 @@ def parse_ttml(ttml_text: str, adjust: int = 0) -> Dict[str, Any]:
             if translation and lines and not lines[-1].get("translation") and abs(lines[-1]["start"] - p_begin) <= 2000:
                 lines[-1]["translation"] = translation
             continue
+
+        if p_key and p_key in head_translation:
+            head_value = head_translation[p_key]
+            if translation and translation != head_value:
+                raise ValueError('Conflicting TTML head/inline translations')
+            translation = head_value
 
         lines.append({
             "start": p_begin,

@@ -51,7 +51,8 @@ def test_cli_audit_mode_read_only():
             mode="audit",
             report_path=report_file,
         )
-        assert res["status"] == "PASS"
+        assert res["status"] == "ONE_FORMAT_ONLY"
+        assert res["format_audit"] == "ONE_FORMAT_ONLY"
         assert os.path.exists(report_file)
         with open(report_file, "r", encoding="utf-8") as f:
             data = json.load(f)

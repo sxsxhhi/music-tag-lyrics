@@ -103,7 +103,8 @@ class CanonicalLine:
     @property
     def is_singing(self) -> bool:
         """是否属于真实演唱或真实对白。"""
-        return self.role in (LineRole.SINGING, LineRole.SPOKEN_CONTENT)
+        return (self.role == LineRole.SINGING or
+                (self.role == LineRole.SPOKEN_CONTENT and not self.metadata.get("original_singer")))
 
 
 @dataclass
@@ -160,3 +161,10 @@ class CanonicalLyrics:
                 for w in line.words:
                     h.update(f"{w.text}|{w.start_ms}|{w.end_ms}|{w.join}|{w.is_pause}\n".encode("utf-8"))
         return h.hexdigest()
+
+
+def word_boundary_space(previous: CanonicalWord, current: CanonicalWord) -> bool:
+    """Compat: old TTML parser stores join on previous token; v1.8.2 may
+    store it on current. Both 'space' and literal ' ' represent a word gap."""
+    return (previous.join in ("space", " ") or current.join in ("space", " ")
+            or previous.text.endswith(" ") or current.text.startswith(" "))

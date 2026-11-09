@@ -88,7 +88,11 @@ _AMBIGUOUS_CUE_RE = re.compile(
 
 def _split_credit_tokens(clean_text: str) -> List[Tuple[str, str]]:
     """切分单行中的作词/作曲键值对。"""
+    # A credit record must start at the beginning of the whole line. A phrase
+    # inside a sung lyric ("当我说作曲：...") is never a credit record.
     tokens = list(_CREDIT_TOKEN_RE.finditer(clean_text or ""))
+    if not tokens or clean_text[:tokens[0].start()].strip():
+        return []
     pairs: List[Tuple[str, str]] = []
     for i, m in enumerate(tokens):
         kind = (m.group(1) or m.group(2) or "").strip()
@@ -174,6 +178,13 @@ def classify_line_role(
             "reason": "SAMPLE_EXPLANATION_RETAINED",
         }
 
+    # Sung words are stronger evidence than staff-like keywords. A line that
+    # has a real word axis is retained, even if it starts with "鸣谢：".
+    # Uncertain lines must be reviewed, never silently purged.
+    if has_words and (_CREDIT_TOKEN_RE.search(clean) or _PRODUCTION_KEYWORD_RE.match(clean)):
+        return LineRole.SINGING, {"ambiguous_credit_in_singing": True,
+                                  "reason": "CREDIT_LIKE_SUNG_TEXT_RETAINED"}
+
     # 6. 词曲署名提取与分类
     credit_pairs = _split_credit_tokens(clean)
     if credit_pairs:
@@ -225,6 +236,21 @@ def classify_line_role(
             "has_cue_prefix": True,
         }
 
+    # Named performer cue: only an exact, known artist name is sufficient
+    # evidence. Arbitrary short colon-prefixed text is NOT a singer cue.
+    artist_names = [x.strip() for x in re.split(r"[/&、]", song_artist or "") if x.strip()]
+    for artist_name in artist_names:
+        for sep in ("：", ":"):
+            lead = artist_name + sep
+            if clean.startswith(lead):
+                rest = clean[len(lead):].strip()
+                if rest:
+                    return LineRole.SINGING, {"cue_prefix":artist_name,
+                                              "singing_text":rest,
+                                              "has_cue_prefix":True}
+                return LineRole.PERFORMER_CUE, {"cue_prefix":artist_name,
+                                                "standalone":True}
+
     # 9. 歧义词检查（说唱：/旁白：/念白：/和声：等）
     m_amb = _AMBIGUOUS_CUE_RE.match(clean)
     if m_amb:
@@ -247,7 +273,9 @@ def classify_line_role(
     title_norm = song_title.lower().strip() if song_title else ""
     artist_norm = song_artist.lower().strip() if song_artist else ""
 
-    if title_norm and (line_index == 0 or line_index < 3):
+    # Confirmed un-timed duplicates may occur even at the outro; a genuinely
+    # sung title with real word stamps must never be removed as metadata.
+    if title_norm and (line_index < 3 or not has_words):
         if clean_norm == title_norm:
             return LineRole.TITLE, {"match_type": "EXACT_TITLE"}
         if artist_norm:
@@ -269,12 +297,21 @@ def classify_and_clean_all_lines(
     """R2: 对全曲所有逻辑行执行语义分类、制作名单提取与精准清理。"""
     canonical = CanonicalLyrics()
     raw_lines = lyrics_data.get("lines", []) or []
+    src_tags = lyrics_data.get("tags", {}) or {}
     canonical.song = {
-        "title": song_title or lyrics_data.get("tags", {}).get("title", ""),
-        "artist": song_artist or lyrics_data.get("tags", {}).get("artist", ""),
-        "album": lyrics_data.get("tags", {}).get("album", ""),
+        "title": song_title or src_tags.get("title") or src_tags.get("ti", ""),
+        "artist": song_artist or src_tags.get("artist") or src_tags.get("ar", ""),
+        "album": src_tags.get("album", ""),
+        "lyricist": src_tags.get("lyricist", ""),
+        "composer": src_tags.get("composer", ""),
         "audio_path": audio_path,
     }
+
+    re_tag = str(src_tags.get("re", "") or "").strip()
+    if re_tag.lower().startswith("lrc.red") and "https://lrc.red" in re_tag:
+        canonical.song["attribution_re"] = "lrc.red (https://lrc.red)"
+    if (lyrics_data.get("source") or "").lower() == "lrc-red":
+        canonical.song["attribution_re"] = "lrc.red (https://lrc.red)"
 
     if not canonical.song["title"] and audio_path:
         fb_title, fb_artist = parse_filename_backup(audio_path)
@@ -312,11 +349,24 @@ def classify_and_clean_all_lines(
                 )
             )
 
-        # 检查是否为紧随前一行、同起点的译文行
+        # Same timestamp alone is NOT a translation credential. Only explicit
+        # provenance or unmistakable foreign→Chinese script evidence may attach.
         if classified_lines and not words:
             prev_cline, prev_extra = classified_lines[-1]
-            if prev_cline.start_ms == st_ms and prev_cline.is_singing:
-                prev_cline.translation = raw_text.strip()
+            explicit_translation = bool(rline.get("is_translation") or rline.get("translation_of") == prev_cline.stable_id)
+            previous_text = prev_cline.text or ""
+            this_text = raw_text.strip()
+            strong_language_evidence = (
+                prev_cline.is_singing and prev_cline.words and
+                re.search(r"[A-Za-z]{2,}", previous_text) and
+                not re.search(r"[\u4e00-\u9fff]", previous_text) and
+                re.search(r"[\u4e00-\u9fff]", this_text) and
+                not _PERFORMER_CUE_PREFIX_RE.match(this_text) and
+                not _PRODUCTION_KEYWORD_RE.match(this_text)
+            )
+            if (prev_cline.start_ms == st_ms and prev_cline.is_singing and
+                    not prev_cline.translation and (explicit_translation or strong_language_evidence)):
+                prev_cline.translation = this_text
                 t_line = CanonicalLine(
                     stable_id=f"L{idx + 1}",
                     source_index=idx,
@@ -338,6 +388,10 @@ def classify_and_clean_all_lines(
             has_words=bool(words),
         )
 
+        if extra.get("ambiguous_credit_in_singing"):
+            canonical.add_issue("CREDIT_LIKE_SUNG_TEXT_RETAINED", IssueSeverity.REVIEW_REQUIRED,
+                                source_index=idx, action="RETAIN_SUNG_LINE_FOR_REVIEW",
+                                blocking=True)
         if "lyricists" in extra:
             extracted_lyricists.extend(extra["lyricists"])
         if "composers" in extra:
@@ -359,6 +413,39 @@ def classify_and_clean_all_lines(
         )
         classified_lines.append((cline, extra))
 
+    # Optional read-only reference: restore a performer prefix only when an
+    # unambiguous text AND timestamp match proves the very same singing line.
+    # Never attempt to transplant a different song's lyrics or word axis.
+    if ref_lyrics_data:
+        ref_tags = ref_lyrics_data.get("tags", {}) or {}
+        for key, expected in (("ti", eff_title),("ar", eff_artist)):
+            provided = str(ref_tags.get(key) or ref_tags.get({"ti":"title","ar":"artist"}[key]) or "").strip()
+            if provided and expected and provided.casefold() != str(expected).strip().casefold():
+                canonical.add_issue("REFERENCE_SONG_MISMATCH", IssueSeverity.REVIEW_REQUIRED,
+                                    action="DO_NOT_RESTORE_CUES", blocking=True)
+                ref_lyrics_data = None
+                break
+    if ref_lyrics_data:
+        refs = []
+        for r in ref_lyrics_data.get("lines", []) or []:
+            rt = str(r.get("text") or "").strip()
+            rm = _PERFORMER_CUE_PREFIX_RE.match(rt)
+            if rm and rm.group(2).strip():
+                refs.append((rm.group(1), rm.group(2).strip(), int(r.get("start", -999999))))
+        for cl, _ in classified_lines:
+            if not cl.is_singing or cl.speaker_prefix or not cl.words:
+                continue
+            matches = [(prefix, txt) for prefix, txt, when in refs
+                       if txt == cl.text.strip() and abs(when - cl.start_ms) <= 1500]
+            if len(matches) == 1:
+                cl.speaker_prefix = matches[0][0]
+                cl.text = cl.speaker_prefix + "：" + cl.text
+                cl.metadata["role_restored_from_reference"] = True
+            elif len(matches) > 1:
+                canonical.add_issue("REFERENCE_ROLE_AMBIGUOUS", IssueSeverity.REVIEW_REQUIRED,
+                                    line_id=cl.stable_id, blocking=True,
+                                    action="KEEP_UNMODIFIED_REQUIRE_REVIEW")
+
     def _dedup_list(items: List[str]) -> List[str]:
         seen: Set[str] = set()
         res: List[str] = []
@@ -371,8 +458,15 @@ def classify_and_clean_all_lines(
 
     final_lyricists = _dedup_list(extracted_lyricists)
     final_composers = _dedup_list(extracted_composers)
-    canonical.song["extracted_lyricist"] = "/".join(final_lyricists) if final_lyricists else None
-    canonical.song["extracted_composer"] = "/".join(final_composers) if final_composers else None
+    # Prior verified non-empty tags are authoritative until a maintainer
+    # explicitly proves a change; discovered credits may only fill blanks.
+    for field, values in (("lyricist", final_lyricists), ("composer", final_composers)):
+        candidate = "/".join(values) if values else ""
+        previous = str(canonical.song.get(field) or "").strip()
+        if previous and candidate and previous != candidate:
+            canonical.add_issue("EXISTING_CREDIT_CONFLICT", IssueSeverity.REVIEW_REQUIRED,
+                                action="RETAIN_EXISTING_REQUIRE_EVIDENCE", blocking=True)
+        canonical.song["extracted_" + field] = previous or candidate or None
 
     cleaned_lines: List[CanonicalLine] = []
     purged_indices: List[int] = []

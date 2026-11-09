@@ -1,386 +1,252 @@
 # -*- coding: utf-8 -*-
-"""ELRC ↔ TTML 双向独立一致性审计引擎 (v1.8.2 R1)。
+"""Independent structural ELRC/TTML parser and strict v1.8.2 verifier.
 
-满足《歌曲检测与修补标准》§2 第 4 条及方案铁律：
-1. 完全独立于生成器的双向反解析路径；
-2. 全曲所有逻辑行（前奏投影与正文演唱行）及逐字 1:1 双向比对；
-3. 时间误差严格 <= 1ms 门禁；
-4. div 容器边界计算误差严格 <= 2ms 门禁；
-5. 译文严格核对 for="Ln" 与行级译文挂接关系，错挂/悬空引用阻断；
-6. 精准反例检测：单词错轴、div 偏差、行数缺失、丢字、空格丢失等准确分类；
-7. 行级 ELRC 无显式 end 时准确标记 LINE_END_NOT_REPRESENTABLE，不作假通过。
+The comparison never interprets an equal timestamp alone as translation; TTML
+for= evidence is required. Source-canonical verification is a separate hard gate.
 """
-
 from __future__ import annotations
-
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
-
+from dataclasses import dataclass,field
+from typing import Any,List,Optional,Tuple
 from ..utils.time_utils import parse_time_string_to_ms
 
-# ELRC 行与字正则
-_ELRC_LINE_RE = re.compile(r"^\[(\d+:\d+(?:\.\d+)?)\](.*)$")
-_ELRC_WORD_RE = re.compile(r"<(\d+:\d+(?:\.\d+)?)>([^<]*)")
-
+ELINE=re.compile(r"^\[(\d+:\d+(?:\.\d+)?)\](.*)$")
+ETAG=re.compile(r"<(\d+:\d+(?:\.\d+)?)>([^<]*)")
+NT="http://www.w3.org/ns/ttml"
+NI="http://music.apple.com/lyric-ttml-internal"
 
 @dataclass
 class ParsedWord:
-    text: str
-    start_ms: int
-    end_ms: int
-
+    text:str
+    start_ms:int
+    end_ms:int
 
 @dataclass
 class ParsedLine:
-    line_id: str
-    start_ms: int
-    end_ms: Optional[int]
-    text: str
-    words: List[ParsedWord] = field(default_factory=list)
-    translation: Optional[str] = None
-    has_explicit_end: bool = False
-    is_prelude: bool = False
-
+    line_id:str
+    start_ms:int
+    end_ms:Optional[int]
+    text:str
+    words:List[ParsedWord]=field(default_factory=list)
+    translation:Optional[str]=None
+    has_explicit_end:bool=False
+    is_prelude:bool=False
+    role:str=""
 
 @dataclass
 class ComparisonIssue:
-    code: str
-    message: str
-    line_id: Optional[str] = None
-    elrc_val: Any = None
-    ttml_val: Any = None
-    blocking: bool = True
-
+    code:str
+    message:str
+    line_id:Optional[str]=None
+    elrc_val:Any=None
+    ttml_val:Any=None
+    blocking:bool=True
 
 @dataclass
 class ComparisonResult:
-    passed: bool
-    issues: List[ComparisonIssue] = field(default_factory=list)
-    max_time_delta_ms: int = 0
-    max_div_delta_ms: int = 0
-
-    def add_error(
-        self,
-        code: str,
-        message: str,
-        line_id: Optional[str] = None,
-        elrc_val: Any = None,
-        ttml_val: Any = None,
-    ) -> None:
-        self.issues.append(
-            ComparisonIssue(
-                code=code,
-                message=message,
-                line_id=line_id,
-                elrc_val=elrc_val,
-                ttml_val=ttml_val,
-                blocking=True,
-            )
-        )
-        self.passed = False
+    passed:bool
+    issues:List[ComparisonIssue]=field(default_factory=list)
+    max_time_delta_ms:int=0
+    max_div_delta_ms:int=0
+    def add_error(self,code,message,line_id=None,elrc_val=None,ttml_val=None):
+        self.issues.append(ComparisonIssue(code,message,line_id,elrc_val,ttml_val))
+        self.passed=False
 
 
-def parse_elrc_structural(elrc_text: str) -> List[ParsedLine]:
-    """独立反解析 ELRC 文本为结构化逻辑行列表。"""
-    raw_lines = elrc_text.splitlines()
-    parsed_lines: List[ParsedLine] = []
-    line_counter = 1
+def _time(text):
+    t=parse_time_string_to_ms(text)
+    if t is None:raise ValueError("Invalid timestamp")
+    return t
 
-    for raw in raw_lines:
-        line_str = raw.strip()
-        if not line_str:
-            continue
 
-        # 跳过纯元数据行
-        if line_str.startswith("[re:") or line_str.startswith("[ti:") or line_str.startswith("[ar:"):
-            continue
-
-        m_line = _ELRC_LINE_RE.match(line_str)
-        if not m_line:
-            continue
-
-        st_ms = parse_time_string_to_ms(m_line.group(1))
-        content = m_line.group(2)
-
-        # 检查是否为前一行的中文译文（同时间戳、无逐字标签、紧随其后）
-        if parsed_lines and parsed_lines[-1].start_ms == st_ms and "<" not in content:
-            parsed_lines[-1].translation = content.strip()
-            continue
-
-        # 解析逐字标签
-        word_matches = list(_ELRC_WORD_RE.finditer(content))
-        words: List[ParsedWord] = []
-        full_text_parts: List[str] = []
-        has_explicit_end = False
-        end_ms: Optional[int] = None
-
-        if word_matches:
-            for i, wm in enumerate(word_matches):
-                w_st = parse_time_string_to_ms(wm.group(1))
-                w_txt = wm.group(2)
-                if i + 1 < len(word_matches):
-                    w_et = parse_time_string_to_ms(word_matches[i + 1].group(1))
-                else:
-                    w_et = w_st
+def parse_elrc_structural(text:str)->List[ParsedLine]:
+    if len(text.encode('utf-8'))>16*1024*1024:raise ValueError("ELRC exceeds allowed size")
+    res=[]
+    for raw in text.splitlines():
+        # DO NOT .strip() the payload: whitespace is part of the lyric.
+        if not raw.strip():continue
+        if re.match(r'^\[[a-zA-Z][a-zA-Z0-9_-]*:',raw):continue
+        m=ELINE.match(raw)
+        if not m:continue
+        st=_time(m.group(1));body=m.group(2);tags=list(ETAG.finditer(body));words=[];end=None;explicit=False
+        prefix=body[:tags[0].start()] if tags else ''
+        if tags:
+            for j,tag in enumerate(tags):
+                w_st=_time(tag.group(1));w_txt=tag.group(2)
+                w_end=_time(tags[j+1].group(1)) if j+1<len(tags) else w_st
                 if w_txt:
-                    words.append(ParsedWord(text=w_txt, start_ms=w_st, end_ms=w_et))
-                    full_text_parts.append(w_txt)
-
-            if word_matches[-1].group(2) == "":
-                has_explicit_end = True
-                end_ms = parse_time_string_to_ms(word_matches[-1].group(1))
-            elif words:
-                end_ms = words[-1].end_ms
+                    words.append(ParsedWord(w_txt,w_st,w_end))
+            if tags[-1].group(2)=="":
+                explicit=True;end=_time(tags[-1].group(1))
+            elif words:end=words[-1].end_ms
+            value=prefix+''.join(w.text for w in words)
         else:
-            full_text_parts.append(content)
-
-        line_id = f"L{line_counter}"
-        line_counter += 1
-
-        parsed_lines.append(
-            ParsedLine(
-                line_id=line_id,
-                start_ms=st_ms,
-                end_ms=end_ms,
-                text="".join(full_text_parts).strip(),
-                words=words,
-                has_explicit_end=has_explicit_end,
-                is_prelude=False,
-            )
-        )
-
-    return parsed_lines
-
-
-def parse_ttml_structural(ttml_text: str) -> Tuple[List[ParsedLine], Tuple[int, int], List[ComparisonIssue]]:
-    """独立反解析 TTML XML 为结构化逻辑行列表及 div 边界。"""
-    issues: List[ComparisonIssue] = []
-    parsed_lines: List[ParsedLine] = []
-    div_bounds = (0, 0)
-
-    try:
-        root = ET.fromstring(ttml_text)
-    except Exception as exc:
-        issues.append(ComparisonIssue(code="XML_SYNTAX_ERROR", message=f"TTML XML syntax error: {exc}"))
-        return parsed_lines, div_bounds, issues
-
-    # 1. 抽取译文（支持 head/iTunesMetadata 以及 inline x-translation 双向兼容）
-    translations_by_key: Dict[str, str] = {}
-    for text_node in root.findall(".//{*}iTunesMetadata/{*}translations/{*}translation/{*}text"):
-        for_key = text_node.attrib.get("for")
-        if for_key and text_node.text:
-            translations_by_key[for_key] = text_node.text.strip()
-
-    # 2. 抽取 div 边界
-    div_elem = root.find(".//{*}body/{*}div")
-    if div_elem is not None:
-        d_bg = parse_time_string_to_ms(div_elem.attrib.get("begin", "0"))
-        d_ed = parse_time_string_to_ms(div_elem.attrib.get("end", "0"))
-        div_bounds = (d_bg, d_ed)
-    else:
-        issues.append(ComparisonIssue(code="DIV_MISSING", message="No <div> found in TTML body."))
-
-    # 3. 抽取各 <p> 节点
-    seen_keys: set = set()
-    p_nodes = root.findall(".//{*}body/{*}div/{*}p")
-    for p in p_nodes:
-        p_bg = parse_time_string_to_ms(p.attrib.get("begin", "0"))
-        p_ed = parse_time_string_to_ms(p.attrib.get("end", "0"))
-        p_key = None
-        for k, v in p.attrib.items():
-            if k.endswith("key") or k == "key":
-                p_key = v
-                break
-        if not p_key:
-            p_key = f"L{len(parsed_lines) + 1}"
-
-        if p_key in seen_keys:
-            issues.append(ComparisonIssue(code="DUPLICATE_P_KEY", message=f"Duplicate p key '{p_key}' in TTML.", line_id=p_key))
-        seen_keys.add(p_key)
-
-        inline_trans = None
-        words: List[ParsedWord] = []
-        p_text_parts: List[str] = []
-
-        span_nodes = p.findall(".//{*}span")
-        for s in span_nodes:
-            s_role = None
-            for attr_k, attr_v in s.attrib.items():
-                if attr_k.endswith("role") and attr_v == "x-translation":
-                    s_role = "x-translation"
-                    break
-            if s_role == "x-translation":
-                inline_trans = (s.text or "").strip()
-                continue
-
-            s_bg = parse_time_string_to_ms(s.attrib.get("begin", "0"))
-            s_ed = parse_time_string_to_ms(s.attrib.get("end", "0"))
-            s_txt = s.text or ""
-            tail_space = " " if (s.tail and " " in s.tail) else ""
-            words.append(ParsedWord(text=s_txt + tail_space, start_ms=s_bg, end_ms=s_ed))
-            p_text_parts.append(s_txt + tail_space)
-
-        final_trans = translations_by_key.get(p_key) or inline_trans
-        is_prelude = p_key.startswith("P_")
-
-        parsed_lines.append(
-            ParsedLine(
-                line_id=p_key,
-                start_ms=p_bg,
-                end_ms=p_ed,
-                text="".join(p_text_parts).strip(),
-                words=words,
-                translation=final_trans,
-                has_explicit_end=True,
-                is_prelude=is_prelude,
-            )
-        )
-
-    # 4. 检查是否有未解析到任何 <p> 节点的悬空译文 (for="L99")
-    for trans_key in translations_by_key:
-        if trans_key not in seen_keys:
-            issues.append(
-                ComparisonIssue(
-                    code="TRANSLATION_HANGING_REFERENCE",
-                    message=f"Translation refers to nonexistent p key '{trans_key}'.",
-                    line_id=trans_key,
-                )
-            )
-
-    return parsed_lines, div_bounds, issues
-
-
-def compare_elrc_ttml(elrc_text: str, ttml_text: str) -> ComparisonResult:
-    """R1: 独立反解析并对 ELRC 与 TTML 执行严格双向一致性比对。"""
-    res = ComparisonResult(passed=True)
-
-    # 1. 独立解析
-    elrc_lines = parse_elrc_structural(elrc_text)
-    ttml_lines, div_bounds, ttml_issues = parse_ttml_structural(ttml_text)
-
-    if ttml_issues:
-        for iss in ttml_issues:
-            res.add_error(iss.code, iss.message, iss.line_id)
-        return res
-
-    # 2. 检查总行数
-    if len(elrc_lines) != len(ttml_lines):
-        res.add_error(
-            code="LINE_MISSING",
-            message=f"Line count mismatch: ELRC has {len(elrc_lines)} lines, TTML has {len(ttml_lines)} lines.",
-            elrc_val=len(elrc_lines),
-            ttml_val=len(ttml_lines),
-        )
-        return res
-
-    # 3. 逐行 1:1 全量比对
-    max_delta = 0
-    for idx, (e_line, t_line) in enumerate(zip(elrc_lines, ttml_lines)):
-        lid = t_line.line_id
-
-        # 行起点时间比对 (<= 1ms 阈值)
-        st_delta = abs(e_line.start_ms - t_line.start_ms)
-        max_delta = max(max_delta, st_delta)
-        if st_delta > 1:
-            res.add_error(
-                code="TIME_AXIS_MISMATCH",
-                message=f"Line start time mismatch ({st_delta}ms > 1ms).",
-                line_id=lid,
-                elrc_val=e_line.start_ms,
-                ttml_val=t_line.start_ms,
-            )
-
-        # 行结束时间比对 (<= 1ms 阈值)
-        if e_line.end_ms is not None and t_line.end_ms is not None:
-            et_delta = abs(e_line.end_ms - t_line.end_ms)
-            max_delta = max(max_delta, et_delta)
-            if et_delta > 1:
-                res.add_error(
-                    code="TIME_AXIS_MISMATCH",
-                    message=f"Line end time mismatch ({et_delta}ms > 1ms).",
-                    line_id=lid,
-                    elrc_val=e_line.end_ms,
-                    ttml_val=t_line.end_ms,
-                )
-
-        # 行文本比对
-        if e_line.text != t_line.text:
-            res.add_error(
-                code="TEXT_MISMATCH",
-                message=f"Line text mismatch: '{e_line.text}' vs '{t_line.text}'.",
-                line_id=lid,
-                elrc_val=e_line.text,
-                ttml_val=t_line.text,
-            )
-
-        # 逐字比对
-        if len(e_line.words) != len(t_line.words):
-            res.add_error(
-                code="WORD_MISMATCH",
-                message=f"Word count mismatch: ELRC={len(e_line.words)}, TTML={len(t_line.words)}.",
-                line_id=lid,
-                elrc_val=len(e_line.words),
-                ttml_val=len(t_line.words),
-            )
-        else:
-            for w_idx, (e_w, t_w) in enumerate(zip(e_line.words, t_line.words)):
-                w_st_delta = abs(e_w.start_ms - t_w.start_ms)
-                w_et_delta = abs(e_w.end_ms - t_w.end_ms)
-                max_delta = max(max_delta, w_st_delta, w_et_delta)
-
-                if w_st_delta > 1 or w_et_delta > 1:
-                    res.add_error(
-                        code="TIME_AXIS_MISMATCH",
-                        message=f"Word #{w_idx+1} time mismatch (start_delta={w_st_delta}ms, end_delta={w_et_delta}ms).",
-                        line_id=lid,
-                        elrc_val=(e_w.start_ms, e_w.end_ms),
-                        ttml_val=(t_w.start_ms, t_w.end_ms),
-                    )
-                if e_w.text.strip() != t_w.text.strip():
-                    res.add_error(
-                        code="WORD_MISMATCH",
-                        message=f"Word #{w_idx+1} text mismatch: '{e_w.text}' vs '{t_w.text}'.",
-                        line_id=lid,
-                        elrc_val=e_w.text,
-                        ttml_val=t_w.text,
-                    )
-
-        # 译文比对
-        if (e_line.translation or "").strip() != (t_line.translation or "").strip():
-            res.add_error(
-                code="TRANSLATION_LINK_MISMATCH",
-                message=f"Translation mismatch: '{e_line.translation}' vs '{t_line.translation}'.",
-                line_id=lid,
-                elrc_val=e_line.translation,
-                ttml_val=t_line.translation,
-            )
-
-        # 行级显式 end_ms 检查
-        if not e_line.has_explicit_end and not e_line.words:
-            res.add_error(
-                code="LINE_END_NOT_REPRESENTABLE",
-                message="ELRC line has no verbatim words and no explicit end tag; end_ms is not representable.",
-                line_id=lid,
-            )
-
-    # 4. div 容器边界比对 (<= 2ms 阈值)
-    if elrc_lines and ttml_lines:
-        calc_min = min(l.start_ms for l in elrc_lines)
-        calc_max = max(l.end_ms or l.start_ms for l in elrc_lines)
-        div_st, div_ed = div_bounds
-        div_st_delta = abs(div_st - calc_min)
-        div_ed_delta = abs(div_ed - calc_max)
-        res.max_div_delta_ms = max(div_st_delta, div_ed_delta)
-
-        if div_st_delta > 2 or div_ed_delta > 2:
-            res.add_error(
-                code="DIV_BOUNDARY_MISMATCH",
-                message=f"div boundary mismatch: calc=({calc_min},{calc_max}), div=({div_st},{div_ed}).",
-                elrc_val=(calc_min, calc_max),
-                ttml_val=div_bounds,
-            )
-
-    res.max_time_delta_ms = max_delta
+            value=body
+        res.append(ParsedLine(f"L{len(res)+1}",st,end,value,words,None,explicit))
     return res
+
+
+def parse_ttml_structural(text:str)->Tuple[List[ParsedLine],Tuple[int,int],List[ComparisonIssue]]:
+    problems=[];res=[]
+    if len(text.encode('utf-8'))>16*1024*1024 or '<!DOCTYPE' in text.upper() or '<!ENTITY' in text.upper():
+        return [],(0,0),[ComparisonIssue('XML_UNSAFE_INPUT','DTD/entity or oversized XML is rejected')]
+    try: root=ET.fromstring(text)
+    except (ET.ParseError,ValueError) as exc:
+        return [],(0,0),[ComparisonIssue('XML_SYNTAX_ERROR',f'Invalid XML: {type(exc).__name__}')]
+    trans={}
+    for n in root.findall('.//{*}iTunesMetadata/{*}translations/{*}translation/{*}text'):
+        key=n.get('for')
+        if not key:
+            problems.append(ComparisonIssue('TRANSLATION_MISSING_REFERENCE','Missing for= key'))
+            continue
+        if key in trans:
+            problems.append(ComparisonIssue('TRANSLATION_DUPLICATE_REFERENCE','Multiple translations for same key',key))
+        trans[key]=(n.text or '').strip()
+    divs=root.findall('.//{*}body/{*}div')
+    if not divs:
+        return [],(0,0),problems+[ComparisonIssue('DIV_MISSING','No TTML div')]
+    if len(divs)>1:
+        problems.append(ComparisonIssue('MULTI_DIV_UNSUPPORTED','Multi-div input needs dedicated mapping'))
+    div=divs[0]
+    try:bound=(_time(div.attrib.get('begin','')), _time(div.attrib.get('end','')))
+    except ValueError:
+        bound=(0,0);problems.append(ComparisonIssue('DIV_TIME_INVALID','Invalid div boundary'))
+    seen=set()
+    for p in div.findall('./{*}p'):
+        try:st=_time(p.get('begin',''));en=_time(p.get('end',''))
+        except ValueError:
+            problems.append(ComparisonIssue('LINE_TIME_INVALID','Invalid p time'))
+            continue
+        if en<=st:
+            problems.append(ComparisonIssue('LINE_TIME_INVALID','Nonpositive p duration'))
+        key=p.get('{%s}key'%NI) or p.get('key') or 'L'+str(len(res)+1)
+        if key in seen:problems.append(ComparisonIssue('DUPLICATE_P_KEY','Repeated p key',key))
+        seen.add(key)
+        pre=p.text or ''
+        words=[];inline=[];pieces=[pre]
+        for s in p.findall('./{*}span'):
+            role=s.get('{http://www.w3.org/ns/ttml#metadata}role') or s.get('role')
+            if role=='x-translation':
+                inline.append(''.join(s.itertext()).strip());continue
+            try:wst=_time(s.get('begin',''));wen=_time(s.get('end',''))
+            except ValueError:
+                problems.append(ComparisonIssue('WORD_TIME_INVALID','Invalid span time',key))
+                continue
+            if wen<=wst:problems.append(ComparisonIssue('WORD_TIME_INVALID','Nonpositive span',key))
+            txt=(s.text or '')+(s.tail or '')
+            words.append(ParsedWord(txt,wst,wen));pieces.append(txt)
+        if key in trans and inline and trans[key]!=''.join(inline):
+            problems.append(ComparisonIssue('TRANSLATION_CONFLICT','Head/inline translations conflict',key))
+        res.append(ParsedLine(key,st,en,''.join(pieces),words,
+                              trans.get(key) or ''.join(inline) or None,True,
+                              key.startswith('P_'),p.get('{%s}role'%NI) or ''))
+    for key in trans:
+        if key not in seen:problems.append(ComparisonIssue('TRANSLATION_HANGING_REFERENCE','Unmatched translation for=',key))
+    return res,bound,problems
+
+
+def _elrc_corresponding_lines(src:List[ParsedLine],ttml:List[ParsedLine])->List[ParsedLine]:
+    """Attach a sidecar row only if TTML explicitly declares exactly that translation."""
+    result=[];i=0
+    for t in ttml:
+        if i>=len(src):break
+        e=src[i];i+=1
+        if t.translation and i<len(src):
+            x=src[i]
+            if (x.start_ms==e.start_ms and not x.words and
+                x.text==t.translation):
+                e.translation=x.text;i+=1
+        result.append(e)
+    result.extend(src[i:])
+    return result
+
+
+def compare_elrc_ttml(elrc_text:str,ttml_text:str)->ComparisonResult:
+    res=ComparisonResult(True)
+    try:raw_elrc=parse_elrc_structural(elrc_text)
+    except (ValueError,TypeError) as exc:
+        res.add_error('ELRC_SYNTAX_ERROR',str(exc));return res
+    ttml,bound,issues=parse_ttml_structural(ttml_text)
+    if issues:
+        for issue in issues:res.add_error(issue.code,issue.message,issue.line_id)
+        return res
+    elrc=_elrc_corresponding_lines(raw_elrc,ttml)
+    if len(elrc)!=len(ttml):
+        res.add_error('LINE_MISSING',f'ELRC {len(elrc)} vs TTML {len(ttml)}');return res
+    maxd=0
+    for i,(e,t) in enumerate(zip(elrc,ttml)):
+        key=t.line_id
+        d=abs(e.start_ms-t.start_ms);maxd=max(maxd,d)
+        if d>1:res.add_error('TIME_AXIS_MISMATCH','Line start differs',key)
+        if e.end_ms is not None:
+            d=abs(e.end_ms-t.end_ms);maxd=max(maxd,d)
+            if d>1:res.add_error('TIME_AXIS_MISMATCH','Line end differs',key)
+        if e.text!=t.text:
+            res.add_error('TEXT_MISMATCH','Line text or whitespace differs',key,e.text,t.text)
+        if len(e.words)!=len(t.words):
+            res.add_error('WORD_MISMATCH','Word count differs',key)
+        else:
+            for idx,(ew,tw) in enumerate(zip(e.words,t.words)):
+                d1=abs(ew.start_ms-tw.start_ms);d2=abs(ew.end_ms-tw.end_ms)
+                maxd=max(maxd,d1,d2)
+                if d1>1 or d2>1:res.add_error('TIME_AXIS_MISMATCH',f'Word {idx} times differ',key)
+                if ew.text.strip()!=tw.text.strip():
+                    res.add_error('WORD_MISMATCH',f'Word {idx} differs',key,ew.text,tw.text)
+        if (e.translation or '')!=(t.translation or ''):
+            res.add_error('TRANSLATION_LINK_MISMATCH','Translation differs',key,e.translation,t.translation)
+        if not e.has_explicit_end and not e.words:
+            res.add_error('LINE_END_NOT_REPRESENTABLE','Cannot validate end of line-only ELRC',key)
+    if elrc:
+        mins=min(x.start_ms for x in elrc);maxs=max(x.end_ms or x.start_ms for x in elrc)
+        bd=max(abs(mins-bound[0]),abs(maxs-bound[1]));res.max_div_delta_ms=bd
+        if bd>2:res.add_error('DIV_BOUNDARY_MISMATCH','div boundaries differ')
+    res.max_time_delta_ms=maxd
+    return res
+
+
+def verify_canonical_exports(canonical,elrc_text:str,ttml_text:str)->ComparisonResult:
+    """Third independent oracle: two identical but corrupt exports MUST fail."""
+    out=compare_elrc_ttml(elrc_text,ttml_text)
+    if not out.passed:return out
+    tlines,_,issues=parse_ttml_structural(ttml_text)
+    if issues:
+        for x in issues:out.add_error(x.code,x.message,x.line_id)
+        return out
+    expected=[]
+    p=canonical.prelude
+    if p and p.mode in ('A','B'):
+        for key,w,txt in (('P_TITLE',p.title_window,p.display_title),
+                          ('P_LYRICIST',p.lyricist_window,p.display_lyricist),
+                          ('P_COMPOSER',p.composer_window,p.display_composer)):
+            if w and txt and w[1]>w[0]:expected.append((key,w[0],w[1],txt,[],None))
+    for line in canonical.lines:
+        if line.role.value in ('TITLE','LYRICIST','COMPOSER','PRODUCTION_CREDIT','PLACEHOLDER','TRANSLATION'):
+            continue
+        if not line.text.strip():continue
+        realwords=[w for w in line.words if w.text and not w.is_pause]
+        expected.append((line.stable_id,line.start_ms,line.end_ms,line.text,realwords,line.translation))
+    if len(expected)!=len(tlines):
+        out.add_error('CANONICAL_LINE_COUNT','Canonical vs generated line count differs');return out
+    for (key,st,en,orig,words,translation), got in zip(expected,tlines):
+        if got.line_id!=key or abs(got.start_ms-st)>1 or abs(got.end_ms-en)>1:
+            out.add_error('CANONICAL_LINE_ID_TIME','Canonical line identity/times differ',key)
+        if got.text!=orig:
+            out.add_error('CANONICAL_TEXT_LOSS','Canonical text/whitespace was lost',key,orig,got.text)
+        if not key.startswith('P_'):
+            original_line = next((ln for ln in canonical.lines if ln.stable_id==key),None)
+            if original_line and got.role != original_line.role.value:
+                out.add_error('CANONICAL_ROLE_MISMATCH','Canonical semantic role was lost',key)
+        if (translation or '')!=(got.translation or ''):
+            out.add_error('CANONICAL_TRANSLATION_LOSS','Canonical translation was lost',key)
+        if words:
+            if len(words)!=len(got.words):out.add_error('CANONICAL_WORD_COUNT','Canonical word count changed',key)
+            else:
+                for w,actual in zip(words,got.words):
+                    if (w.text.strip()!=actual.text.strip() or abs(w.start_ms-actual.start_ms)>1 or
+                        abs(w.end_ms-actual.end_ms)>1):
+                        out.add_error('CANONICAL_WORD_LOSS','Canonical word/timing changed',key)
+    if canonical.song.get('attribution_re'):
+        if '[re:lrc.red (https://lrc.red)]' not in elrc_text:
+            out.add_error('ATTRIBUTION_LOSS','Required source attribution lost')
+    return out

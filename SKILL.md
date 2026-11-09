@@ -373,27 +373,47 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、双格式标准化、全曲制作署名剥离与前奏调度（v1.8.2）
+## 十一、双格式标准化与全曲内容治理（v1.8.2 修复候选）
 
-### 1. 核心需求定位与架构
-- **R1: ELRC ↔ TTML 双向独立结构对齐与微秒级时间轴审计**：行级与字级时间戳双向对齐容差 ≤ 1ms；`div` 容器与行级边界对齐容差 ≤ 2ms；双语翻译行与 `for="Ln"` 属性严格对应；检测跨格式结构漂移、缺字漏行与时间轴反序并分类为结构性错误。
-- **R2: 全曲制作署名精准识别与安全剥离**：全曲双向扫描识别位于开头（Intro）、正文中间（Mid-track）与结尾（Outro）的纯制作信息并予以剥离回填至元数据；**绝对保留**真实演唱、念白、对白、副歌、原唱标记、采样溯源以及带演唱者声部标记（`[A]:` / `[B]:`）；对无法100%判定的存疑行标记为 `REVIEW_REQUIRED` 绝不武断删除。
-- **R3: 首唱时间 T 判定与 A/B 前奏显示调度**：以第一句真实演唱的首字时间戳为基准 $T$；$T < 3000\text{ms}$ 时静默不显示；$3000\text{ms} \le T < 8000\text{ms}$ 时仅显示方案 A（$T_A \in [0, 4T/5]$）；$T \ge 8000\text{ms}$ 时顺序调度方案 A（$[0, 3T/5]$）与方案 B（$[3T/5, 4T/5]$）；所有时间边界统一向下取整（地板除）；**任何情况下严禁篡改演唱字块与时间戳**。
-- **R4: 双格式标准导出与 FLAC/MP3/WAV 容器读写**：
-  - ELRC 严格导出 3 位小数毫秒时间戳 `[mm:ss.xxx]`、单字闭合 `<mm:ss.xxx>` 及词间空格；
-  - TTML 严格导出标准 XML、命名空间单行规范、`iTunesMetadata/translations for="Ln"` 译文绑定及词尾空格；
-  - 容器元数据映射：FLAC (`lyrics`/`ttmllyric`)、MP3/WAV (`USLT::eng`/`TXXX:TTMLLYRIC`)；默认只读安全探测，显式 `--write-tags` 时执行工作副本隔离写入、磁盘回读双校验与原子替换。
+> **独立、显式启用的新入口**：`scripts/standardize_song.py`。普通的
+> `scripts/process_song.py` 与旧版检索/声学/标签处理默认逻辑保持不变。
+> 本安装包不代表已经通过可信维护者私有指纹扫描、完整 Git CI 或播放器实机兼容验证。
 
-### 2. 命令行入口 (standardize_song.py)
-```powershell
-python scripts/standardize_song.py <file-or-dir> [options]
+### 1. 固定处理顺序（不得交换）
 
-选项：
-  --mode {audit,standardize}  运行模式（默认 audit：只读审计与结构对比）
-  --lyrics-file PATH          显式指定外部歌词文件（.lrc 或 .ttml）
-  --output-dir DIR            标准化歌词导出的目标目录（默认与音频同目录）
-  --no-tags                   仅输出 .lrc / .ttml 歌词文件，不修改音频元数据（默认安全模式）
-  --write-tags                允许安全回写音频内嵌歌词（必须经过磁盘回读校验）
-  --in-place                  允许在原文件目录原地更新歌词文件
-  --report FILE               输出 JSON 格式的审计与标准化结构报告
+1. 安全读取现有歌词和标签，双格式都存在时先进行**只读基线审计**；仅有一种格式时标记 `ONE_FORMAT_ONLY`，不得声称已检查原始双格式一致性。
+2. **R2 全曲语义分类和清理**：制作名单可能出现在前奏、正文中间或片尾，必须逐行扫描，不能仅检查前 12 行或截断片尾。确认制作行后先提取可信词曲，再清理；真实演唱、原唱说明、角色提示、采样/对白来源和不确定行保留。带真实字轴且疑似署名的唱句不允许按关键词强删，标记 `REVIEW_REQUIRED` 并阻止自动写入；同时间戳不是译文充分证据。
+3. **R3 在 R2 之后**确认首个真实演唱字块的起点 `T`；首句没有可信字轴时禁止使用第二句代替；按下表规划前奏显示，不移动或缩短任何真实字块。
+4. **R4** 用同一份 Canonical 数据独立生成三位毫秒 ELRC 和单行 TTML。译文通过 head 中带 `for` 的 Apple/iTunes 命名空间节点映射；正确保留词界空格、字间真实停顿、独占/行首角色与 lrc.red 回链。
+5. **R1** 首先检查 ELRC ↔ TTML，再独立与 Canonical 真值核对，比较文本、行数、角色、字块起止、词界、译文关联；行级/字级同源回读容差 ≤1ms，div 边界 ≤2ms。两个格式共同丢字也必须失败。
+6. 输出三个 sidecar；用户显式选择 `--write-tags` 时，额外输出 FLAC/MP3/WAV 的**独立工作副本**，从磁盘回读验证后提交。不得修改原始音频或已有目标文件。
+
+| 条件 | 标题显示 | 作词显示 | 作曲显示 |
+|---|---|---|---|
+| `T > 20000ms`（A 套） | `1500–12000ms` | `12000–16000ms` | `16000–20000ms` |
+| `T ≤ 20000ms`（B 套） | `0–floor(0.6T)` | `floor(0.6T)–floor(0.8T)` | `floor(0.8T)–T` |
+
+只有一项可信署名时：A 套该项使用 `12000–20000ms`；B 套使用 `floor(0.6T)–T`。无可信署名则只展示标题；前奏极短且无法给每项分配正时长时，合并展示行，不允许产生零长度 span；`T=0` 时报告无前奏空间。
+
+### 2. 真正支持的入口
+
+```bash
+# 默认只读，仅输出审计状态；--report 显式指定时写本地 JSON 报告
+python scripts/standardize_song.py "<audio.flac>" --mode audit --report "<report.json>"
+
+# 明确指定新的隔离输出目录，生成 .lrc/.spl/.ttml，不修改原音频
+python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags --output-dir "<new-output-dir>"
+
+# 新增经过验证的工作副本，不覆盖既有目标
+python scripts/standardize_song.py "<audio.flac>" --mode standardize --write-tags --output-dir "<new-output-dir>"
+
+# 可选：用户自己显式指定只读参考歌词，只有同歌且唯一时间/文本匹配时恢复角色
+python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags --output-dir "<new-output-dir>" --ref-lyrics "<reference.lrc>"
 ```
+
+- `--in-place` **参数因数据安全被显式禁用**，传入将立即报错，且不会修改任何已有音频/sidecar；它不是可用的写入模式。
+- `--output-dir` 为标准化必填，不得等于音频源目录；已有同名目标一律拒绝，不自动覆盖。音频工作副本只支持 FLAC、MP3、WAV 的本轮标准化写回；旧普通流程的其他容器能力不受此限制。
+- 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
+- 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。
+- TTML 多 `div`、未确认的演唱行级结束时间、缺少真实逐字的正文等无法安全表达的输入会明确阻断，而不是推断、伪造字轴或静默丢行。
+- 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件，但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。

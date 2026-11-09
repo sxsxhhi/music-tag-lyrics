@@ -44,9 +44,8 @@ def find_first_singing_time(canonical: CanonicalLyrics) -> Tuple[Optional[int], 
             if not w.is_pause and w.text.strip():
                 return w.start_ms, None
         
-        # 行内有字块但全部为空或纯停顿
-        if line.words:
-            return line.words[0].start_ms, None
+        # 全部为空或纯停顿，不允许当成实际首唱。
+        return None, "FIRST_SING_UNVERIFIED"
 
     return None, "NO_SINGING_LINES"
 
@@ -154,6 +153,22 @@ def plan_prelude_ab(
         else:
             lyr_window = None
             cmp_window = None
+
+    # At millisecond resolution, unavailable slots cannot be emitted as
+    # zero-duration XML/ELRC. Merge the display text without changing singing.
+    present = [(title_window, title)]
+    if lyr_window and disp_lyr: present.append((lyr_window,disp_lyr))
+    if cmp_window and disp_cmp: present.append((cmp_window,disp_cmp))
+    if any(w[1] <= w[0] for w,_ in present):
+        canonical.add_issue(
+            code="PRELUDE_SLOTS_MERGED", severity=IssueSeverity.WARNING,
+            evidence="Insufficient integer milliseconds for separate credits",
+            action="MERGE_PRELUDE_DISPLAY", blocking=False,
+        )
+        title_window=(0,T)
+        title=" | ".join(x for _,x in present if x)
+        lyr_window=cmp_window=None
+        disp_lyr=disp_cmp=None
 
     plan = PreludePlan(
         mode=mode,

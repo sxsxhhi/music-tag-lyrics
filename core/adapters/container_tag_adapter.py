@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
+import hashlib
 from typing import Any, Dict, Optional
 
 import mutagen
@@ -30,6 +32,24 @@ from mutagen.wave import WAVE
 from ..auditors.elrc_ttml_comparator import compare_elrc_ttml
 
 
+def _id3_cover_digest(id3) -> str:
+    entries = sorted((str(x.desc), str(x.mime), int(x.type), bytes(x.data))
+                     for x in id3.values() if getattr(x, 'FrameID', '') == 'APIC')
+    h=hashlib.sha256()
+    for desc,mime,typ,data in entries:
+        for part in (desc.encode('utf-8'),mime.encode('utf-8'),typ.to_bytes(4,'big'),data):
+            h.update(len(part).to_bytes(8,'big'));h.update(part)
+    return h.hexdigest() if entries else ""
+
+
+def _sha_file(path):
+    h=hashlib.sha256()
+    with open(path,'rb') as f:
+        for chunk in iter(lambda:f.read(1024*1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def read_container_tags(filepath: str) -> Dict[str, Any]:
     """只读提取 FLAC / MP3 / WAV 的全量元数据与双格式歌词。"""
     info: Dict[str, Any] = {
@@ -43,9 +63,12 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         "ttml": "",
         "albumartist": "",
         "tracknumber": "",
+        "discnumber": "",
         "genre": "",
         "isrc": "",
         "has_cover": False,
+        "cover_digest": "",
+        "id3_version": "",
         "replaygain": {},
     }
 
@@ -62,6 +85,8 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
             id3 = ID3(filepath)
             _extract_id3_all(id3, info)
             info["has_cover"] = any(k.startswith("APIC") for k in id3.keys())
+            info["cover_digest"] = _id3_cover_digest(id3)
+            info["id3_version"] = str(getattr(id3,"version", ""))
         except Exception:
             pass
         return info
@@ -74,12 +99,16 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         info["composer"] = audio.get("composer", [""])[0]
         info["lyricist"] = audio.get("lyricist", [""])[0]
         info["tracknumber"] = audio.get("tracknumber", [""])[0]
+        info["discnumber"] = audio.get("discnumber", [""])[0]
         info["albumartist"] = "/".join(audio.get("albumartist", [""]))
         info["genre"] = audio.get("genre", [""])[0]
         info["isrc"] = (audio.get("isrc") or audio.get("ISRC") or [""])[0]
         info["lyrics"] = audio.get("lyrics", [""])[0]
         info["ttml"] = (audio.get("ttmllyric") or audio.get("TTMLLYRIC") or [""])[0]
         info["has_cover"] = bool(audio.pictures)
+        info["cover_digest"] = hashlib.sha256(b"".join(
+            bytes(p.data) + p.mime.encode('utf-8') + int(p.type).to_bytes(4,'big')
+            for p in audio.pictures)).hexdigest() if audio.pictures else ""
         for k in audio.keys():
             if k.lower().startswith("replaygain_"):
                 info["replaygain"][k.lower()] = audio.get(k)
@@ -88,6 +117,8 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         if getattr(audio, "tags", None):
             _extract_id3_all(audio.tags, info)
             info["has_cover"] = any(k.startswith("APIC") for k in audio.tags.keys())
+            info["cover_digest"] = _id3_cover_digest(audio.tags)
+            info["id3_version"] = str(getattr(audio.tags,"version", ""))
 
     else:
         # MP3 及通用 ID3 容器
@@ -100,6 +131,8 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         if tags is not None:
             _extract_id3_all(tags, info)
             info["has_cover"] = any(k.startswith("APIC") for k in tags.keys())
+            info["cover_digest"] = _id3_cover_digest(tags)
+            info["id3_version"] = str(getattr(tags,"version", ""))
 
     return info
 
@@ -120,6 +153,7 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
     info["composer"] = _get("TCOM")
     info["lyricist"] = _get("TEXT")
     info["tracknumber"] = _get("TRCK")
+    info["discnumber"] = _get("TPOS")
     info["genre"] = _get("TCON")
     info["isrc"] = _get("TSRC")
 
@@ -151,99 +185,84 @@ def write_verified_standardized_container(
     lyricist: Optional[str] = None,
     composer: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """在独立工作副本中写入双格式歌词与词曲标签，并执行磁盘回读硬校验。
-    
-    返回回读审计摘要 dict。若回读比对失败，立即抛出 RuntimeError 并清理副本。
+    """Write to a private, unique same-directory staging copy, validate and
+    atomically publish ONLY to a target that did not previously exist.
+
+    Unlike os.replace, os.link prevents overwrite on a concurrent target
+    creation; failure cleanup affects exclusively our own temporary path.
+    In-place overwrite is intentionally unsupported in v1.8.2.
     """
-    if not os.path.exists(source_audio_path):
-        raise FileNotFoundError(f"Source audio file not found: {source_audio_path}")
+    source = os.path.realpath(source_audio_path)
+    target = os.path.realpath(target_work_path)
+    if not os.path.isfile(source):
+        raise FileNotFoundError("Source audio file not found")
+    if source == target or (os.path.exists(target) and os.path.samefile(source, target)):
+        raise ValueError("IN_PLACE_DISABLED: existing audio cannot be overwritten")
+    if os.path.lexists(target_work_path):
+        raise FileExistsError("TARGET_EXISTS: destination is already occupied")
+    if os.path.splitext(target)[1].lower() not in ('.flac','.mp3','.wav'):
+        raise ValueError("Unsupported v1.8.2 output container")
 
-    # 1. 保存原文件标签快照（用于写后比对受保护字段）
-    original_tags = read_container_tags(source_audio_path)
-
-    # 2. 复制到受控工作副本目录
-    os.makedirs(os.path.dirname(os.path.abspath(target_work_path)), exist_ok=True)
-    shutil.copyfile(source_audio_path, target_work_path)
-
+    # Check generated pair BEFORE making any copy.
+    comp=compare_elrc_ttml(elrc_text,ttml_text)
+    if not comp.passed:
+        raise ValueError("FORMAT_COMPARISON_FAILED: "+",".join(e.code for e in comp.issues))
+    orig=read_container_tags(source)
+    for field,val in (("lyricist",lyricist),("composer",composer)):
+        if val and orig.get(field) and orig[field].strip()!=val.strip():
+            raise ValueError("REVIEW_REQUIRED_CREDIT_CONFLICT:"+field)
+    if lyricist and orig.get('lyricist'): lyricist=None
+    if composer and orig.get('composer'): composer=None
+    original_hash = _sha_file(source)
+    os.makedirs(os.path.dirname(target),exist_ok=True)
+    ext = os.path.splitext(target)[1]
+    fd,tmp=tempfile.mkstemp(prefix='.mtl182-stage-',suffix=ext,dir=os.path.dirname(target))
+    os.close(fd)
     try:
-        audio = mutagen.File(target_work_path)
-        if audio is None:
-            audio = ID3(target_work_path)
-
-        if isinstance(audio, FLAC):
-            audio["lyrics"] = [elrc_text]
-            audio["ttmllyric"] = [ttml_text]
-            if lyricist:
-                audio["lyricist"] = [lyricist.strip()]
-            if composer:
-                audio["composer"] = [composer.strip()]
+        shutil.copy2(source,tmp)
+        audio=mutagen.File(tmp)
+        if isinstance(audio,FLAC):
+            audio['lyrics']=[elrc_text];audio['ttmllyric']=[ttml_text]
+            if lyricist:audio['lyricist']=[lyricist.strip()]
+            if composer:audio['composer']=[composer.strip()]
             audio.save()
-
-        elif isinstance(audio, WAVE):
-            if audio.tags is None:
-                audio.add_tags()
-            id3 = audio.tags
-            _apply_id3_standard_lyrics(id3, elrc_text, ttml_text, lyricist, composer)
+        elif isinstance(audio,WAVE):
+            if audio.tags is None: audio.add_tags()
+            _apply_id3_standard_lyrics(audio.tags,elrc_text,ttml_text,lyricist,composer)
             audio.save()
-
+        elif ext=='.mp3':
+            try:id3=ID3(tmp)
+            except Exception: id3=ID3()
+            old_v2 = getattr(id3, 'version', (2,4,0))[1]
+            _apply_id3_standard_lyrics(id3,elrc_text,ttml_text,lyricist,composer)
+            id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
         else:
-            # MP3 及普通 ID3
-            id3 = getattr(audio, "tags", None)
-            if id3 is None:
-                try:
-                    id3 = ID3(target_work_path)
-                except Exception:
-                    id3 = ID3()
-            _apply_id3_standard_lyrics(id3, elrc_text, ttml_text, lyricist, composer)
-            if hasattr(audio, "save"):
-                audio.save()
-            else:
-                id3.save(target_work_path)
-
-        # 3. 磁盘物理回读门禁
-        readback_tags = read_container_tags(target_work_path)
-
-        # 验证歌词写入保真度
-        if readback_tags.get("lyrics") != elrc_text:
-            raise RuntimeError("Disk readback verification failed: ELRC lyrics content mismatch.")
-        if readback_tags.get("ttml") != ttml_text:
-            raise RuntimeError("Disk readback verification failed: TTML content mismatch.")
-
-        # 验证词曲写入
-        if lyricist and readback_tags.get("lyricist") != lyricist.strip():
-            raise RuntimeError(f"Disk readback verification failed: Lyricist '{readback_tags.get('lyricist')}' != '{lyricist}'.")
-        if composer and readback_tags.get("composer") != composer.strip():
-            raise RuntimeError(f"Disk readback verification failed: Composer '{readback_tags.get('composer')}' != '{composer}'.")
-
-        # 验证受保护字段未被破坏
-        if original_tags["has_cover"] and not readback_tags["has_cover"]:
-            raise RuntimeError("CRITICAL: Embedded cover was corrupted or removed during tag write!")
-        for protected_field in ("title", "artist", "album", "year", "tracknumber", "genre", "albumartist", "isrc"):
-            orig_v = original_tags.get(protected_field, "")
-            read_v = readback_tags.get(protected_field, "")
-            if orig_v and read_v != orig_v:
-                raise RuntimeError(f"CRITICAL: Protected metadata '{protected_field}' was corrupted! ('{read_v}' != '{orig_v}')")
-
-        # 4. 回读内容重新执行 R1 双向比对
-        r1_result = compare_elrc_ttml(readback_tags["lyrics"], readback_tags["ttml"])
-        if not r1_result.passed:
-            raise RuntimeError(f"Disk readback R1 comparison failed: {r1_result.issues}")
-
-        return {
-            "status": "PASS",
-            "target_path": target_work_path,
-            "readback_tags": readback_tags,
-            "r1_max_delta_ms": r1_result.max_time_delta_ms,
-        }
-
-    except Exception as exc:
-        # 写入或校验失败，强制清理损坏的副本
-        if os.path.exists(target_work_path):
-            try:
-                os.remove(target_work_path)
-            except Exception:
-                pass
-        raise exc
+            raise ValueError('Unrecognized or unsupported audio container')
+        rb=read_container_tags(tmp)
+        if rb.get('lyrics')!=elrc_text or rb.get('ttml')!=ttml_text:
+            raise RuntimeError('READBACK_LYRICS_MISMATCH')
+        for field in ('title','artist','album','year','tracknumber','discnumber',
+                      'genre','albumartist','isrc','has_cover','cover_digest','replaygain'):
+            if orig.get(field)!=rb.get(field):
+                raise RuntimeError('PROTECTED_METADATA_CHANGED:'+field)
+        if orig.get('id3_version') and rb.get('id3_version') != orig.get('id3_version'):
+            raise RuntimeError('ID3_VERSION_CHANGED')
+        if lyricist and rb.get('lyricist')!=lyricist.strip():
+            raise RuntimeError('CREDIT_READBACK_FAILED:lyricist')
+        if composer and rb.get('composer')!=composer.strip():
+            raise RuntimeError('CREDIT_READBACK_FAILED:composer')
+        r1=compare_elrc_ttml(rb['lyrics'],rb['ttml'])
+        if not r1.passed:
+            raise RuntimeError('READBACK_FORMAT_MISMATCH')
+        if _sha_file(source)!=original_hash:
+            raise RuntimeError('SOURCE_CHANGED_DURING_WRITE')
+        # Link is an atomic, non-clobbering commit to an absent target.
+        # Never unlink an existing target, including in an exception handler.
+        os.link(tmp,target_work_path)
+        return {'status':'PASS','target_path':target_work_path,
+                'readback_tags':rb,'r1_max_delta_ms':r1.max_time_delta_ms}
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
 
 
 def _apply_id3_standard_lyrics(

@@ -16,6 +16,8 @@ import argparse
 import json
 import os
 import sys
+import tempfile
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,7 +29,7 @@ from core.adapters.container_tag_adapter import (
     read_container_tags,
     write_verified_standardized_container,
 )
-from core.auditors.elrc_ttml_comparator import compare_elrc_ttml
+from core.auditors.elrc_ttml_comparator import compare_elrc_ttml, verify_canonical_exports, parse_ttml_structural
 from core.cleaners.content_classifier import classify_and_clean_all_lines
 from core.parsers.lrc_parser import parse_lrc
 from core.parsers.ttml_parser import parse_ttml
@@ -37,9 +39,51 @@ from core.schedulers.prelude_scheduler import plan_prelude_ab
 from core.version import __version__
 
 
+def _read_ttml_for_standardization(raw: str) -> Dict[str, Any]:
+    """The legacy TTML parser omits head translations. Preserve head/inline
+    translation and original literal word gaps via the structural parser.
+    """
+    lines, _, issues = parse_ttml_structural(raw)
+    if issues:
+        raise ValueError("TTML_STRUCTURE_INVALID:" + ",".join(x.code for x in issues))
+    if not lines:
+        raise ValueError("TTML_NO_LINES")
+    provenance = {}
+    if 'Lyrics provided by lrc.red (https://lrc.red)' in raw:
+        provenance['re'] = 'lrc.red (https://lrc.red)'
+    converted=[]
+    for ln in lines:
+        # Previously generated P_TITLE/P_LYRICIST/P_COMPOSER spans are
+        # synthetic display text, NOT a real acoustic singing word axis.
+        wrds=[]
+        for j,w in enumerate(ln.words):
+            txt=w.text.rstrip(' ')
+            if not txt:continue
+            wrds.append({'text':txt,'start':w.start_ms,'end':w.end_ms,
+                         'join':'space' if w.text.endswith(' ') else 'none'})
+        if ln.is_prelude:
+            wrds=[]
+        converted.append({'start':ln.start_ms,'end':ln.end_ms,
+                          'text':ln.text,'words':wrds,
+                          'translation':ln.translation,
+                          'semantic_role':ln.role})
+    return {'lines':converted,'tags':provenance,'time_precision':3}
+
+
+def _stage_sidecar(directory: str, name: str, content: str) -> str:
+    fd,path=tempfile.mkstemp(prefix='.mtl182-stage-',suffix='.tmp',dir=directory)
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8',newline='\n') as f:
+            f.write(content);f.flush();os.fsync(f.fileno())
+    except BaseException:
+        if os.path.exists(path):os.unlink(path)
+        raise
+    return path
+
+
 def standardize_single_song(
     audio_path: str,
-    mode: str = "audit",
+    mode: str = 'audit',
     output_dir: Optional[str] = None,
     write_tags: bool = False,
     no_tags: bool = False,
@@ -47,183 +91,165 @@ def standardize_single_song(
     ref_lyrics_path: Optional[str] = None,
     report_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """对单首音频开展标准化审计或修补处理的主函数。"""
-    if no_tags and write_tags:
-        raise ValueError("Argument conflict: --no-tags and --write-tags are mutually exclusive.")
-
-    audio_abs = os.path.abspath(audio_path)
-    if not os.path.exists(audio_abs):
-        raise FileNotFoundError(f"Audio file not found: {audio_abs}")
-
-    embedded = read_container_tags(audio_abs)
-    embedded_elrc = embedded.get("lyrics", "") or ""
-    embedded_ttml = embedded.get("ttml", "") or ""
-
-    base_no_ext, _ = os.path.splitext(audio_abs)
-    sidecar_lrc = base_no_ext + ".lrc"
-    sidecar_spl = base_no_ext + ".spl"
-    sidecar_ttml = base_no_ext + ".ttml"
-
-    disk_elrc = ""
-    disk_ttml = ""
-    if os.path.exists(sidecar_lrc):
-        with open(sidecar_lrc, "r", encoding="utf-8", errors="replace") as f:
-            disk_elrc = f.read()
-    elif os.path.exists(sidecar_spl):
-        with open(sidecar_spl, "r", encoding="utf-8", errors="replace") as f:
-            disk_elrc = f.read()
-
-    if os.path.exists(sidecar_ttml):
-        with open(sidecar_ttml, "r", encoding="utf-8", errors="replace") as f:
-            disk_ttml = f.read()
-
-    active_elrc = embedded_elrc or disk_elrc
-    active_ttml = embedded_ttml or disk_ttml
-
-    report: Dict[str, Any] = {
-        "version": __version__,
-        "audio": audio_abs,
-        "mode": mode,
-        "status": "PASS",
-        "has_embedded_elrc": bool(embedded_elrc),
-        "has_embedded_ttml": bool(embedded_ttml),
-        "has_sidecar_elrc": bool(disk_elrc),
-        "has_sidecar_ttml": bool(disk_ttml),
-        "baseline_comparison": None,
-        "issues": [],
-        "prelude_plan": None,
-        "actions_taken": [],
-    }
+    """Audits in place but NEVER writes to the source audio or existing target.
+    New outputs are private-staged then committed using non-clobbering links.
+    """
+    if mode not in ('audit','standardize'):raise ValueError('Unknown standardization mode')
+    if no_tags and write_tags:raise ValueError('--no-tags conflicts with --write-tags')
+    # Explicitly disabled until a separately verified multi-file transaction
+    # protocol exists. No sidecar is created or overwritten by this branch.
+    if in_place:raise ValueError('IN_PLACE_DISABLED: v1.8.2 cannot safely overwrite source/sidecars')
+    audio_abs=os.path.abspath(audio_path)
+    if not os.path.isfile(audio_abs):raise FileNotFoundError('Audio file not found')
+    if report_path:
+        protected={Path(audio_abs).resolve()}
+        base=Path(audio_abs).with_suffix('')
+        protected.update(base.with_suffix(ext).resolve() for ext in ('.lrc','.spl','.ttml'))
+        if Path(report_path).resolve() in protected:
+            raise ValueError('REPORT_TARGET_PROTECTED: refusing to overwrite audio or lyric input')
+    original_audio_hash=hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()
+    embedded=read_container_tags(audio_abs)
+    noext,_=os.path.splitext(audio_abs)
+    def read_optional(f):
+        return Path(f).read_text('utf-8') if Path(f).is_file() else ''
+    disk_elrc=read_optional(noext+'.lrc') or read_optional(noext+'.spl')
+    disk_ttml=read_optional(noext+'.ttml')
+    active_elrc=embedded.get('lyrics') or disk_elrc
+    active_ttml=embedded.get('ttml') or disk_ttml
+    report={
+        'version':__version__,'audio':audio_abs,'mode':mode,'status':'PASS',
+        'has_embedded_elrc':bool(embedded.get('lyrics')),
+        'has_embedded_ttml':bool(embedded.get('ttml')),
+        'has_sidecar_elrc':bool(disk_elrc),'has_sidecar_ttml':bool(disk_ttml),
+        'baseline_comparison':None,'format_audit':'NO_LYRICS',
+        'issues':[],'prelude_plan':None,'actions_taken':[]}
+    def issue(code,description='',blocking=True):
+        report['issues'].append({'code':code,'message':description,'blocking':blocking})
+        if blocking and report['status'] not in ('BLOCKED',):report['status']='REVIEW_REQUIRED'
+    def finish():
+        if report_path:_write_json_report(report_path,report)
+        return report
 
     if active_elrc and active_ttml:
-        baseline_comp = compare_elrc_ttml(active_elrc, active_ttml)
-        report["baseline_comparison"] = {
-            "passed": baseline_comp.passed,
-            "max_time_delta_ms": baseline_comp.max_time_delta_ms,
-            "issues": [iss.code for iss in baseline_comp.issues],
-        }
-        if not baseline_comp.passed:
-            report["status"] = "REVIEW_REQUIRED"
-            report["issues"].append({
-                "code": "INPUT_FORMATS_CONFLICT",
-                "message": "Both ELRC and TTML are present but have substantial timeline or content conflicts.",
-                "blocking": True,
-            })
+        baseline=compare_elrc_ttml(active_elrc,active_ttml)
+        report['baseline_comparison']={'passed':baseline.passed,
+            'max_time_delta_ms':baseline.max_time_delta_ms,
+            'issues':[i.code for i in baseline.issues]}
+        report['format_audit']='CONSISTENT' if baseline.passed else 'INCONSISTENT'
+        if not baseline.passed:issue('INPUT_FORMATS_CONFLICT','Existing ELRC/TTML differ')
+    elif active_elrc or active_ttml:
+        report['format_audit']='ONE_FORMAT_ONLY'
+        issue('ONE_FORMAT_ONLY','Cannot claim baseline cross-format consistency',False)
+        if mode=='audit': report['status']='ONE_FORMAT_ONLY'
+    else:
+        report['status']='BLOCKED';issue('NO_LYRIC_INPUT','No lyrics found')
+        return finish()
+    if mode=='standardize' and report['status']=='REVIEW_REQUIRED':
+        return finish()
 
-    parsed_data: Dict[str, Any] = {"lines": [], "tags": embedded}
-    if active_ttml:
+    # Prefer the higher fidelity TTML, but do not silently swallow parse errors.
+    try:
+        parsed=_read_ttml_for_standardization(active_ttml) if active_ttml else parse_lrc(active_elrc)
+        if not parsed.get('lines'):raise ValueError('No parsed lyric lines')
+    except (ValueError,TypeError,KeyError) as exc:
+        report['status']='BLOCKED';issue('INPUT_PARSE_FAILED',str(exc))
+        return finish()
+    # Preserve re: attribution even when TTML was preferred over ELRC.
+    if active_elrc:
+        lrc_tags=parse_lrc(active_elrc).get('tags',{})
+        parsed.setdefault('tags',{}).update({k:v for k,v in lrc_tags.items()
+                       if k in ('re','ti','ar') and v})
+    parsed.setdefault('tags',{}).update({k:v for k,v in (
+        ('title',embedded.get('title')),('artist',embedded.get('artist')),
+        ('lyricist',embedded.get('lyricist')),('composer',embedded.get('composer')) )
+                                              if v})
+
+    reference=None
+    if ref_lyrics_path:
+        ref=Path(ref_lyrics_path)
+        if not ref.is_file() or ref.suffix.lower() not in ('.lrc','.spl','.ttml'):
+            report['status']='BLOCKED';issue('INVALID_REFERENCE','Reference must be a readable .lrc/.spl/.ttml file')
+            return finish()
         try:
-            parsed_data = parse_ttml(active_ttml)
-            if not parsed_data.get("tags"):
-                parsed_data["tags"] = embedded
-        except Exception:
-            pass
-
-    if not parsed_data.get("lines") and active_elrc:
-        try:
-            parsed_data = parse_lrc(active_elrc)
-            if not parsed_data.get("tags"):
-                parsed_data["tags"] = embedded
-        except Exception:
-            pass
-
-    if not parsed_data.get("lines"):
-        report["status"] = "BLOCKED"
-        report["issues"].append({
-            "code": "NO_LYRIC_INPUT",
-            "message": "Neither valid ELRC nor TTML lyrics could be read from embedded tags or sidecar.",
-            "blocking": True,
-        })
-        if report_path:
-            _write_json_report(report_path, report)
-        return report
-
-    canonical = classify_and_clean_all_lines(
-        lyrics_data=parsed_data,
-        song_title=embedded.get("title", ""),
-        song_artist=embedded.get("artist", ""),
-        audio_path=audio_abs,
-    )
-    for iss in canonical.issues:
-        report["issues"].append(iss.to_dict())
-        if iss.severity.value in ("REVIEW_REQUIRED", "ERROR"):
-            report["status"] = iss.severity.value
-
-    plan = plan_prelude_ab(canonical)
-    report["prelude_plan"] = {
-        "mode": plan.mode,
-        "t_sing_ms": plan.t_sing_ms,
-        "title_window": plan.title_window,
-        "lyricist_window": plan.lyricist_window,
-        "composer_window": plan.composer_window,
-        "display_title": plan.display_title,
-        "display_lyricist": plan.display_lyricist,
-        "display_composer": plan.display_composer,
-    }
-
-    if mode == "audit":
-        if report_path:
-            _write_json_report(report_path, report)
-        return report
-
-    if report["status"] == "BLOCKED" or (report["status"] == "REVIEW_REQUIRED" and not in_place):
-        report["actions_taken"].append("ABORT_DUE_TO_BLOCKING_ISSUES")
-        if report_path:
-            _write_json_report(report_path, report)
-        return report
-
-    effective_out_dir = output_dir or (os.path.dirname(audio_abs) if in_place else None)
-    if not effective_out_dir:
-        raise ValueError("Standardize mode requires --output-dir (or explicit --in-place).")
-
-    os.makedirs(effective_out_dir, exist_ok=True)
-    filename = os.path.basename(audio_abs)
-    name_no_ext, ext = os.path.splitext(filename)
-
-    standard_elrc = render_elrc_v182(canonical)
-    standard_ttml = render_ttml_v182(canonical)
-
-    r1_check = compare_elrc_ttml(standard_elrc, standard_ttml)
-    if not r1_check.passed:
-        report["status"] = "BLOCKED"
-        report["issues"].append({
-            "code": "R1_GENERATION_COMPARISON_FAILED",
-            "message": f"Generated ELRC and TTML failed R1 bi-directional validation: {r1_check.issues}",
-            "blocking": True,
-        })
-        if report_path:
-            _write_json_report(report_path, report)
-        return report
-
-    out_lrc = os.path.join(effective_out_dir, f"{name_no_ext}.lrc")
-    out_spl = os.path.join(effective_out_dir, f"{name_no_ext}.spl")
-    out_ttml = os.path.join(effective_out_dir, f"{name_no_ext}.ttml")
-
-    with open(out_lrc, "w", encoding="utf-8", newline="\n") as f:
-        f.write(standard_elrc)
-    with open(out_spl, "w", encoding="utf-8", newline="\n") as f:
-        f.write(standard_elrc)
-    with open(out_ttml, "w", encoding="utf-8", newline="\n") as f:
-        f.write(standard_ttml)
-
-    report["actions_taken"].extend(["WRITE_SIDECAR_LRC", "WRITE_SIDECAR_SPL", "WRITE_SIDECAR_TTML"])
-
-    if write_tags:
-        target_audio = os.path.join(effective_out_dir, filename)
-        container_res = write_verified_standardized_container(
-            source_audio_path=audio_abs,
-            target_work_path=target_audio,
-            elrc_text=standard_elrc,
-            ttml_text=standard_ttml,
-            lyricist=canonical.song.get("extracted_lyricist"),
-            composer=canonical.song.get("extracted_composer"),
-        )
-        report["actions_taken"].append("WRITE_VERIFIED_CONTAINER_TAGS")
-        report["container_verification"] = container_res
-
-    if report_path:
-        _write_json_report(report_path, report)
-    return report
+            raw=ref.read_text('utf-8')
+            reference=_read_ttml_for_standardization(raw) if ref.suffix.lower()=='.ttml' else parse_lrc(raw)
+        except (UnicodeError,ValueError,TypeError) as exc:
+            report['status']='BLOCKED';issue('REFERENCE_PARSE_FAILED',str(exc))
+            return finish()
+    canonical=classify_and_clean_all_lines(parsed,ref_lyrics_data=reference,
+        song_title=embedded.get('title',''),song_artist=embedded.get('artist',''),
+        audio_path=audio_abs)
+    plan=plan_prelude_ab(canonical)
+    report['prelude_plan']={'mode':plan.mode,'t_sing_ms':plan.t_sing_ms,
+        'title_window':plan.title_window,'lyricist_window':plan.lyricist_window,
+        'composer_window':plan.composer_window,
+        'display_title':plan.display_title,'display_lyricist':plan.display_lyricist,
+        'display_composer':plan.display_composer}
+    # Merge issues after *all* planning steps. No permission flag bypasses them.
+    report['issues'].extend(i.to_dict() for i in canonical.issues)
+    if any(i.blocking or i.severity.value=='REVIEW_REQUIRED' for i in canonical.issues):
+        report['status']='REVIEW_REQUIRED'
+    if mode=='audit':return finish()
+    if report['status']!='PASS':
+        report['actions_taken'].append('ABORT_DUE_TO_BLOCKING_ISSUES')
+        return finish()
+    if not output_dir:raise ValueError('--output-dir required for v1.8.2 standardize')
+    dest=Path(output_dir).resolve()
+    if dest==Path(audio_abs).parent.resolve():
+        raise ValueError('TARGET_IN_SOURCE_DIRECTORY: choose isolated output directory')
+    filename=Path(audio_abs).name;stem=Path(audio_abs).stem
+    sidecars={dest/(stem+'.lrc'):None,dest/(stem+'.spl'):None,dest/(stem+'.ttml'):None}
+    target_audio=dest/filename if write_tags else None
+    all_targets=list(sidecars)+( [target_audio] if target_audio else [] )
+    if any(os.path.lexists(x) for x in all_targets):
+        report['status']='BLOCKED';issue('TARGET_EXISTS','Existing destination is never overwritten')
+        return finish()
+    try:
+        elrc=render_elrc_v182(canonical)
+        ttml=render_ttml_v182(canonical)
+        check=verify_canonical_exports(canonical,elrc,ttml)
+        if not check.passed:
+            report['status']='BLOCKED'
+            issue('R1_CANONICAL_GENERATION_FAILED',','.join(i.code for i in check.issues))
+            return finish()
+    except (ValueError,TypeError) as exc:
+        report['status']='BLOCKED';issue('CANONICAL_RENDER_FAILED',str(exc))
+        return finish()
+    dest.mkdir(parents=True,exist_ok=True)
+    sidecars[dest/(stem+'.lrc')]=elrc
+    sidecars[dest/(stem+'.spl')]=elrc
+    sidecars[dest/(stem+'.ttml')]=ttml
+    staged={};committed=[]
+    try:
+        for dst,content in sidecars.items():
+            staged[dst]=_stage_sidecar(str(dest),dst.name,content)
+            if Path(staged[dst]).read_text('utf-8')!=content:
+                raise RuntimeError('STAGED_SIDECAR_READBACK_FAILED')
+        if write_tags:
+            # Container helper independently stages, verifies and commits;
+            # it NEVER writes to an occupied target.
+            cr=write_verified_standardized_container(audio_abs,str(target_audio),elrc,ttml,
+                  lyricist=canonical.song.get('extracted_lyricist'),
+                  composer=canonical.song.get('extracted_composer'))
+            report['container_verification']=cr
+            committed.append(target_audio)
+        if hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()!=original_audio_hash:
+            raise RuntimeError('SOURCE_MODIFIED_DURING_STANDARDIZATION')
+        for dst,tmp in staged.items():
+            os.link(tmp,dst)
+            committed.append(dst)
+        report['actions_taken']=['WRITE_SIDECAR_LRC','WRITE_SIDECAR_SPL','WRITE_SIDECAR_TTML']
+        if write_tags:report['actions_taken'].append('WRITE_VERIFIED_CONTAINER_TAGS')
+    except (OSError,RuntimeError,ValueError) as exc:
+        # Roll back only files this process just committed, NEVER preexisting.
+        for dst in reversed(committed):
+            try:os.unlink(dst)
+            except OSError:pass
+        report['status']='BLOCKED';issue('TRANSACTION_FAILED',type(exc).__name__+': '+str(exc))
+    finally:
+        for tmp in staged.values():
+            if os.path.exists(tmp):os.unlink(tmp)
+    return finish()
 
 
 def _write_json_report(report_path: str, data: Dict[str, Any]) -> None:
@@ -285,7 +311,7 @@ def main():
             print(f"  审计告警 ({len(res['issues'])} 项):")
             for iss in res["issues"][:5]:
                 print(f"    - [{iss.get('severity', 'INFO')}] {iss.get('code')}: {iss.get('evidence') or iss.get('message')}")
-        sys.exit(0 if res["status"] in ("PASS", "REVIEW_REQUIRED") else 1)
+        sys.exit(0 if res["status"] == "PASS" else 1)
     except Exception as exc:
         print(f"[ERROR] 执行失败: {exc}", file=sys.stderr)
         sys.exit(2)
