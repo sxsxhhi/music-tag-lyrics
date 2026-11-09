@@ -92,6 +92,11 @@ class LrcRedFetcher:
         return True
 
     @classmethod
+    def _cooldown_remaining(cls) -> float:
+        """当前 429 冷却剩余秒数（0 表示未在冷却中）。"""
+        return max(0.0, cls._cooldown_until - time.perf_counter())
+
+    @classmethod
     def _http_get_json(
         cls,
         url: str,
@@ -99,6 +104,11 @@ class LrcRedFetcher:
         deadline: Optional[float] = None
     ) -> Tuple[int, Optional[Dict[str, Any]]]:
         """请求 JSON 数据，做体积上限与状态码拦截。"""
+        # H05：冷却检查下沉到共同请求入口，任何调用方（ISRC/match/search/备用端点）
+        # 都无法绕过；返回 0 表示「本次未发出请求」，与真实 HTTP 状态严格区分。
+        if cls._cooldown_remaining() > 0:
+            logger.debug("   [lrc-red] 429 冷却中，跳过 JSON 请求")
+            return 0, None
         if not cls._rate_limit(deadline):
             return 0, None
         rem_timeout = timeout
@@ -134,6 +144,10 @@ class LrcRedFetcher:
         deadline: Optional[float] = None
     ) -> Tuple[int, Optional[str]]:
         """请求文本/TTML 数据，做体积上限拦截。"""
+        # H05：与 _http_get_json 共用同一冷却判定，杜绝备用端点绕过
+        if cls._cooldown_remaining() > 0:
+            logger.debug("   [lrc-red] 429 冷却中，跳过文本请求")
+            return 0, None
         if not cls._rate_limit(deadline):
             return 0, None
         rem_timeout = timeout
@@ -193,8 +207,9 @@ class LrcRedFetcher:
             return record
 
         now = time.perf_counter()
-        if now < cls._cooldown_until:
-            rem = int(cls._cooldown_until - now)
+        cooldown_left = cls._cooldown_remaining()
+        if cooldown_left > 0:
+            rem = int(cooldown_left)
             logger.warning("   ⚠️ [lrc-red] 处于 429 冷却中（剩余 %ds），跳过请求: %s", rem, clean_isrc)
             return None
 
@@ -224,7 +239,7 @@ class LrcRedFetcher:
                 "sync": data.get("sync") or "",
             }
         elif status == 429:
-            cls._handle_429()
+            # H05：429 已在 _http_get_json 最底层计过一次，此处只终止，绝不重复计数
             return None
         else:
             # P1-2: 降级回落请求 /s/{isrc}.ttml 与 /s/{isrc}.json
@@ -234,8 +249,7 @@ class LrcRedFetcher:
             meta_url = f"{LRC_RED_BASE}/s/{clean_isrc}.json"
             m_status, m_data = cls._http_get_json(meta_url, deadline=deadline)
             if m_status == 429:
-                cls._handle_429()
-                return None
+                return None  # H05：底层已计数，避免同一次 429 被计两次
             if m_status == 200 and m_data:
                 cls._consecutive_429 = 0
                 meta = {
@@ -252,8 +266,7 @@ class LrcRedFetcher:
             ttml_url = f"{LRC_RED_BASE}/s/{clean_isrc}.ttml"
             t_status, t_text = cls._http_get_text(ttml_url, deadline=deadline)
             if t_status == 429:
-                cls._handle_429()
-                return None
+                return None  # H05：底层已计数，避免同一次 429 被计两次
             if t_status == 200 and t_text:
                 cls._consecutive_429 = 0
                 raw_ttml = t_text

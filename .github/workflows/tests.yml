@@ -69,6 +69,8 @@ jobs:
         run: python tests/test_release_build.py
       - name: Leak guard synthetic rules (H02)
         run: python tests/test_leak_guard.py
+      - name: lrc.red 429 single-count & entry coverage (H05)
+        run: python tests/test_lrc_red_429.py
       - name: pre-push hook fail-closed (H02)
         run: python tests/test_prepush_hook.py
       - name: Path & PII leak guard
