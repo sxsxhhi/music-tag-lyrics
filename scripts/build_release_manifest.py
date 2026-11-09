@@ -195,6 +195,28 @@ def _member_digests(members: list[str]) -> dict[str, str]:
     return {rel: sha256_file(REPO_ROOT / rel) for rel in members}
 
 
+def _zip_member_digests(zip_path: Path) -> tuple[dict[str, str], list[str]]:
+    """返回 (成员哈希, 结构违规说明)。"""
+    problems: list[str] = []
+    digests: dict[str, str] = {}
+    with zipfile.ZipFile(zip_path) as zf:
+        seen: set[str] = set()
+        for info in zf.infolist():
+            name = info.filename
+            if name.startswith("/") or (len(name) > 1 and name[1] == ":"):
+                problems.append(f"ABSOLUTE_MEMBER:{name}")
+                continue
+            if ".." in name.split("/"):
+                problems.append(f"TRAVERSAL_MEMBER:{name}")
+                continue
+            if name in seen:
+                problems.append(f"DUPLICATE_MEMBER:{name}")
+                continue
+            seen.add(name)
+            digests[name] = hashlib.sha256(zf.read(name)).hexdigest()
+    return digests, problems
+
+
 def build_zip_at(target: Path, members: list[str]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
@@ -249,7 +271,13 @@ def _load_manifest(path: Path) -> dict | None:
 
 
 def _manifest_compatible(
-    manifest: dict | None, *, zip_name: str, zip_size: int, zip_sha: str, file_count: int
+    manifest: dict | None,
+    *,
+    zip_name: str,
+    zip_size: int,
+    zip_sha: str,
+    file_count: int,
+    member_digests: dict[str, str] | None = None,
 ) -> bool:
     if not manifest:
         return False
@@ -267,6 +295,12 @@ def _manifest_compatible(
     if asset.get("sha256") != zip_sha:
         return False
     if asset.get("file_count") != file_count:
+        return False
+    recorded_members = manifest.get("members")
+    if not isinstance(recorded_members, dict) or not recorded_members:
+        # 旧 Manifest 无成员哈希：视为与当前可校验内容不相容，重建
+        return False
+    if member_digests is not None and recorded_members != member_digests:
         return False
     commit = (manifest.get("git_commit") or "").strip()
     if not commit or commit == "unknown":
@@ -387,7 +421,12 @@ def build_release(*, dev: bool) -> int:
 
     existing, identical = _existing_manifests_identical()
     consistent = identical and _manifest_compatible(
-        existing, zip_name=ZIP_NAME, zip_size=zip_size, zip_sha=zip_sha, file_count=file_count
+        existing,
+        zip_name=ZIP_NAME,
+        zip_size=zip_size,
+        zip_sha=zip_sha,
+        file_count=file_count,
+        member_digests=_member_digests(members),
     )
     if consistent and existing is not None:
         reuse_commit = existing.get("git_commit")
@@ -413,6 +452,9 @@ def build_release(*, dev: bool) -> int:
                 "sha256": zip_sha,
                 "file_count": file_count,
             },
+            # H14：成员级哈希仅供构建者/维护者核验，避免另建第二套发布元数据格式。
+            # 注意：单独一个 ZIP 不自带可信 Manifest，普通使用者只能校验整体 SHA-256。
+            "members": _member_digests(members),
             "platforms_verified": [
                 "Windows 11 (Python 3.13)",
                 "Ubuntu 24.04 (GitHub Actions CI, Python 3.13)",
@@ -442,14 +484,142 @@ def build_release(*, dev: bool) -> int:
     return 0
 
 
+def verify_release(zip_path: Path, manifest_path: Path, against_zip: Path | None = None) -> int:
+    """校验发布包与 Manifest 的一致性（H14）。
+
+    退出码：0 = 全部可核验项通过；1 = 存在不一致；2 = 输入不可用。
+    未提供 ``--against-zip`` 时，**不会**声称线上资产已验证。
+    """
+    if not zip_path.is_file():
+        print(f"❌ 找不到 ZIP: {zip_path}", file=sys.stderr)
+        return 2
+    if not manifest_path.is_file():
+        print(f"❌ 找不到 Manifest: {manifest_path}", file=sys.stderr)
+        return 2
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"❌ Manifest 无法解析: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(manifest, dict):
+        print("❌ Manifest 结构非法", file=sys.stderr)
+        return 2
+
+    scope = str(manifest.get("manifest_scope") or "")
+    if "DEV PACKAGE" in scope:
+        print("❌ 该 Manifest 属于开发包（DEV PACKAGE），不能作为正式发布物验证", file=sys.stderr)
+        return 1
+
+    failures: list[str] = []
+    notes: list[str] = []
+
+    asset = manifest.get("release_asset") or {}
+    actual_sha = sha256_file(zip_path)
+    actual_size = zip_path.stat().st_size
+    digests, problems = _zip_member_digests(zip_path)
+
+    if asset.get("sha256") != actual_sha:
+        failures.append(f"整体 SHA-256 不一致（manifest {str(asset.get('sha256'))[:16]} vs 实际 {actual_sha[:16]}）")
+    if asset.get("size_bytes") != actual_size:
+        failures.append(f"字节大小不一致（manifest {asset.get('size_bytes')} vs 实际 {actual_size}）")
+    if asset.get("file_count") != len(digests):
+        failures.append(f"成员数不一致（manifest {asset.get('file_count')} vs 实际 {len(digests)}）")
+    failures.extend(problems)
+
+    recorded_members = manifest.get("members")
+    if isinstance(recorded_members, dict) and recorded_members:
+        missing = sorted(set(recorded_members) - set(digests))
+        extra = sorted(set(digests) - set(recorded_members))
+        changed = sorted(
+            rel for rel in set(recorded_members) & set(digests)
+            if recorded_members[rel] != digests[rel]
+        )
+        if missing:
+            failures.append(f"缺少成员 {len(missing)} 个：{missing[:5]}")
+        if extra:
+            failures.append(f"多余成员 {len(extra)} 个：{extra[:5]}")
+        if changed:
+            failures.append(f"成员内容被篡改 {len(changed)} 个：{changed[:5]}")
+    else:
+        notes.append("Manifest 未记录成员哈希，仅校验整体 SHA-256")
+
+    commit = (manifest.get("git_commit") or "").strip()
+    if not commit:
+        failures.append("Manifest 缺少 git_commit")
+    else:
+        try:
+            _git(["cat-file", "-e", f"{commit}^{{commit}}"])
+            notes.append(f"git_commit {commit[:12]} 可在本仓库解析")
+        except BuildError:
+            notes.append(f"git_commit {commit[:12]} 无法在本仓库解析（不据此判定包损坏）")
+
+    if against_zip is not None:
+        if not against_zip.is_file():
+            print(f"❌ 找不到对照 ZIP: {against_zip}", file=sys.stderr)
+            return 2
+        other_digests, other_problems = _zip_member_digests(against_zip)
+        if other_problems:
+            failures.extend(other_problems)
+        if other_digests != digests:
+            diff = sorted(
+                rel for rel in set(other_digests) | set(digests)
+                if other_digests.get(rel) != digests.get(rel)
+            )
+            failures.append(f"对照 ZIP 与本包内容不同（{len(diff)} 个成员），如 {diff[:5]}")
+        else:
+            notes.append(f"对照 ZIP 成员逐一一致：{against_zip.name}")
+        if sha256_file(against_zip) != actual_sha:
+            notes.append("对照 ZIP 的整体 SHA-256 与本包不同（不影响成员一致性判定）")
+    else:
+        notes.append("远端未验证：未提供 --against-zip，本结果只证明本地文件与 Manifest 相符")
+
+    if failures:
+        print(f"❌ 发布包校验失败：{len(failures)} 项")
+        for item in failures:
+            print(f"   - {item}")
+        for item in notes:
+            print(f"   ℹ️ {item}")
+        return 1
+
+    print("✅ 发布包校验通过")
+    print(f"   文件: {zip_path.name}  大小: {actual_size:,} 字节  成员: {len(digests)}")
+    print(f"   SHA-256: {actual_sha}")
+    for item in notes:
+        print(f"   ℹ️ {item}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="music-tag-lyrics 发布包与 Manifest 构建器（H01）")
+    ap = argparse.ArgumentParser(description="music-tag-lyrics 发布包与 Manifest 构建器（H01/H14）")
     group = ap.add_mutually_exclusive_group()
     group.add_argument("--release", action="store_true", help="正式包（默认），要求工作树干净")
     group.add_argument(
         "--dev-package", action="store_true", help="开发包，允许已跟踪脏改，只写 dist/dev/"
     )
+    group.add_argument(
+        "--verify-release",
+        action="store_true",
+        help="校验既有 ZIP 与 Manifest 的一致性（不构建）",
+    )
+    ap.add_argument("--zip", default="", help="--verify-release 的 ZIP 路径（默认 dist 正式包）")
+    ap.add_argument(
+        "--manifest",
+        default="",
+        help="--verify-release 的 Manifest 路径（默认仓库根 release-manifest.json）",
+    )
+    ap.add_argument(
+        "--against-zip",
+        default="",
+        help="已下载的线上 ZIP，用于成员级对照；不提供则结果明确标注「远端未验证」",
+    )
     args = ap.parse_args(argv)
+
+    if args.verify_release:
+        return verify_release(
+            Path(args.zip) if args.zip else ZIP_PATH,
+            Path(args.manifest) if args.manifest else MANIFEST_PATH,
+            Path(args.against_zip) if args.against_zip else None,
+        )
 
     try:
         return build_release(dev=bool(args.dev_package))

@@ -7,6 +7,7 @@ import logging
 import argparse
 import time
 from typing import Optional, Dict, Any, List, Tuple
+from dataclasses import dataclass
 
 # Reconfigure stdout/stderr for utf-8 on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -488,6 +489,87 @@ def _resolve_apple_artwork_url(lyric_data: Optional[Dict[str, Any]]) -> str:
         return ""
 
 
+@dataclass(frozen=True)
+class ProcessOutcome:
+    """单曲处理的结构化结果（H12）。
+
+    默认调用仍返回原生 ``bool``（``status != "FAILED"``），只有显式
+    ``return_outcome=True`` 时才返回本对象——因为现有调用点使用
+    ``assert ok is True``，对象即使实现 ``__bool__`` 也无法通过 ``is True``。
+
+    字段语义：
+      * ``tags_ok`` 为 ``None`` 表示本次未请求内嵌标签写入；
+      * ``isrc_written`` / ``cover_written`` 为 ``None`` 表示未执行该字段的回读验证，
+        不能因为整次 ``update_audio_tags()`` 成功就断言某字段已写入；
+      * ``source`` / ``lyric_type`` 只在歌词校验通过且 sidecar 真正落盘后才填写，
+        否则为 ``None``（候选来源不等于交付来源）。
+    """
+
+    status: str  # "SUCCESS" | "PARTIAL_SUCCESS" | "FAILED"
+    reasons: Tuple[str, ...] = ()
+    sidecar_ok: bool = False
+    tags_ok: Optional[bool] = None
+    source: Optional[str] = None
+    lyric_type: Optional[str] = None
+    has_translation: bool = False
+    local_isrc_present: bool = False
+    candidate_isrc_present: bool = False
+    isrc_written: Optional[bool] = None
+    cover_written: Optional[bool] = None
+
+    def as_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "reasons": list(self.reasons),
+            "sidecar_ok": self.sidecar_ok,
+            "tags_ok": self.tags_ok,
+            "source": self.source,
+            "lyric_type": self.lyric_type,
+            "has_translation": self.has_translation,
+            "local_isrc_present": self.local_isrc_present,
+            "candidate_isrc_present": self.candidate_isrc_present,
+            "isrc_written": self.isrc_written,
+            "cover_written": self.cover_written,
+        }
+
+
+def _failed_outcome(
+    reason: str,
+    *,
+    lyric_data: Any = None,
+    local_isrc: str = "",
+    tags_ok: Optional[bool] = None,
+    extra_reasons: Tuple[str, ...] = (),
+) -> ProcessOutcome:
+    """构造 FAILED 结果，避免各早退分支漏填字段（H12 陷阱 2）。"""
+    data = lyric_data if isinstance(lyric_data, dict) else {}
+    return ProcessOutcome(
+        status="FAILED",
+        reasons=tuple([reason, *extra_reasons]),
+        sidecar_ok=False,
+        tags_ok=tags_ok,
+        source=None,
+        lyric_type=None,
+        has_translation=False,
+        local_isrc_present=bool(local_isrc),
+        candidate_isrc_present=bool(data.get("isrc")),
+        isrc_written=None,
+        cover_written=None,
+    )
+
+
+def _derive_status(tags_ok: Optional[bool]) -> Tuple[str, Tuple[str, ...]]:
+    """由标签写入结果推导三态状态（H12）。
+
+    * ``tags_ok is None``（未请求内嵌写入，例如 ``--no-tags``）→ ``SUCCESS``
+    * ``tags_ok is True``                                        → ``SUCCESS``
+    * ``tags_ok is False``（sidecar 已生成但标签未写入）           → ``PARTIAL_SUCCESS``
+    """
+    if tags_ok is None or tags_ok:
+        return "SUCCESS", ()
+    return "PARTIAL_SUCCESS", ("embedded_tags_not_written",)
+
+
 def process_single_song(
     filepath: str,
     update_tags: bool = True,
@@ -501,9 +583,10 @@ def process_single_song(
     lang: str = "auto",
     qc_report: Optional[str] = None,
     write_isrc: bool = False,
-) -> bool:
+    return_outcome: bool = False,
+):
     try:
-        return _process_single_song_impl(
+        outcome = _process_single_song_impl(
             filepath=filepath,
             update_tags=update_tags,
             output_dir=output_dir,
@@ -517,6 +600,8 @@ def process_single_song(
             qc_report=qc_report,
             write_isrc=write_isrc,
         )
+        # H12：默认返回**原生 bool**；对象即使实现 __bool__ 也过不了 `is True`
+        return outcome if return_outcome else (outcome.status != "FAILED")
     finally:
         try:
             from core.acoustic_aligner import AcousticAligner
@@ -550,12 +635,12 @@ def _process_single_song_impl(
     """
     if not os.path.isfile(filepath):
         print(f"[ERROR] File not found: {filepath}")
-        return False
+        return _failed_outcome("file_not_found")
         
     ext = os.path.splitext(filepath)[1].lower()
     if ext not in SUPPORTED_EXTS:
         print(f"[SKIP] Unsupported format ({ext}): {filepath}")
-        return False
+        return _failed_outcome("unsupported_format")
 
     base_name = os.path.splitext(os.path.basename(filepath))[0]
     song_dir = os.path.dirname(filepath)
@@ -704,7 +789,12 @@ def _process_single_song_impl(
                 cleaned_year, composer, lyricist,
                 cover_data=cover_bytes, cover_mime=cover_mime,
             )
-        return False
+        return _failed_outcome(
+            "no_lyrics",
+            lyric_data=lyric_data,
+            local_isrc=isrc,
+            extra_reasons=("metadata_only_cleanup",) if (update_tags and not lyrics_only) else (),
+        )
 
     source = lyric_data.get("source", "unknown")
     lyric_type = lyric_data.get("lyric_type", "line")
@@ -727,13 +817,19 @@ def _process_single_song_impl(
     # 依然写盘、依然 return True，产物只剩标题行却报告成功。
     if not is_valid:
         print(f"❌ 校验未通过（有效歌词行为 0），不写盘：{cleaned_title} - {normalized_artist}")
+        _validation_failed = True
         if update_tags and not lyrics_only:
             _write_cleaned_metadata(
                 filepath, cleaned_title, normalized_artist, album,
                 cleaned_year, composer, lyricist,
                 cover_data=cover_bytes, cover_mime=cover_mime,
             )
-        return False
+        return _failed_outcome(
+            "lyrics_validation_failed",
+            lyric_data=lyric_data,
+            local_isrc=isrc,
+            extra_reasons=("metadata_only_cleanup",) if (update_tags and not lyrics_only) else (),
+        )
 
     # v1.6.0 P0-1: 行轴语义必须在**对齐前**打标。
     # zh 路径会把 line.start 改写成首字起点（lead=0），对齐后再推断恒为 sing，
@@ -800,7 +896,12 @@ def _process_single_song_impl(
                 cleaned_year, composer, lyricist,
                 cover_data=cover_bytes, cover_mime=cover_mime,
             )
-        return False
+        return _failed_outcome(
+            "post_enrich_validation_failed",
+            lyric_data=lyric_data,
+            local_isrc=isrc,
+            extra_reasons=("metadata_only_cleanup",) if (update_tags and not lyrics_only) else (),
+        )
 
     if not lyricist or not composer:
         line_text = "\n".join((l.get("text") or "") for l in validated_data.get("lines") or [])
@@ -848,6 +949,9 @@ def _process_single_song_impl(
     print(f"💎 Generated .spl -> {os.path.basename(spl_path)}")
 
     # 6. Update embedded tags in-place (including lyrics)
+    tags_ok: Optional[bool] = None
+    isrc_written: Optional[bool] = None
+    cover_written: Optional[bool] = None
     if update_tags:
         if lyrics_only:
             # Strictly update USLT/lyrics frame, keeping all other metadata untouched
@@ -908,13 +1012,40 @@ def _process_single_song_impl(
             else:
                 print("⚠️ Tag update skipped or format read-only (sidecar lyrics preserved)")
 
+        tags_ok = bool(success)
+        # 只有确实请求写入且整体成功，才认为对应字段已落盘；否则保持未知
+        isrc_written = bool(success) if (not lyrics_only and write_isrc and isrc_to_write) else None
+        cover_written = bool(success) if (not lyrics_only and cover_bytes) else None
+
         if not success:
             print("✨ Partially finished: sidecar lyrics generated, embedded tags skipped or failed.")
         else:
             print("✨ Successfully finished processing.")
     else:
         print("✨ Successfully finished processing.")
-    return True
+
+    # H12：交付来源只在歌词校验通过且 sidecar 已落盘时确认，不用候选值冒充
+    delivered_source = validated_data.get("source") or source
+    delivered_type = validated_data.get("lyric_type") or lyric_type
+    delivered_has_trans = any(
+        bool(line.get("translation")) for line in (validated_data.get("lines") or [])
+    )
+
+    status, reasons = _derive_status(tags_ok)
+
+    return ProcessOutcome(
+        status=status,
+        reasons=tuple(reasons),
+        sidecar_ok=True,
+        tags_ok=tags_ok,
+        source=delivered_source,
+        lyric_type=delivered_type,
+        has_translation=delivered_has_trans,
+        local_isrc_present=bool(isrc),
+        candidate_isrc_present=bool(lyric_data.get("isrc")),
+        isrc_written=isrc_written,
+        cover_written=cover_written,
+    )
 
 
 
@@ -967,8 +1098,12 @@ def main():
                         help="写出质检报告 JSON（L1/L2/行轴/闸门回退汇总；不带则不写）")
     parser.add_argument("--write-isrc", action="store_true",
                         help="允许向音频补齐满足严格门禁且缺失的 ISRC 标签（默认只读）")
-    parser.add_argument("--no-lrc-red", action="store_true",
-                        help="禁用 lrc.red 全球歌词网络")
+    parser.add_argument("--no-lrc-red", action="store_true", help="禁用 lrc.red 全球歌词网络")
+    parser.add_argument(
+        "--fail-on-partial",
+        action="store_true",
+        help="把 PARTIAL_SUCCESS（sidecar 已生成但内嵌标签未写入）视为失败退出（H12，默认关闭）",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, os.environ.get("MTL_LOG_LEVEL", "INFO").upper(), logging.INFO), format="%(message)s")
 
@@ -980,7 +1115,7 @@ def main():
     target = args.path
     if os.path.isfile(target):
         # P1-10: 单文件模式也返回真实退出码，脚本化调用才能判成败
-        ok = process_single_song(
+        outcome = process_single_song(
             target,
             update_tags=not args.no_tags,
             output_dir=args.out_dir,
@@ -993,11 +1128,19 @@ def main():
             lang=args.lang,
             qc_report=args.qc_report,
             write_isrc=args.write_isrc,
+            return_outcome=True,
         )
-        return 0 if ok else 1
+        if outcome.status == "FAILED":
+            return 1
+        if outcome.status == "PARTIAL_SUCCESS" and args.fail_on_partial:
+            print("❌ --fail-on-partial：sidecar 已生成但内嵌标签未写入")
+            return 1
+        return 0
     elif os.path.isdir(target):
         count = 0
         success_count = 0
+        partial_count = 0
+        failed_count = 0
         for root, _, files in os.walk(target):
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
@@ -1006,7 +1149,7 @@ def main():
                     fp = os.path.join(root, f)
                     # P1-10: 单曲异常不能中断整批
                     try:
-                        ok = process_single_song(
+                        outcome = process_single_song(
                             fp,
                             update_tags=not args.no_tags,
                             output_dir=args.out_dir,
@@ -1019,20 +1162,33 @@ def main():
                             lang=args.lang,
                             qc_report=args.qc_report,
                             write_isrc=args.write_isrc,
+                            return_outcome=True,
                         )
                     except Exception as exc:  # noqa: BLE001 - 单曲失败不能拖垮整批
                         print(f"❌ 处理失败，已跳过继续：{fp}\n   {type(exc).__name__}: {exc}")
-                        ok = False
-                    if ok:
+                        outcome = _failed_outcome("exception")
+                    if outcome.status == "SUCCESS":
                         success_count += 1
+                    elif outcome.status == "PARTIAL_SUCCESS":
+                        partial_count += 1
+                    else:
+                        failed_count += 1
                     try:
                         import torch
                         if torch.cuda.is_available():
                             torch.cuda.empty_cache()
                     except (ImportError, Exception):
                         pass
-        print(f"\nBatch processing completed: {success_count}/{count} succeeded.")
-        return 0 if success_count == count else 1
+        print(
+            f"\nBatch processing completed: {success_count}/{count} succeeded "
+            f"(SUCCESS={success_count}, PARTIAL={partial_count}, FAILED={failed_count})."
+        )
+        if success_count == count:
+            return 0
+        # 默认口径与旧行为一致：只要不是全部失败，PARTIAL 不算整体失败
+        if success_count + partial_count == count:
+            return 1 if args.fail_on_partial else 0
+        return 1
     else:
         print(f"Error: Target path does not exist: {target}")
         return 2

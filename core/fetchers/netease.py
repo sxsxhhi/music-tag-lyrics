@@ -148,15 +148,52 @@ class NetEaseFetcher:
         return song.get("id")
 
     @classmethod
+    def _has_remote_artist_evidence(cls, song: Any, artist: str) -> bool:
+        """H07：候选是否提供了可与本地艺人交叉验证的远端艺人证据。
+
+        要求同时满足三项，缺一即视为「无证据」：
+          1. 本地艺人非空且非泛称；
+          2. 候选确实给出可解析的远端艺人列表（非 None / 非空 / 元素为带 name 的 dict）；
+          3. 两端艺人 token 存在交集。
+
+        该判据只用于**授权元数据（年份）写回**，不用于拒绝歌词候选——
+        保持老歌词通道的宽松召回语义不变。
+        """
+        if not artist or artist.strip().lower() in GENERIC_ARTISTS:
+            return False
+        if not isinstance(song, dict):
+            return False
+        raw_ar = song.get("artists")
+        if not isinstance(raw_ar, list) or not raw_ar:
+            return False
+        cand_artists = [
+            a["name"]
+            for a in raw_ar
+            if isinstance(a, dict) and isinstance(a.get("name"), str) and a.get("name").strip()
+        ]
+        if not cand_artists:
+            return False
+        target_toks = artist_tokens(artist)
+        cand_toks = artist_tokens("/".join(cand_artists))
+        if not target_toks or not cand_toks:
+            return False
+        return bool(target_toks & cand_toks)
+
+    @classmethod
     def lookup_year(cls, title: str, artist: str = "", duration_ms: int = 0) -> str:
         """从网易专辑 publishTime 取四位年份。
-        
+
         R14: 本地艺人为空或泛称(群星/Unknown)时，严禁盲目猜歌补全错年份。
+        H07: 候选未提供可交叉验证的远端艺人证据时，同样返回空年份，
+             绝不把「远端艺人未知」当成「艺人一致」。
         """
         if not artist or artist.strip().lower() in GENERIC_ARTISTS:
             return ""
         song = cls.search_best_song(title, artist, duration_ms)
         if not song or not isinstance(song, dict):
+            return ""
+        if not cls._has_remote_artist_evidence(song, artist):
+            logger.warning("   ⚠️ [netease] 远端艺人证据不足，放弃年份写回: %s", title)
             return ""
         album = song.get("album")
         if not isinstance(album, dict):

@@ -73,6 +73,18 @@ jobs:
         run: python tests/test_lrc_red_429.py
       - name: TTML timing triple & main-p denominator (H09/H10)
         run: python tests/test_ttml_timing.py
+      - name: Version keyword ASCII boundaries (H04)
+        run: python tests/test_version_guard.py
+      - name: lrc.red search prefilter (H06)
+        run: python tests/test_lrc_red_prefilter.py
+      - name: NetEase year write-back evidence (H07)
+        run: python tests/test_netease_year.py
+      - name: Mirror sync dry-run & prune safety (H03)
+        run: python tests/test_sync_copies.py
+      - name: Process outcome contract (H12/H13)
+        run: python tests/test_process_outcome.py
+      - name: Release verification entry (H14)
+        run: python tests/test_release_verify.py
       - name: pre-push hook fail-closed (H02)
         run: python tests/test_prepush_hook.py
       - name: Path & PII leak guard

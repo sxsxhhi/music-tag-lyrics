@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-r"""真实曲库 A/B 评测与零污染验证脚本。
+r"""真实曲目单版本抽样运行与原音频完整性检查（H13）。
 
 数据源：由环境变量 MTL_AB_SRC 指定，其下需含 中文/ 与 非国语/ 两个子目录；
         未设置或目录不存在时打印用法并以退出码 2 结束。
@@ -8,6 +8,10 @@ r"""真实曲库 A/B 评测与零污染验证脚本。
 隔离目录：.test-work/fixtures/ab_sample/
 输出目录：.test-work/out/ab_eval/
 清单文件：.test-work/out/ab_eval/validation_tracks_manifest.csv（不进公开仓库）
+
+注意：本脚本**不是**新旧双版本 A/B 对照，而是「单版本真实曲目抽样运行」——
+每首歌只执行一次 process_single_song(return_outcome=True)，不做第二次抓取，
+所有评测列均取自该次实际交付结果。
 """
 
 import os
@@ -22,7 +26,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.process_song import process_single_song, read_audio_tags
-from core.aggregator import LyricAggregator
 
 SRC_DIR = Path(os.environ.get("MTL_AB_SRC", "")).expanduser()
 SRC_ZH = SRC_DIR / "中文"
@@ -61,7 +64,7 @@ def sha256_file(path: Path) -> str:
 
 def main():
     print("=" * 60)
-    print("🚀 启动 v1.8.1 真实曲库 40 首 A/B 评测与隔离验证 (R19)")
+    print("🚀 启动真实曲目单版本抽样运行与原音频完整性检查 (H13)")
     print("=" * 60)
 
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -115,36 +118,31 @@ def main():
         artist = tags.get("artist") or (fn.split(" - ")[1].rsplit(".", 1)[0] if " - " in fn else "")
         dur_ms = tags.get("duration") or 0
 
-        # 执行标准离线/多源调度检索评估
+        # H13：只执行一次真实处理，评测列全部取自该次交付结果，不做第二次抓取。
+        # 每首独立输出目录，避免同名不同路径相撞与旧副文件造成假阳性。
+        song_out = OUT_DIR / f"{idx:03d}_{os.path.splitext(fn)[0]}"
         try:
-            cand = LyricAggregator.fetch_best_lyrics(
-                title=title,
-                artist=artist,
-                duration_ms=dur_ms,
-                album=tags.get("album", ""),
-                isrc=tags.get("isrc", "")
+            outcome = process_single_song(
+                filepath=str(dest_p),
+                output_dir=str(song_out),
+                update_tags=False,
+                non_interactive=True,
+                return_outcome=True,
             )
         except Exception as exc:
-            cand = None
-            print(f"   ⚠️ 抓取发生异常: {exc}")
+            print(f"   ⚠️ 处理发生异常: {type(exc).__name__}: {exc}")
+            from scripts.process_song import _failed_outcome as _mk_failed
+            outcome = _mk_failed("exception")
 
-        # 同时调用 process_single_song 导出到独立 out 目录（--no-tags 保证原样隔离）
-        ok = process_single_song(
-            filepath=str(dest_p),
-            output_dir=str(OUT_DIR),
-            update_tags=False,
-            non_interactive=True,
-        )
+        selected_source = outcome.source or "none"
+        lyric_type = outcome.lyric_type or "none"
+        has_trans = bool(outcome.has_translation)
+        has_isrc = bool(tags.get("isrc") or outcome.candidate_isrc_present)
 
-        selected_source = cand.get("source") if cand else "none"
-        lyric_type = cand.get("lyric_type") if cand else "none"
-        has_trans = bool(cand.get("has_translation") or any(bool(l.get("translation")) for l in (cand.get("lines") or []))) if cand else False
-        has_isrc = bool(tags.get("isrc") or (cand and cand.get("isrc")))
-
-        # 检查生成物
+        # 检查生成物（只看本首独立目录）
         base_no_ext = os.path.splitext(fn)[0]
-        lrc_file = OUT_DIR / f"{base_no_ext}.lrc"
-        spl_file = OUT_DIR / f"{base_no_ext}.spl"
+        lrc_file = song_out / f"{base_no_ext}.lrc"
+        spl_file = song_out / f"{base_no_ext}.spl"
         out_generated = lrc_file.is_file() and spl_file.is_file()
 
         results.append({
@@ -160,7 +158,7 @@ def main():
             "has_translation": "Yes" if has_trans else "No",
             "isrc_present": "Yes" if has_isrc else "No",
             "out_files": "Yes" if out_generated else "No",
-            "status": "PASS" if (cand and out_generated) else ("RECOVERED" if out_generated else "FALLBACK"),
+            "status": outcome.status,
         })
 
     # 4. 后置 SHA-256 完整性复验
@@ -221,7 +219,7 @@ def main():
                 r["status"],
             ])
 
-    print("🎉 A/B 评测与基准清单生成完成！")
+    print("🎉 单版本抽样运行与完整性清单生成完成！")
 
 
 if __name__ == "__main__":

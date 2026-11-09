@@ -53,6 +53,8 @@ SONG_BUDGET_S = 5.0
 MAX_JSON_BYTES = 1024 * 1024        # 1 MiB
 MAX_TTML_BYTES = 2 * 1024 * 1024    # 2 MiB
 MIN_REQ_INTERVAL_S = 1.0            # 保守速率限制 1 req/s
+# H06：候选时长未知时的固定名次折损，避免「缺字段」被当成 `dur_diff == 0` 的精确匹配而占优
+UNKNOWN_DUR_PENALTY = 10
 
 
 class LrcRedFetcher:
@@ -437,6 +439,13 @@ class LrcRedFetcher:
         remote_ver_all = (version_tokens(r_title) if r_title else set()) | (version_tokens(r_album) if r_album else set())
         version_identical = (local_ver_all == remote_ver_all)
 
+        # H06：与预筛共用同一「已知硬版本冲突」判据；证据不足（unknown）时保留候选，
+        # 但不授予元数据写回资格。
+        version_evidence = cls._assess_version_evidence(title, album, r_title, r_album)
+        if version_evidence == "conflict":
+            logger.warning("   ⚠️ [lrc-red] 版本硬冲突（%s），丢弃候选: %s", version_evidence, clean_isrc)
+            return None
+
         has_full_identity = bool(
             r_title and r_artist and local_art_valid and remote_art_valid and art_match
         )
@@ -448,6 +457,7 @@ class LrcRedFetcher:
             and title_strict_match
             and has_full_identity
             and version_identical
+            and version_evidence == "consistent"
             and is_valid_isrc(clean_isrc)
         )
 
@@ -462,6 +472,7 @@ class LrcRedFetcher:
             "duration_ms": parsed.get("duration_ms") or remote_dur_ms,
             "has_translation": parsed.get("has_translation", False),
             "isrc_write_eligible": isrc_write_eligible,
+            "version_evidence": version_evidence,
             "match": {
                 "confidence": confidence,
                 "isrc_origin": match_origin,
@@ -511,6 +522,41 @@ class LrcRedFetcher:
         )
 
     @classmethod
+    def _assess_version_evidence(
+        cls,
+        local_title: str,
+        local_album: str,
+        cand_title: str,
+        cand_album: str,
+    ) -> str:
+        """最小「已知硬版本冲突」谓词（H06）。
+
+        预筛与最终验收共用同一判据，避免两处口径不一致。
+
+        返回：
+          * ``conflict``   —— 存在对称的硬版本标识差异（Live/Studio、Remix、Cover…）
+          * ``unknown``    —— 候选未提供专辑，而本地专辑自带版本标识，无法确认专辑侧版本
+          * ``consistent`` —— 两侧版本标识一致或都不含版本标识
+
+        ``unknown`` 的候选可以保留参与打分，但**不得授权元数据写回**。
+        """
+        from ..utils.text_match import VERSION_EXCLUSION_TOKENS
+
+        local_title_tok = version_tokens(local_title or "")
+        local_album_tok = version_tokens(local_album or "")
+        cand_title_tok = version_tokens(cand_title or "")
+        cand_album_tok = version_tokens(cand_album or "")
+
+        local_all = local_title_tok | local_album_tok
+        cand_all = cand_title_tok | cand_album_tok
+        if ((local_all - cand_all) | (cand_all - local_all)) & VERSION_EXCLUSION_TOKENS:
+            return "conflict"
+        # 候选完全没有提供专辑，而本地有专辑信息可对照：专辑侧版本无从确认
+        if local_album and not cand_album:
+            return "unknown"
+        return "consistent"
+
+    @classmethod
     def _rank_and_filter_hits(
         cls,
         hits: List[Dict[str, Any]],
@@ -540,8 +586,9 @@ class LrcRedFetcher:
             except Exception:
                 cand_dur_ms = 0
 
-            # 时长门禁：±5000ms
-            if duration_ms > 0 and cand_dur_ms > 0:
+            # 时长门禁：±5000ms；缺时长记为「未知」，不享受精确匹配加分（H06）
+            dur_known = duration_ms > 0 and cand_dur_ms > 0
+            if dur_known:
                 dur_diff = abs(duration_ms - cand_dur_ms)
                 if dur_diff > 5000:
                     continue
@@ -553,10 +600,13 @@ class LrcRedFetcher:
             if local_norm_t_loose and cand_t_loose and local_norm_t_loose != cand_t_loose:
                 continue
 
-            # 版本互斥门禁 (P0-3)
-            cand_ver = version_tokens(cand_title) if cand_title else set()
-            ver_diff = (local_ver - cand_ver) | (cand_ver - local_ver)
-            if ver_diff and any(k in ver_diff for k in VERSION_EXCLUSION_TOKENS):
+            # 版本互斥门禁（H06）：标题与专辑同域判定，已知硬冲突先在预筛剔除，
+            # 不占用后续前三名的下载机会。
+            cand_album = h.get("album") or ""
+            version_evidence = cls._assess_version_evidence(
+                title, album, cand_title, cand_album
+            )
+            if version_evidence == "conflict":
                 continue
 
             # 艺人门禁
@@ -573,7 +623,11 @@ class LrcRedFetcher:
                 cand_al = norm_album(h.get("album"))
                 if cand_al and cand_al == local_al:
                     score += 20
-            score -= dur_diff // 100
+            # H06：缺失时长既不加分也不减分，改为固定折损，避免「未知」被当成精确匹配 0 差而占优
+            if dur_known:
+                score -= dur_diff // 100
+            else:
+                score -= UNKNOWN_DUR_PENALTY
 
             valid_candidates.append((score, h))
 

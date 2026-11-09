@@ -15,23 +15,66 @@ COVER_KEYWORDS = ("cover", "翻唱")
 from typing import Optional
 
 REMIX_PATTERN = re.compile(
-    r"(?:\b(?:remix|re-mix)\b|混音|[\(\[\{][^\)\]\}]*\b(?:mix|remix|club|extended|radio\s+edit)\b[^\)\]\}]*[\)\]\}]|\b\w+\s+mix\b)",
+    r"(?:(?<![A-Za-z])(?:remix|re-mix)(?![A-Za-z])|混音|[\(\[\{][^\)\]\}]*\b(?:mix|remix|club|extended|radio\s+edit)\b[^\)\]\}]*[\)\]\}]|\b\w+\s+mix\b)",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# H04：英文版本关键词必须按 ASCII 字母边界匹配
+#
+# 原先统一用 `k in t_lower` 子串判定，导致真实歌名被误判版本：
+#   Alive / Olive / Deliver / Lived In Bars  → 被判为 Live
+#   Discover / Recovery                      → 被判为 Cover
+#   Demons                                   → 被判为 Demo
+#
+# 不能用 Unicode 的 `\b`：`\b` 基于 `\w`，而 `\w` 含汉字，`r"\blive\b"` 在
+# `Live现场` 里不会命中（`e` 与 `现` 之间不构成词界），恰好把必须保留的正例漏掉。
+# 因此改用只针对 ASCII 字母的前后断言。
+# 中文关键词（现场/翻唱/伴奏…）保持原生子串语义，不受此规则影响。
+# ---------------------------------------------------------------------------
+_ASCII_KEYWORD_RE_CACHE: dict = {}
+
+
+def _normalize_spaces(text: str) -> str:
+    """把连续空白（含全角空格）压成单个半角空格，供多词关键词匹配。"""
+    return re.sub(r"[\s\u3000]+", " ", text or "").strip()
+
+
+def _ascii_keyword_re(keyword: str) -> "re.Pattern[str]":
+    """构造 ASCII 边界关键词正则（大小写不敏感）。"""
+    cached = _ASCII_KEYWORD_RE_CACHE.get(keyword)
+    if cached is None:
+        cached = re.compile(
+            r"(?<![A-Za-z])" + re.escape(keyword) + r"(?![A-Za-z])",
+            re.IGNORECASE,
+        )
+        _ASCII_KEYWORD_RE_CACHE[keyword] = cached
+    return cached
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    """中文关键词走子串；英文关键词走 ASCII 边界正则。"""
+    if not keyword:
+        return False
+    if any(ord(ch) > 127 for ch in keyword):
+        return keyword in text.lower()
+    haystack = _normalize_spaces(text) if " " in keyword else text
+    return _ascii_keyword_re(keyword).search(haystack) is not None
+
 
 def is_live_version(text: str) -> bool:
     """Checks whether the text explicitly designates a live performance edition."""
     if not text:
         return False
-    t_lower = text.lower()
-    return any(k in t_lower for k in LIVE_KEYWORDS)
+    return any(_contains_keyword(text, k) for k in LIVE_KEYWORDS)
+
 
 def is_demo_version(text: str) -> bool:
     """Checks whether the text explicitly designates a demo edition."""
     if not text:
         return False
-    t_lower = text.lower()
-    return any(k in t_lower for k in DEMO_KEYWORDS)
+    return any(_contains_keyword(text, k) for k in DEMO_KEYWORDS)
+
 
 def is_remix_version(text: str) -> bool:
     """Checks whether the text explicitly designates a remix edition."""
@@ -39,19 +82,19 @@ def is_remix_version(text: str) -> bool:
         return False
     return bool(REMIX_PATTERN.search(text))
 
+
 def is_instrumental_version(text: str) -> bool:
     """Checks whether the text explicitly designates an instrumental / accompaniment edition."""
     if not text:
         return False
-    t_lower = text.lower()
-    return any(k in t_lower for k in INSTRUMENTAL_KEYWORDS)
+    return any(_contains_keyword(text, k) for k in INSTRUMENTAL_KEYWORDS)
+
 
 def is_cover_version(text: str) -> bool:
     """Checks whether the text explicitly designates a cover / tribute edition."""
     if not text:
         return False
-    t_lower = text.lower()
-    return any(k in t_lower for k in COVER_KEYWORDS)
+    return any(_contains_keyword(text, k) for k in COVER_KEYWORDS)
 
 
 def is_title_fuzzy_match(cand_title: str, target_title: str) -> bool:
