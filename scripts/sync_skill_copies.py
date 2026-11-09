@@ -170,10 +170,21 @@ def sync_to(
     *,
     dry_run: bool = False,
     no_prune: bool = False,
+    adopt_existing: bool = False,
 ) -> dict:
-    """把仓库分发给定视图同步到 target。返回统计信息。"""
+    """把仓库分发给定视图同步到 target。返回统计信息。
+
+    ``adopt_existing=True`` 时，若目标没有受管清单，则把**当前已存在的文件**视作
+    受管基线，使首次同步也能清理陈旧残留（显式 opt-in，默认关闭以免误删）。
+    """
     members = collect_members()
     previous = _read_manifest(target)
+    if previous is None and adopt_existing and target.is_dir():
+        previous = {
+            p.relative_to(target).as_posix()
+            for p in target.rglob("*")
+            if p.is_file() and p.name != MANIFEST_NAME
+        }
     stats = {
         "target": str(target),
         "copied": 0,
@@ -273,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         help="显式授权目标所在的父目录（可重复）",
     )
     ap.add_argument(
+        "--adopt-existing",
+        action="store_true",
+        help="目标无受管清单时，把当前已存在文件视作受管基线（首次迁移用，之后即可正常清理陈旧残留）",
+    )
+    ap.add_argument(
         "--allow-default-dest",
         action="store_true",
         help="显式信任默认目标 <workspace>/.agent/skills/music-tag-lyrics",
@@ -293,14 +309,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"❌ {label} 校验失败: {exc}", file=sys.stderr)
             rc = 2
             continue
-        stats = sync_to(resolved, dry_run=args.dry_run, no_prune=args.no_prune)
+        stats = sync_to(
+            resolved,
+            dry_run=args.dry_run,
+            no_prune=args.no_prune,
+            adopt_existing=args.adopt_existing,
+        )
         verb = "将同步" if args.dry_run else "已同步"
         print(
             f"✅ {verb}至{label}: {resolved} "
             f"(成员 {stats['copied']} 个，清理 {stats['pruned']} 个陈旧文件)"
         )
         if stats["skipped_prune"] == -1:
-            print("   ℹ️  首次同步无受管清单：未删除任何未知文件（防误删）")
+            print(
+                "   ℹ️  首次同步无受管清单：未删除任何未知文件（防误删）；"
+                "如需接管既有残留请加 --adopt-existing"
+            )
     if not args.dry_run:
         print("🎉 Skill 副本同步完成！")
     return rc

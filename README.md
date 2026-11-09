@@ -165,9 +165,20 @@ python scripts/process_song.py "歌曲.flac" --write-isrc
 本项目配备了极其严苛的工程测试用例网络，涵盖各种奇怪歌词格式、字符集、连读念白与边界条件：
 
 ```bash
-# 一键运行全部 25 个离线测试套件（434 项用例：423 通过 / 11 条件跳过，0 失败）
+# 一键运行全部 37 个离线测试套件（550 项用例：539 通过 / 11 条件跳过，0 失败）
 python tests/run_all.py
 
+
+
+**验证范围（如实声明）**
+
+- 上方数字是 **Ubuntu 24.04 / Python 3.13 的公开 CI 结果**，不代表所有平台；
+- 缓存默认优先落在 Skill 目录 `.cache/`，该目录不可写时会按五级回退继续尝试系统缓存与 TEMP 并告警；
+  `MTL_STRICT_STORAGE=1` 只约束**应用缓存目录**，不等于「整个进程不写系统盘」；
+- Windows / GPU / 声学对齐（Demucs、Whisper、Wav2Vec2）属于维护者本地验证范围，公开 CI 未独立核验，
+  相关用例在 CI 中以条件跳过呈现；
+- 容器矩阵中标注 `Verified in public CI` 的项有公开夹具支撑；标注 `Verified locally only` /
+  `Not verified` 的项不作为公开保证。
 
 # 快速运行指定模块测试
 python tests/run_all.py -k line_axis
@@ -192,8 +203,19 @@ python tests/run_all.py -k canto
 | `MTL_DEVICE` | `auto` | `auto` 自动检测 CUDA；`cpu` 强制走 CPU 计算模式 |
 | `MTL_DEMUCS` | `on` | `off` 可在 CPU 模式下跳过人声分离，直接对混音对齐以节省时间 |
 | `MTL_ZH_GATE` | `on` | `on` 粤语歌熔断转普通话时必须通过横向打分验货，低于 `-8.0` 则拒绝出货 |
+| `MTL_CACHE_DIR` | 空 | 缓存目录；为空时按五级回退（Skill `.cache/` → 系统缓存 → TEMP） |
+| `MTL_STRICT_STORAGE` | `0` | `1` 时只接受已存在、绝对、可写的 `MTL_CACHE_DIR`，缺失/相对/不可写即报错，不回退 |
+| `MTL_LRC_RED_CONTACT` | 空 | lrc.red 官方条款要求 UA 内含联系方式；在此填入可联系的邮箱或项目地址 |
 
 </details>
+
+---
+
+## 🙏 数据来源与署名
+
+歌词数据来自 [lrc.red](https://lrc.red)。按其 API 条款要求：请求 User-Agent 需说明应用并提供可联系方式
+（本工具通过 `MTL_LRC_RED_CONTACT` 注入，源码不内置任何私人邮箱）；展示 lrc.red 数据时应清晰署名并回链。
+候选结果的 `provenance.attribution` 已带上该链接，便于下游展示时使用。
 
 ---
 
@@ -201,7 +223,7 @@ python tests/run_all.py -k canto
 
 | 版本 | 发布日期 | 亮点概述 |
 | :---: | :---: | :--- |
-| **最新** | `2026-11-08` | **缓存五级回退与零侵入系统盘 · 分发包瘦身过滤 · 自动化测试扩展至 25 套件 434 用例**<br/>• 改造 `core/utils/cache_paths.py` 五级候选链：默认优先使用 skill 根目录 `.cache/`，确保缓存跟随工作区所在卷，绝不侵入 C 盘；回退系统盘时输出一次性告警；<br/>• 抽离 `scripts/_dist_view.py` 统一定义分发视图与排除规则，公开分发包剔除本机私有开发脚本、过程审计报告与版权夹具，包体积显著瘦身且工作树 sha256 零不一致；<br/>• 打包脚本与 `core.version` 单一信源全面对齐，Manifest 排除自身打包消除自指死锁；<br/>• 新增 `tests/test_cache_paths.py` 严格校验零侵入红线并纳入 CI 白名单，全量离线自动化测试扩展至 25 套件 434 用例（423 通过 / 11 条件跳过 / 0 失败）。 |
+| **最新** | `2026-11-08` | **缓存五级回退与存储路径可控 · 分发包瘦身过滤 · 自动化测试扩展至 37 套件 550 用例**<br/>• 改造 `core/utils/cache_paths.py` 五级候选链：默认优先使用 skill 根目录 `.cache/`（跟随工作区所在卷）；该目录不可写时按五级回退继续尝试系统缓存与 TEMP，并输出一次性告警；如需严格限定为单一目录须显式启用 `MTL_STRICT_STORAGE=1`；<br/>• 抽离 `scripts/_dist_view.py` 统一定义分发视图与排除规则，公开分发包剔除本机私有开发脚本、过程审计报告与版权夹具，包体积显著瘦身且工作树 sha256 零不一致；<br/>• 打包脚本与 `core.version` 单一信源全面对齐，Manifest 排除自身打包消除自指死锁；<br/>• 新增 `tests/test_cache_paths.py` 校验缓存优先落于 skill 目录、回退有告警、严格模式 fail-closed，并纳入 CI，全量离线自动化测试扩展至 37 套件 550 用例（539 通过 / 11 条件跳过 / 0 失败）。 |
 | **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 423 项测试（412 通过 / 11 跳过）**<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 消除元数据假认证：严禁本地数据回填远端凭证，远端缺失元数据显式标为 missing 并降为 loose 候选；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• 区分 `byModel=True` 模型生成与官方逐字凭证，严禁模型轴交付为 T1 或写回 ISRC；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 完善 TTML 解析：XML 实体反转义、英文空格保持与时间标签规范化、多 div 时序自愈与质量指标审计；<br/>• 新增 `tests/test_v181_repro.py` 与 `tests/test_isrc_integration.py`，全量测试扩展至 24 套件 423 用例（412 通过 / 11 条件跳过）。 |
 
 | **v1.8.0** | `2026-11-07` | **lrc.red 全球 ISRC 逐字网络接入 · Apple TTML 双引擎调度 · 366 项测试全绿**<br/>• 引入 lrc.red 全球歌词开放同步网络，作为 Apple TTML 的原生双引擎补充；<br/>• 支持基于本地 ISRC 编码直查 Apple Music TTML 逐字流光歌词；<br/>• 实现 lrc.red 专属 TTML 命名空间与逐字结构解析器。 |

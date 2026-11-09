@@ -48,6 +48,8 @@ EXCLUDE_FILES = {
     "release-manifest.json",
     # 本机运行生成的基线快照（含私人曲库文件名与音频哈希，禁止分发）
     "baseline.json",
+    # 同步工具自身的受管清单（仅存在于镜像目录，不应随分发包传播）
+    ".mtl-sync-manifest.json",
 }
 
 # 通配文件名排除模式（P2-02：私有基准测试脚本等）

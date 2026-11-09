@@ -22,7 +22,6 @@ import datetime
 import hashlib
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -461,18 +460,18 @@ def build_release(*, dev: bool) -> int:
             ],
             "python_compatibility": "Python 3.10 - 3.13",
             "container_support_matrix": {
-                "FLAC (.flac)": "Verified (real audio tracks)",
-                "MP3 (.mp3)": "Verified (Real ID3v2.3/2.4 USLT)",
-                "M4A / AAC (.m4a)": "Verified (Real QuickTime atoms)",
-                "WAV (.wav)": "Verified (Real RIFF ID3 chunk)",
-                "DSF (.dsf)": "Pending Physical Fixtures Verification",
-                "OGG (.ogg)": "Pending Physical Fixtures Verification",
+                "FLAC (.flac)": "Verified in public CI (FLAC fixture)",
+                "MP3 (.mp3)": "Verified in public CI (real ID3v2.3/2.4 USLT fixture)",
+                "M4A / AAC (.m4a)": "Verified locally only (maintainer QuickTime fixtures); NOT_VERIFIED in public CI",
+                "WAV (.wav)": "Verified in public CI (real RIFF ID3 chunk fixture)",
+                "DSF (.dsf)": "Not verified (no physical fixture)",
+                "OGG (.ogg)": "Not verified (no physical fixture)",
             },
             "quality_and_safety_guarantees": {
-                "mother_disk_protection": "STRICT_ENFORCED (mother library zero-touch)",
-                "sample_audio_contamination": "ZERO_CONTAMINATION (all sampled tracks verified by SHA-256)",
+                "mother_disk_protection": "LOCAL_POLICY (mother library zero-touch; enforced by maintainer workflow, not independently audited in public CI)",
+                "sample_audio_contamination": "LOCAL_SAMPLE_VERIFIED (SHA-256 unchanged on maintainer sample set; not a public-CI guarantee)",
                 "network_tripwire": "ACTIVE (offline tests protected against public egress)",
-                "isrc_safety_gate": "STRICT_VERIFIED (unknown artist & version mismatch blocked)",
+                "isrc_safety_gate": "GATE_ENFORCED_IN_CODE (unknown artist & version mismatch blocked; covered by public CI fixtures)",
             },
         }
         write_manifest_atomic(manifest_data, [MANIFEST_PATH, DOCS_MANIFEST_PATH])

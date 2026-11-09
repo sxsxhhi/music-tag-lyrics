@@ -230,6 +230,24 @@ def test_synced_members_match_dist_view():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def test_adopt_existing_allows_first_prune():
+    """显式 --adopt-existing 时，首次同步可清理既有残留。"""
+    base = _tmp()
+    target = base / "mirror"
+    target.mkdir()
+    stale = target / "old_report.md"
+    stale.write_text("stale\n", encoding="utf-8")
+    try:
+        stats = sync_mod.sync_to(target, adopt_existing=True)
+        assert stats["pruned"] >= 1, stats
+        assert not stale.exists(), "--adopt-existing 未清理既有残留"
+        assert stats["manifest_written"] is True
+    finally:
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

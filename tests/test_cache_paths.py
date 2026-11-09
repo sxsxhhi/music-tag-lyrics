@@ -270,6 +270,98 @@ def test_temp_fallback_when_repo_unwritable():
         shutil.rmtree(fake_platform_parent, ignore_errors=True)
 
 
+def _with_strict_env(**env):
+    """临时设置严格存储相关环境变量。"""
+    keys = ("MTL_STRICT_STORAGE", "MTL_CACHE_DIR")
+    old = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ.pop(k, None)
+    for k, v in env.items():
+        if v is not None:
+            os.environ[k] = v
+    return old
+
+
+def _restore_env(old):
+    for k, v in old.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def test_strict_off_keeps_fallback_behaviour():
+    """MTL_STRICT_STORAGE 未设置/为 0 时保持默认回退，不抛错。"""
+    old = _with_strict_env()
+    try:
+        set_cache_dir_override(None)
+        p = get_cache_dir()
+        assert isinstance(p, Path) and p.is_dir()
+    finally:
+        _restore_env(old)
+        set_cache_dir_override(None)
+
+
+def test_strict_missing_path_fails():
+    """strict=1 但未设置 MTL_CACHE_DIR → 必须抛错，绝不回退。"""
+    old = _with_strict_env(MTL_STRICT_STORAGE="1")
+    try:
+        set_cache_dir_override(None)
+        try:
+            get_cache_dir()
+        except cache_paths_mod.StrictStorageError as exc:
+            assert "MTL_CACHE_DIR" in str(exc)
+        else:
+            raise AssertionError("strict 缺路径未 fail-closed")
+    finally:
+        _restore_env(old)
+
+
+def test_strict_relative_path_fails():
+    old = _with_strict_env(MTL_STRICT_STORAGE="1", MTL_CACHE_DIR="relative/cache")
+    try:
+        set_cache_dir_override(None)
+        try:
+            get_cache_dir()
+        except cache_paths_mod.StrictStorageError as exc:
+            assert "绝对路径" in str(exc)
+        else:
+            raise AssertionError("strict 相对路径未 fail-closed")
+    finally:
+        _restore_env(old)
+
+
+def test_strict_missing_dir_fails_without_creating():
+    """strict 模式下目录不存在必须失败，且不得代为创建。"""
+    parent = Path(tempfile.mkdtemp(prefix="mtl_strict_"))
+    target = parent / "not_created_yet"
+    old = _with_strict_env(MTL_STRICT_STORAGE="1", MTL_CACHE_DIR=str(target))
+    try:
+        set_cache_dir_override(None)
+        try:
+            get_cache_dir()
+        except cache_paths_mod.StrictStorageError as exc:
+            assert "不存在" in str(exc)
+        else:
+            raise AssertionError("strict 不存在目录未 fail-closed")
+        assert not target.exists(), "strict 模式不应代为创建缓存目录"
+    finally:
+        _restore_env(old)
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def test_strict_valid_absolute_path_succeeds():
+    """strict 模式下合法绝对路径直接返回，且不做系统回退。"""
+    target = Path(tempfile.mkdtemp(prefix="mtl_strict_ok_"))
+    old = _with_strict_env(MTL_STRICT_STORAGE="1", MTL_CACHE_DIR=str(target))
+    try:
+        set_cache_dir_override(None)
+        assert get_cache_dir() == target
+    finally:
+        _restore_env(old)
+        shutil.rmtree(target, ignore_errors=True)
+
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

@@ -45,7 +45,28 @@ from ..version import __version__
 logger = logging.getLogger(__name__)
 
 LRC_RED_BASE = "https://lrc.red"
-UA_LRC_RED = f"music-tag-lyrics/{__version__} (+https://github.com/sxsxhhi/music-tag-lyrics)"
+LRC_RED_ATTRIBUTION = "https://lrc.red"
+# H18：lrc.red 官方 API 条款（https://lrc.red/api，2026-11-09 核验）明确要求
+#   1) User-Agent 必须写明站点/应用名，并附**链接与可用于联系的邮箱**；
+#   2) 展示数据时必须清晰署名并回链 lrc.red。
+# 公开源码不硬编码任何私人邮箱：联系方式由维护者通过 MTL_LRC_RED_CONTACT 注入。
+LRC_RED_CONTACT_ENV = "MTL_LRC_RED_CONTACT"
+
+
+def _lrc_red_contact() -> str:
+    value = os.environ.get(LRC_RED_CONTACT_ENV, "").strip()
+    return value or "see https://github.com/sxsxhhi/music-tag-lyrics/issues"
+
+
+def build_lrc_red_ua() -> str:
+    """按条款构造 User-Agent（应用名 + 链接 + 联系方式）。"""
+    return (
+        f"music-tag-lyrics/{__version__} "
+        f"(+https://github.com/sxsxhhi/music-tag-lyrics; contact: {_lrc_red_contact()})"
+    )
+
+
+UA_LRC_RED = build_lrc_red_ua()
 
 
 REQ_TIMEOUT_S = 3.0
@@ -482,6 +503,7 @@ class LrcRedFetcher:
             },
             "provenance": {
                 "provider": "lrc.red",
+                "attribution": LRC_RED_ATTRIBUTION,
                 "by_model": by_model_state,
                 "origin_status": "unverified_origin",
                 "endpoint": raw_record["endpoint"],

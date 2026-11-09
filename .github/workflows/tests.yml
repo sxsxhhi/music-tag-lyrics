@@ -85,6 +85,8 @@ jobs:
         run: python tests/test_process_outcome.py
       - name: Release verification entry (H14)
         run: python tests/test_release_verify.py
+      - name: lrc.red terms compliance (H18)
+        run: python tests/test_lrc_red_terms.py
       - name: pre-push hook fail-closed (H02)
         run: python tests/test_prepush_hook.py
       - name: Path & PII leak guard
