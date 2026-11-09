@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.text_utils import is_fullwidth_char, is_hanzi_char, is_kana_char
 from ..utils.time_utils import parse_time_string_to_ms, apply_time_offset
@@ -45,6 +45,44 @@ def _attrs(tag_str: str) -> Dict[str, str]:
 def _ms(attrs: Dict[str, str], key: str) -> Optional[int]:
     v = attrs.get(key)
     return parse_time_string_to_ms(v) if v else None
+
+
+def _ts(attrs: Dict[str, str], key: str) -> Tuple[Optional[int], str]:
+    """时间属性三态解析（H09）。
+
+    返回 (毫秒值, 状态)：
+      * ``ok``     —— 属性存在且可解析（含合法的 0）
+      * ``absent`` —— 属性缺失或空值（唯一允许按旧规则推断的情形）
+      * ``bad``    —— 属性存在但无法解析（**不得**当作缺失洗白）
+    """
+    raw = attrs.get(key)
+    if raw is None or not str(raw).strip():
+        return None, "absent"
+    val = parse_time_string_to_ms(raw)
+    if val is None:
+        return None, "bad"
+    return val, "ok"
+
+
+def _empty_metrics() -> Dict[str, Any]:
+    """质量审计指标的零值基线（两处返回共用，避免字段漂移）。"""
+    return {
+        "singing_lines": 0,
+        "native_word_lines": 0,
+        "word_coverage_ratio": 0.0,
+        "invalid_word_lines": 0,
+        "timeline_overlap_count": 0,
+        "timestamp_repair_count": 0,
+        "inferred_end_count": 0,
+        "short_word_count": 0,
+        "invalid_word_count": 0,
+        "words_incomplete_lines": 0,
+        "raw_main_p_count": 0,
+        "invalid_main_p_count": 0,
+        "accepted_main_p_count": 0,
+        "missing_begin_count": 0,
+        "invalid_begin_count": 0,
+    }
 
 
 def _is_cjk(ch: str) -> bool:
@@ -155,13 +193,7 @@ def parse_lrc_red_ttml(
             "songwriters": [],
             "has_verbatim": False,
             "has_translation": False,
-            "singing_lines": 0,
-            "native_word_lines": 0,
-            "word_coverage_ratio": 0.0,
-            "invalid_word_lines": 0,
-            "timeline_overlap_count": 0,
-            "timestamp_repair_count": 0,
-            "inferred_end_count": 0,
+            **_empty_metrics(),
         }
 
     # 1. 抽取 songwriters 名单
@@ -219,6 +251,15 @@ def parse_lrc_red_ttml(
     standalone_translations: List[Dict[str, Any]] = []
     inferred_end_count = 0
     timestamp_repair_count = 0
+    short_word_count = 0
+    invalid_word_count = 0
+    words_incomplete_lines = 0
+    # H10：主唱段账本（统计域与 singing_lines 对齐：排除非主唱角色、空文本与制作署名）
+    raw_main_p_count = 0
+    invalid_main_p_count = 0
+    accepted_main_p_count = 0
+    missing_begin_count = 0
+    invalid_begin_count = 0
 
     for pm in _P_RE.finditer(ttml_text):
         p_attrs = _attrs(pm.group(1))
@@ -229,12 +270,37 @@ def parse_lrc_red_ttml(
         p_id = p_attrs.get("xml:id") or p_attrs.get("id") or p_attrs.get("itunes:key")
         p_agent = (p_attrs.get("ttm:agent") or p_attrs.get("agent") or "").strip().lower()
         p_target = p_attrs.get("itunes:target") or p_attrs.get("target") or p_attrs.get("for")
+        raw_inner = pm.group(2)
 
-        p_begin = _ms(p_attrs, "begin")
-        if p_begin is None:
+        # H10：先判定是否属于主唱统计域（非主唱 / 空文本 / 制作署名一律排除），
+        # 这样非法 begin 的段也能记账，而不是被 continue 悄悄丢掉导致分母缩小。
+        _in_domain = False
+        _probe_body = _strip_span_blocks(raw_inner, "x-bg")
+        _probe_body = _strip_span_blocks(_probe_body, "x-roman")
+        if p_role not in ("x-translation", "translation"):
+            _probe_main = _strip_span_blocks(_probe_body, "x-translation")
+            _probe_main = _strip_span_blocks(_probe_main, "translation")
+            _probe_text = html.unescape(_TAG_RE.sub("", _probe_main)).strip()
+            _in_domain = bool(_probe_text) and not is_credit_line(re.sub(r"\s+", "", _probe_text))
+            if _in_domain:
+                raw_main_p_count += 1
+
+        p_begin, p_begin_state = _ts(p_attrs, "begin")
+        if p_begin_state != "ok":
+            if _in_domain:
+                invalid_main_p_count += 1
+                if p_begin_state == "bad":
+                    invalid_begin_count += 1
+                else:
+                    missing_begin_count += 1
             continue
-        p_end = _ms(p_attrs, "end")
-        if p_end is None:
+        p_end, p_end_state = _ts(p_attrs, "end")
+        if p_end_state == "bad":
+            # 已有但无法解析的 end：按非法处理，不伪造成缺失推断
+            if _in_domain:
+                invalid_main_p_count += 1
+            continue
+        if p_end_state == "absent":
             inferred_end_count += 1
             p_end = p_begin + 2500
         p_begin = apply_time_offset(p_begin, adjust)
@@ -243,7 +309,6 @@ def parse_lrc_red_ttml(
             timestamp_repair_count += 1
             p_end = p_begin + 2500
 
-        raw_inner = pm.group(2)
         if p_role in ("x-translation", "translation"):
             t_text = html.unescape(_TAG_RE.sub("", raw_inner)).strip()
             if t_text:
@@ -277,18 +342,30 @@ def parse_lrc_red_ttml(
         word_spans = list(_SPAN_RE.finditer(body_main))
 
         has_invalid_span = False
+        dropped_word = False
         words: List[Dict[str, Any]] = []
         for idx, sm in enumerate(word_spans):
             s_attrs = _attrs(sm.group(1))
-            s_begin = _ms(s_attrs, "begin")
-            if s_begin is None:
+            s_begin, b_state = _ts(s_attrs, "begin")
+            if b_state != "ok":
+                # H09 分支②：begin 缺失或无法解析 → 不可交付的原生词
+                invalid_word_count += 1
+                has_invalid_span = True
+                dropped_word = True
                 continue
-            s_end = _ms(s_attrs, "end")
+            s_end, e_state = _ts(s_attrs, "end")
             s_raw_text = _TAG_RE.sub("", sm.group(2))
             s_text = html.unescape(s_raw_text)
 
-            # 缺 end 时优先取下一个 span 的 begin，其次行尾 p_end
-            if s_end is None:
+            if e_state == "bad":
+                # 已有但无法解析的 end：按非法处理，绝不伪装成"缺失"去推断
+                invalid_word_count += 1
+                has_invalid_span = True
+                dropped_word = True
+                continue
+
+            # 缺 end 时优先取下一个 span 的 begin，其次行尾 p_end（H09 分支③）
+            if e_state == "absent":
                 inferred_end_count += 1
                 nxt_begin = None
                 if idx + 1 < len(word_spans):
@@ -300,8 +377,11 @@ def parse_lrc_red_ttml(
                 else:
                     s_end = s_begin + 500
 
-            if s_end < s_begin:
+            if s_end <= s_begin:
+                # 0ms 与负时长同样不可作为原生逐字词交付（原实现把 0ms 钳成 40ms 却保留 end）
+                invalid_word_count += 1
                 has_invalid_span = True
+                dropped_word = True
                 continue
 
             # 检查与下一个 span 的空隙是否构成词边界空格
@@ -316,12 +396,22 @@ def parse_lrc_red_ttml(
 
             raw_w_dur = s_end - s_begin
             if raw_w_dur < 40:
-                timestamp_repair_count += 1
-            w_dur = max(40, raw_w_dur)
+                # H09 分支①：合法短词保留原始正时长与原生身份，只记账不修改端点
+                short_word_count += 1
+            # offset 之后重新求差，保证 start>=0 且 duration==end-start 恒等
+            w_start = apply_time_offset(s_begin, adjust)
+            w_end = apply_time_offset(s_end, adjust)
+            w_dur = w_end - w_start
+            if w_dur <= 0:
+                # offset 钳位导致端点塌缩，同样不可交付
+                invalid_word_count += 1
+                has_invalid_span = True
+                dropped_word = True
+                continue
             words.append({
-                "start": apply_time_offset(s_begin, adjust),
+                "start": w_start,
                 "duration": w_dur,
-                "end": apply_time_offset(s_end, adjust),
+                "end": w_end,
                 "text": text,
                 "join": "space" if has_gap else "none",
             })
@@ -348,7 +438,10 @@ def parse_lrc_red_ttml(
             "raw_main_text": raw_main_text,
             "has_invalid_span": has_invalid_span,
             "text_mismatch": text_mismatch,
+            "words_incomplete": dropped_word,
         }
+        if dropped_word:
+            words_incomplete_lines += 1
         if p_id:
             line_data["id"] = p_id
         if p_agent:
@@ -359,6 +452,8 @@ def parse_lrc_red_ttml(
             line_data["translation"] = translation
 
         lines.append(line_data)
+        if _in_domain:
+            accepted_main_p_count += 1
 
     # 按照实际开始时间排序（P1-5: 兼容多 <div> 交错时序）
     lines.sort(key=lambda l: l.get("start", 0))
@@ -441,7 +536,13 @@ def parse_lrc_red_ttml(
         prev_line_end = l_et
         prev_line_agent = l_agent
 
-    word_coverage_ratio = (native_word_lines / singing_lines) if singing_lines > 0 else 0.0
+    # H10：原生覆盖率分母改用主唱段全量账本，非法段被 continue 后不再让分母缩小。
+    # 统计域与 singing_lines 对齐（已排除非主唱角色、空文本与制作署名），因此干净样本上
+    # raw_main_p_count == singing_lines，覆盖率数值不变；只有存在非法主唱段时才会下降。
+    coverage_denominator = raw_main_p_count if raw_main_p_count > 0 else singing_lines
+    word_coverage_ratio = (
+        (native_word_lines / coverage_denominator) if coverage_denominator > 0 else 0.0
+    )
     has_verbatim = bool(native_word_lines > 0)
     has_translation = any(bool(l.get("translation")) for l in lines)
 
@@ -459,4 +560,12 @@ def parse_lrc_red_ttml(
         "timeline_overlap_count": timeline_overlap_count,
         "timestamp_repair_count": timestamp_repair_count,
         "inferred_end_count": inferred_end_count,
+        "short_word_count": short_word_count,
+        "invalid_word_count": invalid_word_count,
+        "words_incomplete_lines": words_incomplete_lines,
+        "raw_main_p_count": raw_main_p_count,
+        "invalid_main_p_count": invalid_main_p_count,
+        "accepted_main_p_count": accepted_main_p_count,
+        "missing_begin_count": missing_begin_count,
+        "invalid_begin_count": invalid_begin_count,
     }

@@ -342,10 +342,10 @@ def test_r08_reconstructed_word_text_integrity_check():
 
 
 def test_r09_real_quality_counters_increment():
-    """R09: inferred_end_count 与 timestamp_repair_count 真实累加，杜绝恒为 0。"""
+    """R09 / H09: inferred_end_count 与 short_word_count 各自独立累加，杜绝混记。"""
     from core.parsers.lrc_red_ttml import parse_lrc_red_ttml
     # p 缺 end (inferred_end_count +1), span 缺 end (inferred_end_count +1),
-    # span 时长仅 10ms < 40ms 触发修复 (timestamp_repair_count +1)
+    # span 时长仅 10ms，属合法短词：只记 short_word_count，不修改端点、不计 repair
     xml = """<?xml version="1.0" encoding="utf-8"?>
     <tt xmlns="http://www.w3.org/ns/ttml">
       <body>
@@ -356,7 +356,13 @@ def test_r09_real_quality_counters_increment():
     </tt>"""
     res = parse_lrc_red_ttml(xml)
     assert res["inferred_end_count"] >= 2, f"inferred_end_count was {res['inferred_end_count']}"
-    assert res["timestamp_repair_count"] >= 1, f"timestamp_repair_count was {res['timestamp_repair_count']}"
+    assert res["short_word_count"] >= 1, f"short_word_count was {res['short_word_count']}"
+    assert res["timestamp_repair_count"] == 0, "未修改时间端点就不应计入 timestamp_repair_count"
+    # H09：短词保留原始正时长，三元组恒等
+    for line in res["lines"]:
+        for w in line.get("words", []):
+            assert w["end"] - w["start"] == w["duration"], w
+            assert w["duration"] > 0, w
 
 
 def test_r10_ttml_translation_attachment_avoids_mismatched_lines():

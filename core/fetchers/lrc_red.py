@@ -379,14 +379,20 @@ class LrcRedFetcher:
             logger.warning("   ⚠️ [lrc-red] 无有效逐字行，丢弃候选: %s", clean_isrc)
             return None
 
-        # 逐字行覆盖度与时间戳有效性审计（P1-6）
+        # 逐字行覆盖度与时间戳有效性审计（P1-6 / H09 / H10）
+        # H09：任何含非法词的残缺词列表都不得流入转换器；
+        # H10：非法主唱段同样拒绝，不能只看幸存行的 invalid_word_lines。
         cov_ratio = parsed.get("word_coverage_ratio", 0.0)
         invalid_lines = parsed.get("invalid_word_lines", 0)
         singing_lines = parsed.get("singing_lines", 0)
-        if singing_lines > 0 and (cov_ratio < 0.95 or invalid_lines > 0):
+        invalid_main_p = parsed.get("invalid_main_p_count", 0)
+        raw_main_p = parsed.get("raw_main_p_count", singing_lines)
+        if (singing_lines > 0 or raw_main_p > 0) and (
+            cov_ratio < 0.95 or invalid_lines > 0 or invalid_main_p > 0
+        ):
             logger.warning(
-                "   ⚠️ [lrc-red] 逐字行质量不达标 (覆盖率=%.2f < 0.95, 无效行=%d)，丢弃候选: %s",
-                cov_ratio, invalid_lines, clean_isrc
+                "   ⚠️ [lrc-red] 逐字质量不达标 (覆盖率=%.2f < 0.95, 无效行=%d, 非法主唱段=%d)，丢弃候选: %s",
+                cov_ratio, invalid_lines, invalid_main_p, clean_isrc
             )
             return None
 
