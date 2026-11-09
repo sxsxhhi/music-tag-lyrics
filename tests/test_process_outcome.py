@@ -155,5 +155,32 @@ def main():
     return _testkit.run(globals())
 
 
+
+def test_isrc_readback_mismatch_is_not_claimed_as_persisted():
+    """回读为空或不同值时，不得把整体写入成功当成 ISRC 写入成功。"""
+    import tempfile
+    from unittest import mock
+    candidate = {
+        "source": "lrc-red", "lyric_type": "word", "isrc": "GBARL1401524",
+        "isrc_write_eligible": True, "duration_ms": 270000,
+        "match": {"confidence": "strict", "by_model": "false"},
+        "lines": [{"start": 1000, "end": 2000, "text": "Testing", "words": [{"start": 1000, "end": 2000, "duration": 1000, "text": "Testing"}]}],
+    }
+    with tempfile.TemporaryDirectory(prefix="mtl_isrc_readback_") as tempdir:
+        path = Path(tempdir) / "sample.mp3"
+        path.write_bytes(b"ID3" + b"\x00" * 20)
+        original = path.read_bytes()
+        initial = {"title": "Song", "artist": "Artist", "year": "2020", "album": "Album", "duration": 270000, "isrc": "", "lyrics": "", "cover": None}
+        with mock.patch.object(ps, "read_audio_tags", return_value=initial), \
+             mock.patch.object(ps.NetEaseFetcher, "lookup_year", return_value=None), \
+             mock.patch.object(ps.LyricAggregator, "fetch_best_lyrics", return_value=candidate), \
+             mock.patch.object(ps, "update_audio_tags", return_value=True), \
+             mock.patch.object(ps, "has_embedded_cover", return_value=True), \
+             mock.patch("core.utils.lang_detect.detect_language", return_value={"lang": "en", "score": 1.0}):
+            outcome = ps.process_single_song(str(path), write_isrc=True, output_dir=tempdir, non_interactive=True, no_cover=True, return_outcome=True)
+        assert outcome.status == "SUCCESS", outcome
+        assert outcome.isrc_written is False, outcome
+        assert path.read_bytes() == original
+
 if __name__ == "__main__":
     sys.exit(main())

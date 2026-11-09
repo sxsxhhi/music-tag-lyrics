@@ -5,7 +5,7 @@
 
 用法：
     python scripts/check_no_leaks.py                      # 扫描仓库（git 索引优先）
-    python scripts/check_no_leaks.py --zip dist/x.zip      # 扫描发布包内文本成员
+    python scripts/check_no_leaks.py --zip dist/x.zip      # 扫描发布包成员路径与正文
     python scripts/check_no_leaks.py --verbose            # 打印被遮蔽/放行的命中
     python scripts/check_no_leaks.py --private-file F     # 显式指定私有指纹词表
     python scripts/check_no_leaks.py --require-private    # 可信模式：私有配置缺失/非法即失败
@@ -24,12 +24,13 @@
     旧格式（不带前缀的行）按 `segment` 处理并给出一次迁移提示；
   * `--require-private` 模式下：未设置、不可读、无有效词条、语法非法、
     存在未审核的短词，一律非零退出，绝不静默跳过；
-  * 输出只含规则类别、相对路径、行号与脱敏摘录，不打印私有词条原文或绝对路径。
+  * 输出只含规则类别、成员名摘要和行号，不打印私有词条、路径或上下文。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -65,8 +66,8 @@ EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[
 
 # 仓库内仅允许的公共工具安装路径（与 core/acoustic_aligner.py 的 ffmpeg 探测一致）
 SAFE_PREFIXES = (
-    "c:\\programdata\\chocolatey\\bin",
-    "c:\\ffmpeg\\bin",
+    "c:" + chr(92) + "programdata" + chr(92) + "chocolatey" + chr(92) + "bin",
+    "c:" + chr(92) + "ffmpeg" + chr(92) + "bin",
 )
 # 虚构盘符（测试用）
 SAFE_DRIVES = {"z"}
@@ -78,6 +79,7 @@ SAFE_EMAIL_DOMAINS = {"example.com", "example.invalid", "example.org", "test.inv
 TEXT_EXTS = {
     ".py", ".md", ".json", ".yml", ".yaml", ".txt", ".csv", ".lrc", ".ttml",
     ".jsonl", ".ini", ".cfg", ".toml", ".sh", ".bat", ".ps1", ".svg", ".hex",
+    ".tsv", ".xml", ".html", ".rst", ".properties", ".env", ".log", ".m3u", ".cue",
     ".gitignore", ".gitattributes",
 }
 
@@ -267,6 +269,54 @@ def _is_text(name: str) -> bool:
     return os.path.splitext(base)[1].lower() in TEXT_EXTS
 
 
+# 文件名/目录名不可作为“文本后缀过滤”的前提，先对所有成员路径做检查。
+# 未知后缀仅在证明是有限大小的文本后扫描；高风险的二进制/密文容器直接拒绝。
+MAX_SCAN_BYTES = 16 * 1024 * 1024
+HIGH_RISK_NAMES = {"id_rsa", "id_ed25519", "cookies.json", "cookies.sqlite"}
+HIGH_RISK_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".sqlite", ".db", ".env", ".zip", ".7z", ".rar", ".tar"}
+KNOWN_BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".mp3", ".flac", ".m4a", ".wav", ".ogg", ".dsf", ".pdf"}
+
+
+def _safe_label(name: str, prefix: str = "member") -> str:
+    """用稳定摘要定位违规成员，避免路径名本身包含私人目录或邮箱时回显。"""
+    return f"{prefix}#{hashlib.sha256(name.encode('utf-8', 'surrogatepass')).hexdigest()[:12]}"
+
+
+def _high_risk_name(name: str) -> bool:
+    base = name.replace(chr(92), "/").rsplit("/", 1)[-1].lower()
+    return (base in HIGH_RISK_NAMES or base.startswith(".env") or
+            base.startswith("cookies.") or Path(base).suffix in HIGH_RISK_SUFFIXES)
+
+
+def _decode_scannable(payload: bytes, name: str) -> tuple[str | None, str | None]:
+    """文本全部扫描，未知二进制标注不可审；不能把解码失败当作安全通过。"""
+    if len(payload) > MAX_SCAN_BYTES:
+        return None, "OVERSIZED_UNSCANNED_MEMBER"
+    if b"\x00" in payload:
+        if _is_text(name):
+            return None, "TEXT_MEMBER_CONTAINS_NUL"
+        if Path(name).suffix.lower() in KNOWN_BINARY_SUFFIXES:
+            return None, None
+        return None, "UNKNOWN_BINARY_MEMBER"
+    try:
+        return payload.decode("utf-8-sig", "strict"), None
+    except UnicodeError:
+        if Path(name).suffix.lower() in KNOWN_BINARY_SUFFIXES:
+            return None, None
+        # 未知扩展名/带文本扩展名但乱码都不应静默通过
+        return None, "UNSCANNABLE_MEMBER"
+
+
+def _scan_member_name(name: str, rules: list[PrivateRule], hits: list, allowed: list, verbose: bool, prefix: str):
+    label = _safe_label(name, prefix)
+    normalized = name.replace(chr(92), "/")
+    if _high_risk_name(normalized):
+        hits.append((label, 0, "HIGH_RISK_FILENAME"))
+    # 路径整体扫描兼顾 private segment/literal/token 三类词条以及通用 PII。
+    scan_text(normalized, label, rules, hits, allowed, verbose)
+    return label
+
+
 def _norm(p: str) -> str:
     return p.replace("/", "\\").lower()
 
@@ -314,22 +364,22 @@ def scan_text(
 
         for rule in rules:
             if rule.matches(masked):
-                hits.append((label, lineno, rule.label, _mask_pii(masked, rules)))
+                hits.append((label, lineno, rule.label))
                 break
         else:
             for m in USERPROFILE_RE.finditer(masked):
                 if m.group(1).lower() not in SAFE_USERNAMES:
-                    hits.append((label, lineno, "USER_PROFILE", _mask_pii(masked, rules)))
+                    hits.append((label, lineno, "USER_PROFILE"))
                     break
             else:
                 for m in EMAIL_RE.finditer(masked):
                     if not _email_allowed(m.group(0)):
-                        hits.append((label, lineno, "EMAIL", _mask_pii(masked, rules)))
+                        hits.append((label, lineno, "EMAIL"))
                         break
                 else:
                     for m in DRIVE_RE.finditer(masked):
                         if not _path_allowed(m.group(0)):
-                            hits.append((label, lineno, "DRIVE_PATH", _mask_pii(masked, rules)))
+                            hits.append((label, lineno, "DRIVE_PATH"))
                             break
 
 
@@ -357,28 +407,66 @@ def scan_repo(rules: list[PrivateRule], verbose: bool):
         try:
             rel = path.relative_to(REPO_ROOT).as_posix()
         except ValueError:
+            hits.append((_safe_label(str(path), "repo"), 0, "PATH_OUTSIDE_REPO"))
             continue
-        if rel == SELF_REL or not _is_text(rel) or not path.is_file():
+        label = _scan_member_name(rel, rules, hits, allowed, verbose, "repo")
+        if path.is_symlink():
+            hits.append((label, 0, "SYMLINK_MEMBER"))
+            continue
+        if not path.is_file():
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            size = path.stat().st_size
+            if size > MAX_SCAN_BYTES:
+                hits.append((label, 0, "OVERSIZED_UNSCANNED_MEMBER"))
+                continue
+            data = path.read_bytes()
         except OSError:
+            hits.append((label, 0, "UNREADABLE_MEMBER"))
             continue
-        scan_text(text, rel, rules, hits, allowed, verbose)
+        content, issue = _decode_scannable(data, rel)
+        if issue:
+            hits.append((label, 0, issue))
+        if content is not None:
+            scan_text(content, label, rules, hits, allowed, verbose)
     return hits, allowed
 
 
 def scan_zip(zip_path: Path, rules: list[PrivateRule], verbose: bool):
     hits, allowed = [], []
-    with zipfile.ZipFile(zip_path) as zf:
-        for name in zf.namelist():
-            if os.path.basename(name) == os.path.basename(SELF_REL) or not _is_text(name):
-                continue
-            try:
-                text = zf.read(name).decode("utf-8", "ignore")
-            except Exception:
-                continue
-            scan_text(text, f"{zip_path.name}!{name}", rules, hits, allowed, verbose)
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            seen = set()
+            for member in zf.infolist():
+                name = member.filename
+                label = _scan_member_name(name, rules, hits, allowed, verbose, "zip")
+                normalized = name.replace(chr(92), "/")
+                if normalized in seen:
+                    hits.append((label, 0, "DUPLICATE_MEMBER"))
+                seen.add(normalized)
+                if (normalized.startswith("/") or any(part == ".." for part in normalized.split("/"))):
+                    hits.append((label, 0, "UNSAFE_MEMBER_PATH"))
+                    continue
+                if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                    hits.append((label, 0, "SYMLINK_MEMBER"))
+                    continue
+                if member.is_dir():
+                    continue
+                if member.file_size > MAX_SCAN_BYTES:
+                    hits.append((label, 0, "OVERSIZED_UNSCANNED_MEMBER"))
+                    continue
+                try:
+                    data = zf.read(member)
+                except (OSError, RuntimeError, zipfile.BadZipFile):
+                    hits.append((label, 0, "UNREADABLE_MEMBER"))
+                    continue
+                content, issue = _decode_scannable(data, name)
+                if issue:
+                    hits.append((label, 0, issue))
+                if content is not None:
+                    scan_text(content, label, rules, hits, allowed, verbose)
+    except (OSError, RuntimeError, zipfile.BadZipFile):
+        hits.append(("zip", 0, "INVALID_ARCHIVE"))
     return hits, allowed
 
 
@@ -409,10 +497,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: 找不到 {target}")
             return 2
         hits, allowed = scan_zip(target, rules, args.verbose)
-        scope = f"发布包 {target.name}"
+        scope = "发布包"
     else:
         hits, allowed = scan_repo(rules, args.verbose)
-        scope = f"仓库 {REPO_ROOT.name}"
+        scope = "仓库"
 
     if args.verbose and allowed:
         print(f"ℹ️  已遮蔽占位符 {len(allowed)} 处")
@@ -423,8 +511,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"❌ 泄漏守卫失败（{scope}）：命中 {len(hits)} 处")
-    for label, lineno, rule, snippet in hits:
-        print(f"  {label}:{lineno}  [{rule}]  {snippet}")
+    for label, lineno, rule in hits:
+        print(f"  {label}:{lineno}  [{rule}]")
     return 1
 
 

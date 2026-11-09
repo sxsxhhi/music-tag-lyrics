@@ -66,6 +66,19 @@ def _make_repo(leaky: bool = False) -> Path:
     return root
 
 
+def _find_sh() -> str:
+    s = shutil.which("sh")
+    if s:
+        return s
+    git = shutil.which("git")
+    if git:
+        for sub in ("bin", "usr/bin"):
+            candidate = Path(git).resolve().parent.parent / sub / "sh.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return "sh"
+
+
 def _run_hook(repo: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.pop("MTL_PRIVATE_FINGERPRINTS_FILE", None)
@@ -74,7 +87,7 @@ def _run_hook(repo: Path, env_extra: dict | None = None) -> subprocess.Completed
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        ["sh", str(repo / "scripts" / "git-hooks" / "pre-push")],
+        [_find_sh(), str(repo / "scripts" / "git-hooks" / "pre-push")],
         cwd=str(repo),
         text=True,
         encoding="utf-8",

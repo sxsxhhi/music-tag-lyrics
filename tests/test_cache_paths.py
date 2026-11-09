@@ -367,6 +367,24 @@ def main():
     return _testkit.run(globals())
 
 
+
+def test_strict_mode_override_cannot_bypass_missing_authorized_path():
+    """即使内部 override 有值，strict 无授权路径仍须 fail-closed。"""
+    parent = Path(tempfile.mkdtemp(prefix="mtl_override_strict_"))
+    old = _with_strict_env(MTL_STRICT_STORAGE="1")
+    try:
+        set_cache_dir_override(parent / "bypass")
+        try:
+            get_cache_dir()
+        except cache_paths_mod.StrictStorageError:
+            pass
+        else:
+            raise AssertionError("strict 被内部 override 绕过")
+        assert not (parent / "bypass").exists(), "禁止创建未经授权的 override 目录"
+    finally:
+        set_cache_dir_override(None)
+        _restore_env(old)
+        shutil.rmtree(parent, ignore_errors=True)
+
 if __name__ == "__main__":
     sys.exit(main())
-

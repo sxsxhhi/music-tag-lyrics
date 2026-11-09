@@ -216,21 +216,73 @@ def test_output_redacts_private_values():
     proc = _run("--private-file", str(fp), "--zip", str(probe))
     assert proc.returncode == 1
     assert SYNTH_LIT not in proc.stdout, "输出回显了私有词条原文"
-    assert "<REDACTED>" in proc.stdout
+    assert "PRIVATE_LITERAL" in proc.stdout
+    assert "标题包含" not in proc.stdout
 
 
-def test_zip_mode_skips_guard_itself():
-    """守卫自身含白名单字面量，zip 模式必须跳过它，避免自命中。"""
-    probe = _tmp_zip(
-        {
-            "scripts/check_no_leaks.py": (
-                "SAFE = " + "Q:" + chr(92) + "ne" + "ver" + chr(92) + "x" + "\n"
-            ),
-            "a.md": "正常文本\n",
-        }
-    )
-    proc = _run("--private-file", str(_tmp_file("literal:" + NEVER + "\n")), "--zip", str(probe))
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+def test_zip_guard_file_is_not_exempt():
+    """同名脚本不享受 basename 例外，隐私规则必须覆盖它自己的内容。"""
+    probe = _tmp_zip({
+        "scripts/check_no_leaks.py": "payload = '" + SYNTH_LIT + "'\n",
+        "deep/check_no_leaks.py": "payload = '" + SYNTH_LIT + "'\n",
+    })
+    proc = _run("--require-private", "--private-file", str(_tmp_file("literal:" + SYNTH_LIT + "\n")), "--zip", str(probe))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert proc.stdout.count("PRIVATE_LITERAL") >= 2, proc.stdout
+
+
+def test_private_directory_in_zip_member_name_blocked():
+    fp = _tmp_file("segment:" + SYNTH_SEG + "\n")
+    z = _tmp_zip({"root/" + SYNTH_SEG + "/clean.md": "normal content\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "PRIVATE_SEGMENT" in result.stdout
+    assert SYNTH_SEG not in result.stdout
+
+
+def test_private_filename_in_zip_member_name_blocked():
+    fp = _tmp_file("literal:" + SYNTH_LIT + "\n")
+    z = _tmp_zip({"normal/" + SYNTH_LIT + ".txt": "normal content\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert SYNTH_LIT not in result.stdout
+
+
+def test_private_name_in_tsv_content_blocked():
+    fp = _tmp_file("literal:" + SYNTH_LIT + "\n")
+    z = _tmp_zip({"core/data/sample.tsv": "item\t" + SYNTH_LIT + "\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_private_name_in_unknown_utf8_content_blocked():
+    fp = _tmp_file("literal:" + SYNTH_LIT + "\n")
+    z = _tmp_zip({"core/data/sample.custom": "item=" + SYNTH_LIT + "\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_sensitive_name_in_unknown_binary_fail_closed():
+    fp = _tmp_file("literal:" + NEVER + "\n")
+    z = _tmp_zip({"cache/data.anything": "xx\x00yy"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1
+    assert "UNKNOWN_BINARY_MEMBER" in result.stdout
+
+
+def test_high_risk_file_type_rejected_even_if_content_empty():
+    fp = _tmp_file("literal:" + NEVER + "\n")
+    z = _tmp_zip({"secrets/private.pem": "not really secret\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 1
+    assert "HIGH_RISK_FILENAME" in result.stdout
+
+
+def test_clean_zip_and_no_raw_path_in_log():
+    fp = _tmp_file("literal:" + SYNTH_LIT + "\n")
+    z = _tmp_zip({"docs/safe.md": "safe\n", "data/normal.xyz": "hello\n"})
+    result = _run("--require-private", "--private-file", str(fp), "--zip", str(z))
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # --------------------------------------------------------------------------- #

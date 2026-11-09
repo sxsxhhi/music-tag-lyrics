@@ -109,6 +109,28 @@ def test_candidate_carries_attribution():
         LrcRedFetcher.clear_cache()
 
 
+
+def test_http_requests_use_current_contact_setting():
+    """环境变量在 import 之后修改时，JSON/TTML 请求都必须带当前联系信息。"""
+    observed = []
+
+    def fake_http(url, **kwargs):
+        observed.append(kwargs.get("user_agent", ""))
+        return HttpResult(status=503, text="", bytes_len=0, elapsed_ms=0, error="synthetic")
+
+    old = _with_contact("test-ops@example.invalid")
+    try:
+        LrcRedFetcher.clear_cache()
+        with mock.patch.object(LrcRedFetcher, "_rate_limit", return_value=True), \
+             mock.patch.object(lr_mod, "_get_http_func", return_value=fake_http):
+            LrcRedFetcher._http_get_json("https://lrc.red/s/FAKE.json")
+            LrcRedFetcher._http_get_text("https://lrc.red/s/FAKE.ttml")
+        assert len(observed) == 2, observed
+        assert all("test-ops@example.invalid" in ua for ua in observed), observed
+    finally:
+        _restore(old)
+        LrcRedFetcher.clear_cache()
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

@@ -66,7 +66,7 @@ def build_lrc_red_ua() -> str:
     )
 
 
-UA_LRC_RED = build_lrc_red_ua()
+UA_LRC_RED = build_lrc_red_ua()  # 兼容旧外部引用；实际请求实时构造，读取最新配置
 
 
 REQ_TIMEOUT_S = 3.0
@@ -145,7 +145,7 @@ class LrcRedFetcher:
             url,
             headers={"Accept": "application/json"},
             timeout=rem_timeout,
-            user_agent=UA_LRC_RED,
+            user_agent=build_lrc_red_ua(),
             max_bytes=MAX_JSON_BYTES,
         )
         if res.status == 429:
@@ -184,7 +184,7 @@ class LrcRedFetcher:
             url,
             headers={"Accept": "application/xml, text/xml, */*"},
             timeout=rem_timeout,
-            user_agent=UA_LRC_RED,
+            user_agent=build_lrc_red_ua(),
             max_bytes=MAX_TTML_BYTES,
         )
         if res.status == 429:

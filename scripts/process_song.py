@@ -558,6 +558,35 @@ def _failed_outcome(
     )
 
 
+
+def _verify_embedded_cover_bytes(filepath: str, expected: bytes) -> Optional[bool]:
+    """重新打开音频，核对封面原始字节；不能把标签写入函数的返回值当成回读证据。"""
+    try:
+        import mutagen
+        from mutagen.flac import FLAC
+        from mutagen.mp4 import MP4
+        from mutagen.id3 import ID3
+
+        try:
+            audio = mutagen.File(filepath)
+        except Exception:
+            audio = None  # 仅有 ID3 标签的合成 MP3 不一定有可解析的音频帧
+        if isinstance(audio, FLAC):
+            return any(bytes(pic.data) == expected for pic in audio.pictures)
+        if isinstance(audio, MP4):
+            return any(bytes(cov) == expected for cov in (audio.get("covr") or []))
+        tags = getattr(audio, "tags", None)
+        if tags is None:
+            tags = ID3(filepath)
+        if hasattr(tags, "getall"):
+            return any(bytes(pic.data) == expected for pic in tags.getall("APIC"))
+        # 没有可靠的格式专用回读路径，不能宣称已持久化。
+        return None
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return None
+    except Exception:
+        return None
+
 def _derive_status(tags_ok: Optional[bool]) -> Tuple[str, Tuple[str, ...]]:
     """由标签写入结果推导三态状态（H12）。
 
@@ -1013,9 +1042,20 @@ def _process_single_song_impl(
                 print("⚠️ Tag update skipped or format read-only (sidecar lyrics preserved)")
 
         tags_ok = bool(success)
-        # 只有确实请求写入且整体成功，才认为对应字段已落盘；否则保持未知
-        isrc_written = bool(success) if (not lyrics_only and write_isrc and isrc_to_write) else None
-        cover_written = bool(success) if (not lyrics_only and cover_bytes) else None
+        # H12：字段结果必须依据音频文件回读，不依据 update_audio_tags 的整体布尔值。
+        # 未请求写入的字段保持 None；已请求但整体写入失败为 False；读不出为 None。
+        if not lyrics_only and isrc_to_write:
+            if not success:
+                isrc_written = False
+            else:
+                try:
+                    from core.utils.isrc import normalize_isrc
+                    persisted = read_audio_tags(filepath).get("isrc") or ""
+                    isrc_written = normalize_isrc(persisted) == normalize_isrc(isrc_to_write)
+                except Exception:
+                    isrc_written = None
+        if not lyrics_only and cover_bytes:
+            cover_written = _verify_embedded_cover_bytes(filepath, cover_bytes) if success else False
 
         if not success:
             print("✨ Partially finished: sidecar lyrics generated, embedded tags skipped or failed.")

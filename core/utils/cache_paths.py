@@ -40,8 +40,14 @@ def _strict_cache_dir() -> Path:
         raise StrictStorageError(f"{STRICT_CACHE_ENV} 指向的目录不存在：{path}")
     if not path.is_dir():
         raise StrictStorageError(f"{STRICT_CACHE_ENV} 不是目录：{path}")
-    if not os.access(str(path), os.W_OK):
-        raise StrictStorageError(f"{STRICT_CACHE_ENV} 目录不可写：{path}")
+    # os.access() 在 ACL、只读挂载和部分 Windows/容器环境下不足以证明可写。
+    # 在明确授权的缓存目录内部创建并自动删除一个临时探针，不写入其他盘。
+    try:
+        with tempfile.TemporaryFile(mode="w+b", dir=path) as probe:
+            probe.write(b"ok")
+            probe.flush()
+    except OSError as exc:
+        raise StrictStorageError(f"{STRICT_CACHE_ENV} 不可写（{type(exc).__name__}）") from exc
     return path
 
 
@@ -89,12 +95,13 @@ def get_cache_dir() -> Path:
     该开关只约束应用缓存目录，不等价于「整个进程不写系统盘」。
     """
     global _CACHE_DIR_OVERRIDE
+    # 严格模式先于测试 override 检查，确保任何普通调用路径都无法绕过。
+    if _strict_storage_enabled():
+        return _strict_cache_dir()
+
     if _CACHE_DIR_OVERRIDE is not None:
         _CACHE_DIR_OVERRIDE.mkdir(parents=True, exist_ok=True)
         return _CACHE_DIR_OVERRIDE
-
-    if _strict_storage_enabled():
-        return _strict_cache_dir()
 
     env_dir = os.environ.get("MTL_CACHE_DIR")
     if env_dir and env_dir.strip():
