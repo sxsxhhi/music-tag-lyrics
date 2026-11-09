@@ -168,7 +168,7 @@ flowchart TD
 
 ## 四、Demucs v4 GPU 兜底与双引擎声学对齐 (v1.5.0)
 
-技能包不内置重型模型权重。声学环境位于 `<workspace>/AI_Audio_Env`，HuggingFace 缓存统一指向 `<hf-cache>/`（HF_HOME 固化，内含 HTDemucs / 粤语 / 国语权重，2.77GB，保留相对软链接）。严禁回写系统盘用户目录。两条入口：
+技能包不内置重型模型权重。声学环境位于 `<acoustic-env>`，HuggingFace 缓存统一指向 `<hf-cache>/`（HF_HOME 固化，内含 HTDemucs / 粤语 / 国语权重，2.77GB，保留相对软链接）。严禁回写系统盘用户目录。两条入口：
 
 1. **有行无字**：征求 GPU；Y 用已有行轴做短窗；N / 非交互 / 失败 → numpy 合成。
 2. **无 lines**：先全球搜文本（GitHub 优先），再征求 GPU；无文本红线阻断；N / 非交互 → 本首失败。
@@ -270,7 +270,7 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 - **【核心红线】未经用户明确允许，绝不侵入系统盘**：
   1. **模型缓存与重型权重一律外置**：HuggingFace 缓存统一且唯一使用 `<workspace>/hf-cache`（通过环境变量 `HF_HOME` 固化）。严禁任何脚本、模型加载或测试代码向 `<user-home>/.cache/huggingface` 回写或重新创建目录；
   2. **禁止系统默认桌面路径**：`<user-home>/Desktop` 不作为任何输入或输出位置；需要桌面级目录时必须显式指定非系统盘数据目录；
-  3. **声学虚拟环境规范**：仅使用 `<workspace>/AI_Audio_Env/Scripts/python.exe -m …` 或直接导入；禁用 Scripts 内的 console `.exe` 垫片（因绝对路径已失效）；
+  3. **声学虚拟环境规范**：仅使用 `<acoustic-env>/Scripts/python.exe -m …` 或直接导入；禁用 Scripts 内的 console `.exe` 垫片（因绝对路径已失效）；
   4. **工作区与母盘边界**：母盘 `<mother-library>/` 绝对只读；过程文件严禁散落根目录，一律进 `<process-dir>/`；测试曲库必须加 `--no-tags` 零污染。
 
 ## 九、QQ 音乐 QRC 逐字通道（v1.7.0）

@@ -1,26 +1,35 @@
 # -*- coding: utf-8 -*-
-"""路径与个人信息泄漏守卫。
+"""路径与个人信息泄漏守卫（H02）。
 
 在公开仓库与发布包中拦截本机环境信息：绝对路径、用户名、私有目录名、个人邮箱。
 
 用法：
-    python scripts/check_no_leaks.py                 # 扫描仓库（git 索引优先）
-    python scripts/check_no_leaks.py --zip dist/xxx.zip   # 扫描发布包内文本成员
-    python scripts/check_no_leaks.py --verbose       # 额外打印已放行的命中
+    python scripts/check_no_leaks.py                      # 扫描仓库（git 索引优先）
+    python scripts/check_no_leaks.py --zip dist/x.zip      # 扫描发布包内文本成员
+    python scripts/check_no_leaks.py --verbose            # 打印被遮蔽/放行的命中
+    python scripts/check_no_leaks.py --private-file F     # 显式指定私有指纹词表
+    python scripts/check_no_leaks.py --require-private    # 可信模式：私有配置缺失/非法即失败
 
-退出码：0 = 干净；1 = 发现泄漏。
+退出码：0 = 干净；1 = 发现泄漏；2 = 用法或私有配置错误。
 
-设计要点：
-  * 禁止串用字符串拼接构造，避免守卫自身成为泄漏样本；脚本自身始终排除。
-  * 文档中的占位符（<workspace> / <repo> / <mother-library> 等）整行放行。
-  * 仅保留两类合法 Windows 绝对路径：chocolatey 与 ffmpeg 的公共安装目录。
-  * 测试用虚构盘符（Z:）与假用户名（fake/example/...）放行。
+私有词表（H02）：
+  * **公开源码不携带任何可还原的真实指纹**，真实词表只存在于维护者本地非公开位置；
+  * 定位顺序：`--private-file` → 环境变量 `MTL_PRIVATE_FINGERPRINTS_FILE`
+    → `git config --local mtl.privateFingerprintsFile`；
+  * 每行一种模式，`#` 开头为注释，空行忽略：
+        segment:<值>          路径段（在路径分隔符/引号/空白/行界处分词）
+        literal:<值>          高辨识度完整专有名称或明确泄漏片段的字面匹配
+        token:<值>            邮箱/账户型边界匹配
+        audited-<mode>:<值>   显式审核通过的短词（<3 字符）或高误报条目
+    旧格式（不带前缀的行）按 `segment` 处理并给出一次迁移提示；
+  * `--require-private` 模式下：未设置、不可读、无有效词条、语法非法、
+    存在未审核的短词，一律非零退出，绝不静默跳过；
+  * 输出只含规则类别、相对路径、行号与脱敏摘录，不打印私有词条原文或绝对路径。
 """
 
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import os
 import re
 import subprocess
@@ -30,31 +39,18 @@ from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SELF_REL = "scripts/check_no_leaks.py"
 
-# ---- 本机指纹：字符串拼接构造，避免本文件命中自身 -------------------------
-_DENY_PARTS = [
-    ("AI", "'s DATA"),
-    ("TOOLs", "\\"),
-    ("TOOLs", "/"),
-    ("Windows", "Appp"),
-    ("只", "音"),
-    ("待", "修补"),
-    ("My ", "skill"),
-    ("sxh", "20"),
-    ("sxhxu", "@qq.com"),
-    ("957451576", "@qq.com"),
-    ("RTX ", "3060"),
-    ("AI_Audio", "_Env"),
-]
-DENY_SUBSTRINGS = ["".join(p) for p in _DENY_PARTS]
-
-# 文档占位符：命中即整行放行
+# ---- 通用规则（公开、不含任何真实私有值） ---------------------------------
+# 文档占位符：**只遮蔽占位符本身**，不再整行放行（H02 第 4 条）
 PLACEHOLDER_RE = re.compile(
     r"<(?:workspace|repo|hf-cache|user-home|mother-library|test-library|process-dir)>"
 )
+PLACEHOLDER_MASK = "\u0001PH\u0001"
 
 # 盘符绝对路径（前面不能紧跟字母数字，避免误伤 "Source:\\s*(" 这类正则）
 DRIVE_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z]:(?:\\|/)[^\s`'\"<>|*?]{2,}")
@@ -63,6 +59,9 @@ DRIVE_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z]:(?:\\|/)[^\s`'\"<>|*?]{2,}")
 USERPROFILE_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_])[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}([A-Za-z0-9._-]+)"
 )
+
+# 邮箱（通用 PII）
+EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 # 仓库内仅允许的公共工具安装路径（与 core/acoustic_aligner.py 的 ffmpeg 探测一致）
 SAFE_PREFIXES = (
@@ -73,6 +72,8 @@ SAFE_PREFIXES = (
 SAFE_DRIVES = {"z"}
 # 用户目录白名单
 SAFE_USERNAMES = {"fake", "example", "user", "public", "runner", "username"}
+# 邮箱白名单（文档示例/占位）
+SAFE_EMAIL_DOMAINS = {"example.com", "example.invalid", "example.org", "test.invalid"}
 
 TEXT_EXTS = {
     ".py", ".md", ".json", ".yml", ".yaml", ".txt", ".csv", ".lrc", ".ttml",
@@ -80,13 +81,185 @@ TEXT_EXTS = {
     ".gitignore", ".gitattributes",
 }
 
-# 与 _dist_view 保持一致的基础排除
-SKIP_DIRS = {
-    ".git", ".github", ".test-work", ".cache", "__pycache__", ".pytest_cache",
-    "dist", ".venv", "venv", "env", ".mypy_cache", ".ruff_cache",
-}
+# 私有词表定位失败时提示使用的配置键
+PRIVATE_NAME_HINT = "mtl.privateFingerprintsFile"
+PRIVATE_ENV_HINT = "MTL_PRIVATE_FINGERPRINTS_FILE"
+
+# 路径段内的「词内字符」：字母数字（含中文）、下划线、连字符、点、@、% 、+
+# 命中值两侧若仍是这些字符，说明只是某个更长标识的一部分，不算独立路径段
+SEGMENT_WORD_EXTRA = set("_-.@%+")
+# 嵌入型标识（邮箱/账号）的词内字符
+TOKEN_WORD_EXTRA = set("._%+-@")
+
+MIN_SAFE_ENTRY_LEN = 3
+
+MODES = ("segment", "literal", "token")
 
 
+class PrivateConfigError(RuntimeError):
+    """私有配置缺失、不可读或语法非法。"""
+
+
+# --------------------------------------------------------------------------- #
+# 私有词表
+# --------------------------------------------------------------------------- #
+class PrivateRule:
+    __slots__ = ("mode", "value", "audited", "index", "folded")
+
+    def __init__(self, mode: str, value: str, audited: bool, index: int):
+        self.mode = mode
+        self.value = value
+        self.audited = audited
+        self.index = index
+        self.folded = value.casefold()
+
+    @property
+    def label(self) -> str:
+        return f"PRIVATE_{self.mode.upper()}[{self.index}]"
+
+    def matches(self, masked_line: str) -> bool:
+        lowered = masked_line.casefold()
+        if self.mode == "literal":
+            return self.folded in lowered
+        if self.mode == "token":
+            return _bounded_match(lowered, self.folded, TOKEN_WORD_EXTRA)
+        return _bounded_match(lowered, self.folded, SEGMENT_WORD_EXTRA)
+
+
+def _is_word_char(ch: str, extra: set) -> bool:
+    return ch.isalnum() or ch in extra
+
+
+def _bounded_match(haystack: str, needle: str, extra_word_chars: set) -> bool:
+    """needle 在 haystack 中出现，且两侧都不是「词内字符」。
+
+    `extra_word_chars` 是除字母数字外仍算作词内部的额外字符集合。
+    """
+    if not needle:
+        return False
+    start = 0
+    while True:
+        pos = haystack.find(needle, start)
+        if pos < 0:
+            return False
+        left = haystack[pos - 1] if pos > 0 else ""
+        end = pos + len(needle)
+        right = haystack[end] if end < len(haystack) else ""
+        if (not left or not _is_word_char(left, extra_word_chars)) and (
+            not right or not _is_word_char(right, extra_word_chars)
+        ):
+            return True
+        start = pos + 1
+
+
+def _read_private_file(path: Path) -> tuple[list[PrivateRule], list[str]]:
+    """解析私有词表。返回 (规则, 告警)。语法非法抛 PrivateConfigError。"""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PrivateConfigError(f"无法读取私有词表（{type(exc).__name__}）") from exc
+
+    rules: list[PrivateRule] = []
+    warnings: list[str] = []
+    legacy_seen = False
+
+    for lineno, line in enumerate(raw.splitlines(), 1):
+        # 仅去掉行尾换行与回车，不 strip 掉值中的空格/单引号（H02 第 3 条）
+        entry = line.rstrip("\r\n").rstrip()
+        if not entry.strip():
+            continue
+        if entry.lstrip().startswith("#"):
+            continue
+
+        audited = False
+        mode = "segment"
+        value: str | None = None
+
+        head, sep, tail = entry.partition(":")
+        if sep and head.strip().lower() in MODES:
+            mode = head.strip().lower()
+            value = tail
+        elif sep and head.strip().lower().startswith("audited-"):
+            raw_mode = head.strip().lower()[len("audited-"):]
+            if raw_mode not in MODES:
+                raise PrivateConfigError(f"私有关键词第 {lineno} 行模式非法（audited-{raw_mode}）")
+            mode = raw_mode
+            audited = True
+            value = tail
+        else:
+            value = entry
+            legacy_seen = True
+
+        if value is None or not value.strip():
+            raise PrivateConfigError(f"私有词表第 {lineno} 行缺少有效值")
+
+        value = value.rstrip()
+        if not value.strip():
+            raise PrivateConfigError(f"私有词表第 {lineno} 行为空值")
+        rules.append(PrivateRule(mode, value, audited, len(rules) + 1))
+
+    if legacy_seen:
+        warnings.append(
+            "检测到旧格式（无模式前缀）词条，已按 segment 处理；"
+            "请在可信本地迁移时显式标注 segment/literal/token 并复核。"
+        )
+    return rules, warnings
+
+
+def _unaudited_short_rules(rules: list[PrivateRule]) -> list[PrivateRule]:
+    return [r for r in rules if not r.audited and len(r.value.strip()) < MIN_SAFE_ENTRY_LEN]
+
+
+def _resolve_private_path(cli_value: str) -> tuple[Path | None, str]:
+    """返回 (路径, 来源说明)。"""
+    if cli_value:
+        return Path(cli_value).expanduser(), "--private-file"
+    env_value = os.environ.get(PRIVATE_ENV_HINT, "").strip()
+    if env_value:
+        return Path(env_value).expanduser(), PRIVATE_ENV_HINT
+    try:
+        out = subprocess.check_output(
+            ["git", "config", "--local", "--get", PRIVATE_NAME_HINT],
+            cwd=str(REPO_ROOT),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        out = ""
+    if out:
+        return Path(out).expanduser(), f"git config {PRIVATE_NAME_HINT}"
+    return None, ""
+
+
+def load_private_rules(cli_value: str, *, require_private: bool) -> list[PrivateRule]:
+    path, origin = _resolve_private_path(cli_value)
+    if path is None:
+        if require_private:
+            raise PrivateConfigError(
+                f"未配置私有词表（请设置 {PRIVATE_ENV_HINT} 或 git config --local {PRIVATE_NAME_HINT}）"
+            )
+        return []
+    if not path.is_file():
+        raise PrivateConfigError(f"私有词表不存在（来源 {origin}）")
+    rules, warnings = _read_private_file(path)
+    for msg in warnings:
+        print(f"⚠️  {msg}", file=sys.stderr)
+    if not rules:
+        raise PrivateConfigError("私有词表不含任何有效词条")
+    short = _unaudited_short_rules(rules)
+    if short:
+        detail = "、".join(f"#{r.index}({len(r.value.strip())}字符)" for r in short)
+        if require_private:
+            raise PrivateConfigError(
+                f"存在未经审核的短词条 {detail}；请本地审核后用 audited-<mode>: 前缀显式启用"
+            )
+        print(f"⚠️  已跳过未审核短词条 {detail}", file=sys.stderr)
+    return [r for r in rules if r not in short]
+
+
+# --------------------------------------------------------------------------- #
+# 扫描
+# --------------------------------------------------------------------------- #
 def _is_text(name: str) -> bool:
     base = os.path.basename(name)
     if base in (".gitignore", ".gitattributes"):
@@ -104,34 +277,60 @@ def _path_allowed(p: str) -> bool:
         return True
     if any(n.startswith(prefix) for prefix in SAFE_PREFIXES):
         return True
-    # 测试用假用户名目录（C:/Users/fake/...）放行
     m = re.match(r"(?i)^[a-z]:[\\/]+users[\\/]+([a-z0-9._-]+)", n)
     if m and m.group(1) in SAFE_USERNAMES:
         return True
     return False
 
 
-def scan_text(text: str, label: str, hits: list, allowed: list, verbose: bool) -> None:
+def _email_allowed(addr: str) -> bool:
+    domain = addr.rsplit("@", 1)[-1].lower()
+    return domain in SAFE_EMAIL_DOMAINS
+
+
+def _mask_pii(line: str, rules: list[PrivateRule]) -> str:
+    """把命中片段替换为占位符，保证输出不泄露原文。"""
+    out = line
+    for m in DRIVE_RE.finditer(line):
+        if not _path_allowed(m.group(0)):
+            out = out.replace(m.group(0), "<REDACTED-PATH>")
+    for m in EMAIL_RE.finditer(line):
+        if not _email_allowed(m.group(0)):
+            out = out.replace(m.group(0), "<REDACTED-EMAIL>")
+    for rule in rules:
+        if rule.value and rule.matches(out):
+            out = re.sub(re.escape(rule.value), "<REDACTED>", out, flags=re.IGNORECASE)
+    return out[:160]
+
+
+def scan_text(
+    text: str, label: str, rules: list[PrivateRule], hits: list, allowed: list, verbose: bool
+) -> None:
     for lineno, line in enumerate(text.splitlines(), 1):
-        if PLACEHOLDER_RE.search(line):
-            if verbose:
-                allowed.append((label, lineno, "placeholder", line.strip()[:100]))
-            continue
+        masked = PLACEHOLDER_RE.sub(PLACEHOLDER_MASK, line)
 
-        for bad in DENY_SUBSTRINGS:
-            if bad in line:
-                hits.append((label, lineno, "denylist:" + bad, line.strip()[:160]))
-                break
+        if masked != line and verbose:
+            allowed.append((label, lineno, "placeholder-masked"))
 
-        for m in USERPROFILE_RE.finditer(line):
-            if m.group(1).lower() not in SAFE_USERNAMES:
-                hits.append((label, lineno, "user-profile", line.strip()[:160]))
+        for rule in rules:
+            if rule.matches(masked):
+                hits.append((label, lineno, rule.label, _mask_pii(masked, rules)))
                 break
-
-        for m in DRIVE_RE.finditer(line):
-            if not _path_allowed(m.group(0)):
-                hits.append((label, lineno, "drive-path:" + m.group(0)[:40], line.strip()[:160]))
-                break
+        else:
+            for m in USERPROFILE_RE.finditer(masked):
+                if m.group(1).lower() not in SAFE_USERNAMES:
+                    hits.append((label, lineno, "USER_PROFILE", _mask_pii(masked, rules)))
+                    break
+            else:
+                for m in EMAIL_RE.finditer(masked):
+                    if not _email_allowed(m.group(0)):
+                        hits.append((label, lineno, "EMAIL", _mask_pii(masked, rules)))
+                        break
+                else:
+                    for m in DRIVE_RE.finditer(masked):
+                        if not _path_allowed(m.group(0)):
+                            hits.append((label, lineno, "DRIVE_PATH", _mask_pii(masked, rules)))
+                            break
 
 
 def iter_repo_files():
@@ -146,63 +345,81 @@ def iter_repo_files():
         pass
     files = []
     for root, dirs, names in os.walk(REPO_ROOT):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".test-work")]
+        dirs[:] = [d for d in dirs if d not in {".git", "dist", "__pycache__"}]
         for n in names:
             files.append(Path(root) / n)
     return files
 
 
-def scan_repo(verbose: bool):
+def scan_repo(rules: list[PrivateRule], verbose: bool):
     hits, allowed = [], []
     for path in iter_repo_files():
-        rel = path.relative_to(REPO_ROOT).as_posix()
+        try:
+            rel = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            continue
         if rel == SELF_REL or not _is_text(rel) or not path.is_file():
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        scan_text(text, rel, hits, allowed, verbose)
+        scan_text(text, rel, rules, hits, allowed, verbose)
     return hits, allowed
 
 
-def scan_zip(zip_path: Path, verbose: bool):
+def scan_zip(zip_path: Path, rules: list[PrivateRule], verbose: bool):
     hits, allowed = [], []
     with zipfile.ZipFile(zip_path) as zf:
         for name in zf.namelist():
-            # 守卫自身含白名单字面量，与仓库模式一致必须排除
             if os.path.basename(name) == os.path.basename(SELF_REL) or not _is_text(name):
                 continue
             try:
                 text = zf.read(name).decode("utf-8", "ignore")
             except Exception:
                 continue
-            scan_text(text, f"{zip_path.name}!{name}", hits, allowed, verbose)
+            scan_text(text, f"{zip_path.name}!{name}", rules, hits, allowed, verbose)
     return hits, allowed
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="路径与个人信息泄漏守卫")
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="路径与个人信息泄漏守卫（H02）")
     ap.add_argument("--zip", default="", help="扫描指定 zip 内的文本成员")
-    ap.add_argument("--verbose", action="store_true", help="打印被放行的命中")
-    args = ap.parse_args()
+    ap.add_argument("--verbose", action="store_true", help="打印被遮蔽/放行的命中")
+    ap.add_argument("--private-file", default="", help="私有指纹词表路径")
+    ap.add_argument(
+        "--require-private",
+        action="store_true",
+        help="可信模式：私有词表缺失/不可读/为空/非法/含未审核短词即失败",
+    )
+    args = ap.parse_args(argv)
+
+    try:
+        rules = load_private_rules(args.private_file, require_private=args.require_private)
+    except PrivateConfigError as exc:
+        print(f"❌ 私有配置错误: {exc}", file=sys.stderr)
+        return 2
 
     if args.zip:
         target = Path(args.zip)
         if not target.is_file():
             print(f"ERROR: 找不到 {target}")
             return 2
-        hits, allowed = scan_zip(target, args.verbose)
+        hits, allowed = scan_zip(target, rules, args.verbose)
         scope = f"发布包 {target.name}"
     else:
-        hits, allowed = scan_repo(args.verbose)
+        hits, allowed = scan_repo(rules, args.verbose)
         scope = f"仓库 {REPO_ROOT.name}"
 
     if args.verbose and allowed:
-        print(f"ℹ️  已放行 {len(allowed)} 处（占位符）")
+        print(f"ℹ️  已遮蔽占位符 {len(allowed)} 处")
 
     if not hits:
-        print(f"✅ 泄漏守卫通过（{scope}）：未发现本机路径或个人信息")
+        suffix = f"，私有词条 {len(rules)} 条" if rules else "，私有词表未加载"
+        print(f"✅ 泄漏守卫通过（{scope}）：未发现本机路径或个人信息{suffix}")
         return 0
 
     print(f"❌ 泄漏守卫失败（{scope}）：命中 {len(hits)} 处")

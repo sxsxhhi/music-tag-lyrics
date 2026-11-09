@@ -67,5 +67,9 @@ jobs:
         run: python tests/test_cache_paths.py
       - name: Release build determinism (H01)
         run: python tests/test_release_build.py
+      - name: Leak guard synthetic rules (H02)
+        run: python tests/test_leak_guard.py
+      - name: pre-push hook fail-closed (H02)
+        run: python tests/test_prepush_hook.py
       - name: Path & PII leak guard
         run: python scripts/check_no_leaks.py

@@ -1,37 +1,104 @@
 #!/bin/sh
-# 推送前强制脱敏检查（AGENTS.md 第零节）。
+# 推送前强制脱敏检查（AGENTS.md 第零节 / SKILL.md 铁律 21 / H02）。
 #
 # 安装（仓库内执行一次）：
 #     git config core.hooksPath scripts/git-hooks
 #
-# 检测到本机绝对路径、用户名、私有目录名、个人邮箱等即阻断推送。
+# 两种模式：
+#   公开克隆（默认）：只跑通用规则（盘符路径 / 用户目录 / 邮箱），不要求私有词表；
+#   可信维护者：`git config --local mtl.trustedMaintainer true` 后，
+#               额外强制 `--require-private`，私有词表缺失/非法/含未审核短词一律阻断。
+#
+# 可信模式下**绝不静默降级**：找不到可用 Python、找不到守卫脚本、私有配置不可用，
+# 一律阻断推送（fail-closed）。
+#
 # 确需跳过：git push --no-verify（视为违规，需在提交说明中记录原因）。
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-cd "$REPO_ROOT" || exit 0
+set -u
 
-PY="${MTL_PYTHON:-}"
-if [ -z "$PY" ]; then
-    for cand in python3 python py; do
-        if command -v "$cand" >/dev/null 2>&1; then
-            PY="$cand"
-            break
-        fi
-    done
+SCANNER_REL="scripts/check_no_leaks.py"
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT=""
+if [ -z "$REPO_ROOT" ]; then
+    echo "❌ 推送被阻断：无法确定仓库根目录。" >&2
+    exit 1
+fi
+cd "$REPO_ROOT" || {
+    echo "❌ 推送被阻断：无法进入仓库根目录。" >&2
+    exit 1
+}
+
+if [ ! -f "$SCANNER_REL" ]; then
+    echo "❌ 推送被阻断：找不到守卫脚本 $SCANNER_REL。" >&2
+    exit 1
 fi
 
+# ---- 可信模式判定 ---------------------------------------------------------- #
+TRUSTED=$(git config --local --get mtl.trustedMaintainer 2>/dev/null || true)
+case "$TRUSTED" in
+    true|True|TRUE|1|yes|on) TRUSTED=1 ;;
+    *) TRUSTED=0 ;;
+esac
+
+# ---- Python 候选探测：必须真的能跑起守卫，而不是只看命令是否存在 ---------- #
+probe_python() {
+    cand="$1"
+    [ -n "$cand" ] || return 1
+    if command -v "$cand" >/dev/null 2>&1; then
+        :
+    elif [ -x "$cand" ]; then
+        :
+    else
+        return 1
+    fi
+    "$cand" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >/dev/null 2>&1 || return 1
+    "$cand" "$SCANNER_REL" --help >/dev/null 2>&1 || return 1
+    return 0
+}
+
+PY=""
+for cand in \
+    "${MTL_PYTHON:-}" \
+    "$(git config --local --get mtl.python 2>/dev/null || true)" \
+    python3 \
+    python \
+    py
+do
+    if probe_python "$cand"; then
+        PY="$cand"
+        break
+    fi
+done
+
 if [ -z "$PY" ]; then
-    echo "⚠️  未找到 Python 解释器，跳过脱敏检查。" >&2
-    echo "   请手动运行：python scripts/check_no_leaks.py" >&2
+    if [ "$TRUSTED" = "1" ]; then
+        echo "❌ 推送被阻断：可信维护者模式下找不到可运行泄漏守卫的 Python 解释器。" >&2
+        echo "   请设置 MTL_PYTHON 或 git config --local mtl.python <解释器路径>。" >&2
+        exit 1
+    fi
+    echo "⚠️  未找到 Python 解释器，跳过脱敏检查（公开克隆模式）。" >&2
+    echo "   请手动运行：python $SCANNER_REL" >&2
     exit 0
 fi
 
-if ! "$PY" scripts/check_no_leaks.py; then
+# ---- 通用规则（两种模式都跑） --------------------------------------------- #
+if ! "$PY" "$SCANNER_REL"; then
     echo "" >&2
     echo "❌ 推送被阻断：检测到本机路径或个人信息泄漏。" >&2
     echo "   规则见工作区 AGENTS.md 第零节；修复后重试。" >&2
     echo "   确需跳过：git push --no-verify（违规，需在提交说明中记录原因）。" >&2
     exit 1
+fi
+
+# ---- 可信维护者：私有指纹门禁（fail-closed） ------------------------------ #
+if [ "$TRUSTED" = "1" ]; then
+    if ! "$PY" "$SCANNER_REL" --require-private; then
+        echo "" >&2
+        echo "❌ 推送被阻断：可信维护者模式要求私有指纹门禁通过。" >&2
+        echo "   请检查 git config --local mtl.privateFingerprintsFile 指向的词表：" >&2
+        echo "   必须是可读、非空、语法合法且无未审核短词的私有词表。" >&2
+        exit 1
+    fi
 fi
 
 exit 0
