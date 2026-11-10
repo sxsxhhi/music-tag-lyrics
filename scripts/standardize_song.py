@@ -102,11 +102,43 @@ def standardize_single_song(
     audio_abs=os.path.abspath(audio_path)
     if not os.path.isfile(audio_abs):raise FileNotFoundError('Audio file not found')
     if report_path:
-        protected={Path(audio_abs).resolve()}
-        base=Path(audio_abs).with_suffix('')
-        protected.update(base.with_suffix(ext).resolve() for ext in ('.lrc','.spl','.ttml'))
-        if Path(report_path).resolve() in protected:
-            raise ValueError('REPORT_TARGET_PROTECTED: refusing to overwrite audio or lyric input')
+        report_abs = os.path.abspath(report_path)
+        report_p = Path(report_abs)
+        protected = {Path(audio_abs).resolve()}
+        base = Path(audio_abs).with_suffix('')
+        for ext in ('.lrc', '.spl', '.ttml'):
+            p = base.with_suffix(ext)
+            try:
+                protected.add(p.resolve())
+            except OSError:
+                pass
+        if ref_lyrics_path:
+            protected.add(Path(ref_lyrics_path).resolve())
+        dest_dir = Path(output_dir or os.path.dirname(audio_abs)).resolve()
+        filename = Path(audio_abs).name
+        stem = Path(audio_abs).stem
+        for ext in ('.lrc', '.spl', '.ttml'):
+            protected.add((dest_dir / (stem + ext)).resolve())
+        protected.add((dest_dir / filename).resolve())
+
+        try:
+            report_resolved = report_p.resolve()
+        except OSError:
+            report_resolved = report_p
+
+        if report_resolved in protected or report_p in protected:
+            raise ValueError(f"REPORT_TARGET_PROTECTED: refusing to overwrite audio, lyrics, reference or target at {report_path}")
+        for p in protected:
+            if report_p == p or report_resolved == p:
+                raise ValueError(f"REPORT_TARGET_PROTECTED: {report_path} conflicts with {p}")
+            if os.path.lexists(p) and os.path.lexists(report_abs):
+                try:
+                    if os.path.samefile(p, report_abs):
+                        raise ValueError(f"REPORT_TARGET_PROTECTED: samefile conflict with {p}")
+                except OSError:
+                    pass
+        if os.path.lexists(report_abs):
+            raise FileExistsError(f"REPORT_TARGET_EXISTS: Refusing to overwrite existing file at {report_path}")
     original_audio_hash=hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()
     embedded=read_container_tags(audio_abs)
     noext,_=os.path.splitext(audio_abs)
@@ -127,7 +159,12 @@ def standardize_single_song(
         report['issues'].append({'code':code,'message':description,'blocking':blocking})
         if blocking and report['status'] not in ('BLOCKED',):report['status']='REVIEW_REQUIRED'
     def finish():
-        if report_path:_write_json_report(report_path,report)
+        if report_path:
+            try:
+                _write_json_report(report_path, report)
+            except Exception as exc:
+                report['status'] = 'BLOCKED'
+                issue('REPORT_WRITE_FAILED', f"{type(exc).__name__}: {str(exc)}")
         return report
 
     if active_elrc and active_ttml:
@@ -189,10 +226,11 @@ def standardize_single_song(
     report['issues'].extend(i.to_dict() for i in canonical.issues)
     if any(i.blocking or i.severity.value=='REVIEW_REQUIRED' for i in canonical.issues):
         report['status']='REVIEW_REQUIRED'
-    if mode=='audit':return finish()
-    if report['status']!='PASS':
-        report['actions_taken'].append('ABORT_DUE_TO_BLOCKING_ISSUES')
+    if mode=='audit':
+        if report['format_audit'] == 'ONE_FORMAT_ONLY' and report['status'] != 'BLOCKED':
+            report['status'] = 'ONE_FORMAT_ONLY'
         return finish()
+
     if not output_dir:raise ValueError('--output-dir required for v1.8.2 standardize')
     dest=Path(output_dir).resolve()
     if dest==Path(audio_abs).parent.resolve():
@@ -203,6 +241,10 @@ def standardize_single_song(
     all_targets=list(sidecars)+( [target_audio] if target_audio else [] )
     if any(os.path.lexists(x) for x in all_targets):
         report['status']='BLOCKED';issue('TARGET_EXISTS','Existing destination is never overwritten')
+        return finish()
+
+    if report['status']!='PASS':
+        report['actions_taken'].append('ABORT_DUE_TO_BLOCKING_ISSUES')
         return finish()
     try:
         elrc=render_elrc_v182(canonical)
@@ -253,9 +295,28 @@ def standardize_single_song(
 
 
 def _write_json_report(report_path: str, data: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    report_abs = os.path.abspath(report_path)
+    if os.path.lexists(report_abs):
+        raise FileExistsError(f"REPORT_TARGET_EXISTS: Refusing to overwrite existing file at {report_path}")
+    rep_dir = os.path.dirname(report_abs)
+    if rep_dir:
+        os.makedirs(rep_dir, exist_ok=True)
+    import tempfile
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=".tmp_report_", dir=rep_dir)
+    try:
+        with open(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            _ = json.load(f)
+        if os.path.lexists(report_abs):
+            raise FileExistsError(f"REPORT_TARGET_EXISTS: Refusing to overwrite existing file at {report_path}")
+        os.link(tmp_path, report_abs)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def main():

@@ -275,14 +275,16 @@ def classify_line_role(
 
     # Confirmed un-timed duplicates may occur even at the outro; a genuinely
     # sung title with real word stamps must never be removed as metadata.
-    if title_norm and (line_index < 3 or not has_words):
-        if clean_norm == title_norm:
-            return LineRole.TITLE, {"match_type": "EXACT_TITLE"}
-        if artist_norm:
-            if clean_norm == f"{title_norm} - {artist_norm}":
-                return LineRole.TITLE, {"match_type": "TITLE_DASH_ARTIST"}
-            if clean_norm == f"{artist_norm} - {title_norm}":
-                return LineRole.TITLE, {"match_type": "ARTIST_DASH_TITLE"}
+    if title_norm:
+        is_title_match = (
+            clean_norm == title_norm
+            or (artist_norm and clean_norm in (f"{title_norm} - {artist_norm}", f"{artist_norm} - {title_norm}"))
+        )
+        if is_title_match:
+            if not has_words:
+                return LineRole.TITLE, {"match_type": "UNTIMED_TITLE_METADATA"}
+            # Genuinely sung title with verbatim words must be preserved as singing line
+            return LineRole.SINGING, {"clean": clean, "sung_title": True}
 
     return LineRole.SINGING, {"clean": clean}
 
@@ -364,20 +366,45 @@ def classify_and_clean_all_lines(
                 not _PERFORMER_CUE_PREFIX_RE.match(this_text) and
                 not _PRODUCTION_KEYWORD_RE.match(this_text)
             )
-            if (prev_cline.start_ms == st_ms and prev_cline.is_singing and
-                    not prev_cline.translation and (explicit_translation or strong_language_evidence)):
-                prev_cline.translation = this_text
-                t_line = CanonicalLine(
-                    stable_id=f"L{idx + 1}",
-                    source_index=idx,
-                    role=LineRole.TRANSLATION,
-                    start_ms=st_ms,
-                    end_ms=et_ms,
-                    text=raw_text,
-                    translation=raw_text.strip(),
-                )
-                classified_lines.append((t_line, {"is_attached_translation": True}))
-                continue
+            if (prev_cline.start_ms == st_ms and prev_cline.is_singing and not prev_cline.translation):
+                if explicit_translation:
+                    prev_cline.translation = this_text
+                    t_line = CanonicalLine(
+                        stable_id=f"L{idx + 1}",
+                        source_index=idx,
+                        role=LineRole.TRANSLATION,
+                        start_ms=st_ms,
+                        end_ms=et_ms,
+                        text=raw_text,
+                        translation=raw_text.strip(),
+                    )
+                    classified_lines.append((t_line, {"is_attached_translation": True}))
+                    continue
+                elif strong_language_evidence:
+                    # Language difference + equal timestamp is ambiguous (could be simultaneous vocals/harmony).
+                    # If mid-song (st_ms > 3000) without explicit translation provenance, flag REVIEW_REQUIRED
+                    # to prevent silent drop of singing line/harmony.
+                    prev_cline.translation = this_text
+                    t_line = CanonicalLine(
+                        stable_id=f"L{idx + 1}",
+                        source_index=idx,
+                        role=LineRole.TRANSLATION,
+                        start_ms=st_ms,
+                        end_ms=et_ms,
+                        text=raw_text,
+                        translation=raw_text.strip(),
+                    )
+                    classified_lines.append((t_line, {"is_attached_translation": True}))
+                    is_mid_song_ambiguous = (st_ms > 3000)
+                    canonical.add_issue(
+                        code="AMBIGUOUS_BILINGUAL_VOCALS",
+                        severity=IssueSeverity.REVIEW_REQUIRED if is_mid_song_ambiguous else IssueSeverity.INFO,
+                        source_index=idx,
+                        evidence=f"Lines '{previous_text}' and '{this_text}' share timestamp {st_ms}ms without explicit translation flag",
+                        action="ATTACHED_HEURISTIC_TRANSLATION_REQUIRE_REVIEW" if is_mid_song_ambiguous else "ATTACHED_HEURISTIC_TRANSLATION",
+                        blocking=is_mid_song_ambiguous,
+                    )
+                    continue
 
         role, extra = classify_line_role(
             raw_text=raw_text,

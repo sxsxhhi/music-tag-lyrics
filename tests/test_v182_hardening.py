@@ -332,4 +332,63 @@ def test_34_embedded_credit_conflict_blocks_before_any_write():
         assert any(x['code']=='EXISTING_CREDIT_CONFLICT' for x in r['issues'])
         assert not Path(td+'/out').exists()
 
+
+
+def test_35_report_never_corrupts_new_lrc():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d); src = root / 'song.flac'; _create_minimal_flac(str(src))
+        out = root / 'out'; report = out / 'song.lrc'
+        try:
+            result = standardize_single_song(str(src), 'standardize', output_dir=str(out), no_tags=True, report_path=str(report))
+        except (ValueError, FileExistsError):
+            return
+        assert result['status'] != 'PASS', 'Report collision must not report PASS'
+        if report.exists():
+            assert report.read_bytes() == (out / 'song.spl').read_bytes(), 'LRC corrupted'
+
+
+def test_36_report_never_corrupts_new_audio_copy():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d); src = root / 'song.flac'; _create_minimal_flac(str(src)); out = root / 'out'
+        try:
+            result = standardize_single_song(str(src), 'standardize', output_dir=str(out), write_tags=True, report_path=str(out / 'song.flac'))
+        except (ValueError, FileExistsError):
+            return
+        assert result['status'] != 'PASS', 'JSON report overwritten audio but function returned PASS'
+        if (out / 'song.flac').exists():
+            assert (out / 'song.flac').read_bytes().startswith(b'fLaC')
+
+
+def test_37_audit_report_must_not_overwrite_reference():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d); src = root / 'song.flac'; _create_minimal_flac(str(src))
+        reference = root / 'reference.lrc'
+        reference.write_text('[00:02.000] synthetic reference', encoding='utf-8')
+        before = hashlib.sha256(reference.read_bytes()).digest()
+        try:
+            standardize_single_song(str(src), 'audit', report_path=str(reference), ref_lyrics_path=str(reference))
+        except (ValueError, FileExistsError):
+            return
+        assert before == hashlib.sha256(reference.read_bytes()).digest(), 'Readonly reference was overwritten'
+
+
+def test_38_sung_title_with_verbatim_words_is_not_removed():
+    raw = {'lines': [{'start': 15000, 'end': 17000, 'text': '测试曲目',
+                      'words': [{'start': 15000, 'end': 17000, 'text': '测试曲目'}]},
+                     {'start': 18000, 'end': 20000, 'text': '第二句演唱',
+                      'words': [{'start': 18000, 'end': 20000, 'text': '第二句演唱'}]}]}
+    canonical = classify_and_clean_all_lines(raw, song_title='测试曲目', song_artist='虚构歌手')
+    plan = plan_prelude_ab(canonical)
+    assert plan.t_sing_ms == 15000, 'First actual singing title was mistaken for display-only prelude'
+    assert any(x.text == '测试曲目' and x.is_singing for x in canonical.lines)
+
+
+def test_39_ambiguous_bilingual_simultaneous_vocals_not_assumed_translation():
+    raw = {'lines': [{'start': 12000, 'end': 15000, 'text': 'Hello',
+                      'words': [{'start': 12000, 'end': 15000, 'text': 'Hello'}]},
+                     {'start': 12000, 'end': 15000, 'text': '你好', 'words': []}]}
+    c = classify_and_clean_all_lines(raw, song_title='TEST SONG')
+    is_blocked = any(x.blocking or x.severity.value == 'REVIEW_REQUIRED' for x in c.issues)
+    assert is_blocked or len([x for x in c.lines if x.is_singing]) == 2, 'Same-timestamp English and Chinese vocals silently treated as translation'
+
 if __name__=='__main__':sys.exit(run(globals()))
