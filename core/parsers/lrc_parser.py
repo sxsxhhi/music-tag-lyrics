@@ -85,6 +85,7 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
     """
     tags = {}
     raw_lines = []
+    unparsed_lines = []
     
     for raw_line in lrc_text.splitlines():
         line = raw_line.strip()
@@ -100,6 +101,7 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
         # Match line time tags [01:23.45]
         time_matches = list(LRC_TIME_RE.finditer(line))
         if not time_matches:
+            unparsed_lines.append(line)
             continue
 
         # Extract text following all line-level time tags
@@ -153,4 +155,5 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
         "lines": lines,
         # v1.2.8：把源的时间戳粒度带出去，输出层据此决定出 2 位还是 3 位
         "time_precision": detect_time_precision(lrc_text),
+        "unparsed_lines": unparsed_lines,
     }

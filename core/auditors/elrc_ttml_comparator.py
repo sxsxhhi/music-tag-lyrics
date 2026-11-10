@@ -142,7 +142,8 @@ def parse_elrc_structural(text:str)->List[ParsedLine]:
         if not raw.strip():continue
         if re.match(r'^\[[a-zA-Z][a-zA-Z0-9_-]*:',raw):continue
         m=ELINE.match(raw)
-        if not m:continue
+        if not m:
+            raise ValueError(f"ELRC_SYNTAX_ERROR: Malformed or unmodeled line cannot be preserved: {raw.strip()!r}")
         st=_time_elrc(m.group(1));body=m.group(2);tags=list(ETAG.finditer(body));words=[];end=None;explicit=False
         prefix=body[:tags[0].start()] if tags else ''
         if tags:
@@ -173,6 +174,9 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
     if root.text and root.text.strip():
         problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <tt> is unsupported'))
     for child in root:
+        child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+        if child_tag not in ('head', 'body'):
+            problems.append(ComparisonIssue('UNSUPPORTED_ROOT_CHILD', f'Unsupported root child <{child.tag}> under <tt>', blocking=True))
         if child.tail and child.tail.strip():
             problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after root child is unsupported'))
 

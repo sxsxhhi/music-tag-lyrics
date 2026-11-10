@@ -495,6 +495,57 @@ def test_f37_tab_and_newline_inter_word_spacing_preserved():
     assert 'world' in lines[0].words[1].text
 
 
+def test_f38_unknown_root_child_blocked():
+    # Unknown/unmodeled direct children under <tt> must produce blocking UNSUPPORTED_ROOT_CHILD
+    raw = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<unknown>未处理的文本节点</unknown>'
+        '<body><div begin="00:00:15.000" end="00:00:17.000">'
+        '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1">'
+        '<span begin="00:00:15.000" end="00:00:17.000">测试文本</span></p></div></body></tt>'
+    )
+    _, _, issues = parse_ttml_structural(raw)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_ROOT_CHILD' for x in issues)
+
+    res = compare_elrc_ttml(ELRC, raw)
+    assert not res.passed
+    assert any(x.blocking and x.code == 'UNSUPPORTED_ROOT_CHILD' for x in res.issues)
+
+    with tempfile.TemporaryDirectory() as tmp_d:
+        p = Path(tmp_d)
+        wav = p / 'song.wav'
+        _make_wav(wav)
+        wav.with_suffix('.lrc').write_text(ELRC, encoding='utf-8')
+        wav.with_suffix('.ttml').write_text(raw, encoding='utf-8')
+        out_d = p / 'out'
+        for mode in ('audit', 'standardize'):
+            sr = standardize_single_song(str(wav), mode=mode, output_dir=str(out_d), no_tags=True)
+            assert sr['status'] != 'PASS'
+            assert not list(out_d.glob('song.*'))
+
+
+def test_f39_malformed_elrc_line_blocked():
+    # Unrecognized/malformed non-empty ELRC lines must not be silently dropped
+    malformed_elrc = ELRC + '[00:AA.123]被跳过的另一句歌词\n'
+    ttml = _ttml(text='测试文本')
+
+    res = compare_elrc_ttml(malformed_elrc, ttml)
+    assert not res.passed
+    assert any(x.blocking and x.code == 'ELRC_SYNTAX_ERROR' for x in res.issues)
+
+    with tempfile.TemporaryDirectory() as tmp_d:
+        p = Path(tmp_d)
+        wav = p / 'song.wav'
+        _make_wav(wav)
+        wav.with_suffix('.lrc').write_text(malformed_elrc, encoding='utf-8')
+        wav.with_suffix('.ttml').write_text(ttml, encoding='utf-8')
+        out_d = p / 'out'
+        for mode in ('audit', 'standardize'):
+            sr = standardize_single_song(str(wav), mode=mode, output_dir=str(out_d), no_tags=True)
+            assert sr['status'] != 'PASS'
+            assert not list(out_d.glob('song.*'))
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(run(globals()))

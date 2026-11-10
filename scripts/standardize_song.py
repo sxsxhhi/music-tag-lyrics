@@ -207,6 +207,8 @@ def standardize_single_song(
     try:
         parsed=_read_ttml_for_standardization(active_ttml) if active_ttml else parse_lrc(active_elrc)
         if not parsed.get('lines'):raise ValueError('No parsed lyric lines')
+        if parsed.get('unparsed_lines'):
+            raise ValueError(f"UNPARSED_LRC_LINES: Unparsed non-empty line cannot be preserved: {parsed['unparsed_lines'][0]!r}")
     except (ValueError,TypeError,KeyError) as exc:
         report['status']='BLOCKED';issue('INPUT_PARSE_FAILED',str(exc))
         return finish()
