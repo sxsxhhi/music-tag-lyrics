@@ -61,7 +61,8 @@ def _read_ttml_for_standardization(raw: str) -> Dict[str, Any]:
         for j,w in enumerate(ln.words):
             txt=w.text.rstrip(' ')
             if not txt:continue
-            has_space = bool(getattr(w, 'trailing_space', '').endswith(' ') or w.text.endswith(' '))
+            trailing = getattr(w, 'trailing_space', '')
+            has_space = bool(w.text.endswith(' ') or (trailing and not trailing.strip()))
             wrds.append({'text':txt,'start':w.start_ms,'end':w.end_ms,
                          'join':'space' if has_space else 'none'})
         if ln.is_prelude:

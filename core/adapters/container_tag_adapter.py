@@ -156,7 +156,7 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                 if size > riff_end - f.tell():
                     return unverified
                 if name == b"fmt ":
-                    if size < 16:
+                    if seen_fmt or size < 16:
                         return unverified
                     fmt_bytes = f.read(16)
                     audio_format = int.from_bytes(fmt_bytes[0:2], "little")

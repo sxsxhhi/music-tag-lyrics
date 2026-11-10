@@ -428,6 +428,73 @@ def test_f33_valid_whitespace_inter_word_span_tail_preserved():
     assert lines[0].words[1].text == 'world'
 
 
+def test_f34_duplicate_fmt_chunk_in_wav_rejected():
+    import struct
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / 'dup_fmt.wav'
+        fmt = struct.pack('<HHIIHH', 1, 1, 16000, 32000, 2, 16)
+        fmt_chunk = b'fmt ' + len(fmt).to_bytes(4, 'little') + fmt
+        data_payload = b'\x00\x00' * 64
+        data_chunk = b'data' + len(data_payload).to_bytes(4, 'little') + data_payload
+        # Duplicate fmt chunk inside RIFF
+        body = b'WAVE' + fmt_chunk + fmt_chunk + data_chunk
+        p.write_bytes(b'RIFF' + len(body).to_bytes(4, 'little') + body)
+        assert compute_audio_stream_digest(str(p))[0] != 'VERIFIED'
+
+
+def test_f35_head_direct_text_and_multiple_heads_blocked():
+    # Direct text in <head>
+    raw_head_text = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<head>非法直接正文<metadata /></head>'
+        '<body><div begin="00:00:15.000" end="00:00:17.000">'
+        '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1">'
+        '<span begin="00:00:15.000" end="00:00:17.000">测试</span></p></div></body></tt>'
+    )
+    _, _, issues1 = parse_ttml_structural(raw_head_text)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues1)
+
+    # Multiple <head> tags
+    raw_multi_head = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<head><metadata /></head><head><metadata /></head>'
+        '<body><div begin="00:00:15.000" end="00:00:17.000">'
+        '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1">'
+        '<span begin="00:00:15.000" end="00:00:17.000">测试</span></p></div></body></tt>'
+    )
+    _, _, issues2 = parse_ttml_structural(raw_multi_head)
+    assert any(x.blocking and x.code == 'HEAD_STRUCTURE_INVALID' for x in issues2)
+
+
+def test_f36_mixed_speaker_cue_and_untimed_words_blocked():
+    # Speaker prefix with trailing untimed singing text before span must block
+    raw = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<body><div begin="00:00:15.000" end="00:00:17.000">'
+        '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1">'
+        '男：附加未打轴词'
+        '<span begin="00:00:15.000" end="00:00:17.000">打轴词</span></p></div></body></tt>'
+    )
+    _, _, issues = parse_ttml_structural(raw)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues)
+
+
+def test_f37_tab_and_newline_inter_word_spacing_preserved():
+    # Tabs and newlines in span.tail must be recognized as valid word separation
+    raw = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<body><div begin="00:00:10.000" end="00:00:14.000">'
+        '<p begin="00:00:10.000" end="00:00:14.000" itunes:key="L1">\n'
+        '  <span begin="00:00:10.000" end="00:00:12.000">Hello</span>\n  '
+        '  <span begin="00:00:12.000" end="00:00:14.000">world</span>\n'
+        '</p></div></body></tt>'
+    )
+    lines, _, issues = parse_ttml_structural(raw)
+    assert not any(x.blocking for x in issues)
+    assert 'Hello' in lines[0].words[0].text
+    assert 'world' in lines[0].words[1].text
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(run(globals()))

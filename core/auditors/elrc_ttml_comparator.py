@@ -208,6 +208,16 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
             problems.append(ComparisonIssue('TRANSLATION_DUPLICATE_REFERENCE','Multiple translations for same key',key))
         trans[key]=(n.text or '').strip()
 
+    heads = root.findall('./{*}head')
+    if len(heads) > 1:
+        problems.append(ComparisonIssue('HEAD_STRUCTURE_INVALID', 'Multiple TTML <head> elements are unsupported'))
+    for h in heads:
+        if h.text and h.text.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <head> is unsupported'))
+        for child in h:
+            if child.tail and child.tail.strip():
+                problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after head child is unsupported'))
+
     bodies = root.findall('./{*}body')
     if len(bodies) != 1:
         return [],(0,0),problems+[ComparisonIssue('BODY_STRUCTURE_INVALID', 'Exactly one direct TTML body is required')]
