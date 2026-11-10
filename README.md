@@ -4,15 +4,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10--3.13-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-642%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-663%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Core%20Deps-Pure%20Python-blue?style=flat-square" alt="Dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
   <a href="#"><img src="https://img.shields.io/badge/Cover%20Art-1000x1000%20HD-purple?style=flat-square" alt="Cover Art"></a>
 </p>
 
 > 让你的本地音乐拥有像 Apple Music 一样丝滑的逐字动效歌词，自动补齐超清专辑封面与规范歌曲标签；
-> 还能用本地 AI 帮绝版老歌逐字精准打轴——**全程安全隔离，绝不乱改乱动你原有的珍贵音频**。
+> 还能用本地 AI 帮绝版老歌逐字精准打轴——**基于安全临时副本与严格隔离目录，周密保护原始音频**。
 
 ---
 
@@ -38,14 +38,14 @@
 - **歌曲标签与封面乱七八糟**：歌手名连成一串、年份写成当天、封面模糊成马赛克甚至一片漆黑。
   👉 **克制而规范的洗标**：合唱歌手统一用 `/` 规范分隔，自动抓取 `1000×1000` 高清大图；**已有封面 100% 绝对保护**，绝不自作主张覆盖用户原本的心头好。
 - **最怕整理工具改坏文件**：一键整理后，发现源文件被莫名其妙重命名、截断或者音质损坏。
-  👉 **苛刻的安全底线**：原地只读分析，写出均在独立隔离目录或临时副本中完成，校验成功才交付；一旦出错自动回滚，绝不伤及母带分毫。
+  👉 **苛刻的安全底线**：原地只读分析；日常修补经安全临时副本原子替换并读回校验；标准化仅输出到独立隔离目录且已有同名文件拒绝覆盖；一旦出错自动回滚，绝不伤及母带分毫。
 
 ---
 
 ## 🚀 30 秒极速上手
 
 ### 1. 环境准备
-无需安装任何外部黑盒或庞大运行库，基于纯 Python 原生打造，体积仅数兆：
+基于纯 Python 核心依赖（`mutagen` 等）打造，日常运行无需复杂外部依赖：
 ```bash
 pip install -r requirements.txt
 ```
@@ -58,39 +58,47 @@ pip install -r requirements.txt
 本项目提供两大核心工具，满足从“日常无脑修补”到“发烧级标准化治理”的不同需求：
 
 #### 🛠️ 工具一：`process_song.py` —— 全自动日常修补神器
-*适合场景：刚下载了新专辑、歌曲缺少封面与歌词、或者想让 AI 自动给绝版老歌打轴。*
+*适合场景：新下载歌曲缺少封面与歌词、需要规范标签或利用本地 AI 给绝版老歌打轴。*
+
+> **安全契约**：默认在安全临时副本中更新内嵌标签，校验一致后原子替换；`--no-tags` 仅生成外部歌词，绝不触碰音频标签；`--lyrics-only` 仅更新内嵌歌词帧，保护已有人工元数据。
 
 ```bash
 # 1. 最常用的标准处理：自动找逐字歌词 + 抓 1000px 封面 + 洗规范标签 + 导出 .lrc/.spl
-python scripts/process_song.py "周杰伦 - 晴天.flac"
+# （文件名推荐按「歌名 - 歌手.ext」命名，便于无可靠标签时自动回退提取）
+python scripts/process_song.py "晴天 - 周杰伦.flac"
 
 # 2. 批量处理：一键扫描整个音乐文件夹（自动递归子目录）
 python scripts/process_song.py "/path/to/your/music/"
 
-# 3. 纯歌词零污染模式：只下载歌词文件（.lrc/.spl），完全不碰原音频
-python scripts/process_song.py "歌曲.flac" --no-tags
+# 3. 纯歌词模式：只下载外部歌词文件（.lrc/.spl），完全不改音频内嵌标签
+python scripts/process_song.py "晴天 - 周杰伦.flac" --no-tags
 
-# 4. 保护手填信息：只补歌词，绝不动你原本手填的标题/歌手/封面
-python scripts/process_song.py "歌曲.flac" --lyrics-only
+# 4. 保护手填信息：只补内嵌歌词与外部歌词，绝不动你原本手填的标题/歌手/封面
+python scripts/process_song.py "晴天 - 周杰伦.flac" --lyrics-only
 
 # 5. 绝版老歌抢救：开启本地 GPU 深度声学打轴（自动分离人声并卡点）
 python scripts/process_song.py "绝版老歌.flac" --force-gpu
 
 # 6. 自带纯文本歌词，让 AI 严格按照你给的词去对齐打轴
-python scripts/process_song.py "歌曲.flac" --lyrics-file "我的歌词.txt"
+python scripts/process_song.py "绝版老歌.flac" --lyrics-file "我的歌词.txt"
 ```
 
-#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.2)
-*适合场景：本地已有双格式歌词但对齐混乱、开头结尾夹带长串制作名单、需要为发烧播放器生成单行标准 Apple TTML 的严苛场景。*
+#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.3)
+*适合场景：本地已有双格式歌词但对齐混乱、夹带长串制作名单、需要为发烧播放器生成标准 Apple TTML 与 ELRC 的严苛场景。*
+
+> **安全契约**：`--in-place` 已被显式禁用；标准化输出必须指定独立 `--output-dir`，已有同名文件绝不覆盖；`--mode audit` 为只读基线审计，不修改任何文件。
 
 ```bash
 # 1. 只读基线审计：双格式歌词逐字比对，报告时间偏差与格式故障，不做任何文件改动
 python scripts/standardize_song.py "歌曲.flac" --mode audit
 
-# 2. 安全标准化治理：全曲剥离制作署名、规划前奏流光、输出 3 位小数规范 ELRC 与 TTML
+# 2. 导出 JSON 审计报告：只读分析并输出结构化审计结果
+python scripts/standardize_song.py "歌曲.flac" --mode audit --report "审计报告.json"
+
+# 3. 安全标准化治理：全曲剥离制作署名、规划前奏流光、输出 3 位小数规范 ELRC 与 W3C TTML
 python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir "/path/to/output/"
 
-# 3. 标准化并生成内嵌标准标签的音频工作副本（原音频绝不原地覆盖）
+# 4. 标准化并生成内嵌标准标签的音频工作副本（FLAC/MP3/WAV，含音频数据流前后不可变校验）
 python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir "/path/to/output/" --write-tags
 ```
 
@@ -127,6 +135,17 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 [00:18.45]喜欢那样
 ```
 
+### 📐 TTML 时间格式规范与结构化兼容策略 (v1.8.3)
+
+为了消除跨系统解析歧义并严守“歌词与时间轴绝不静默丢失”的安全底线，项目采用明确的 TTML 输出 profile 与结构化兼容策略：
+
+1. **三段时钟输出标准**：所有新导出的 Apple TTML 标签严格使用 W3C TTML1 §10.3 规定的 `HH:MM:SS.mmm` 标准三段时钟格式（如 `begin="00:01:23.456"`），杜绝两段式在跨平台解析时的混淆；
+2. **输入宽容与历史兼容**：兼容解析 Apple Music / AMLL 社区历史两段式时钟（`01:23.456`）及以秒为单位的时钟偏移格式（`12.345s`），在读取阶段无损归一化为 Canonical 毫秒基准；
+3. **输出 Profile 范围声明**：本项目验证的是所选输出 Profile 与 Apple Music、AMLL 及各类现代流光播放器的实际渲染兼容性，并非 W3C/Apple 全量 XSD 认证；
+4. **可审计的结构化阻断（绝不静默吞词）**：
+   - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
+   - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断，拒绝生成残缺输出。
+
 ---
 
 ## 🏛️ 工作原理与架构设计
@@ -149,18 +168,20 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 
 ## 💽 音频格式支持与安全保障
 
-| 常见音频格式 | 扩展名 | 歌词存储规范 | 封面存储规范 | 安全写入机制 |
+| 常见音频格式 | 扩展名 | `process_song` 日常修补机制 | `standardize_song` 标准化工作副本机制 | 歌词 / 封面规范 |
 | :---: | :---: | :---: | :---: | :---: |
-| **FLAC** | `.flac` | `LYRICS` 标签 | `METADATA_BLOCK_PICTURE` | 写入独立副本，读回校验一致才交付 |
-| **MP3** | `.mp3` | `USLT` 单帧（防播放器冲突） | `APIC` (Front Cover) | 写入独立副本，已有损坏 ID3 拒绝覆写 |
-| **M4A / ALAC** | `.m4a`, `.mp4` | `©lyr` 标签 | `covr` 标签 | 写入独立副本，读回校验一致才交付 |
-| **WAV** | `.wav` | ID3 Chunk (`USLT`) | ID3 Chunk (`APIC`) | 写入独立副本，音频数据块绝对零损 |
+| **FLAC** | `.flac` | 临时副本原子替换，读回校验一致才交付 | 独立输出目录，音频流前后摘要严格比对防损坏 | `LYRICS` / `METADATA_BLOCK_PICTURE` |
+| **MP3** | `.mp3` | 独立写回；损坏 ID3 拒绝覆写 | 独立输出目录，音频流前后摘要严格比对防损坏 | `USLT` 单帧 / `APIC` (Front Cover) |
+| **WAV** | `.wav` | 独立写回；PCM 音频块保护 | 独立输出目录，data 音频流前后摘要严格比对防损坏 | ID3 Chunk (`USLT`) / ID3 Chunk (`APIC`) |
+| **M4A / ALAC** | `.m4a`, `.mp4` | 临时副本原子替换，读回校验一致才交付 | *标准化工作副本回写尚未纳入验证（保持只读/阻断）* | `©lyr` / `covr` |
 
 > [!IMPORTANT]
 > **绝对不可越过的安全红线**：
-> 1. 为保护您的母盘曲库，`--in-place` 原地改写已被显式禁用；
-> 2. 标准化写出必须指定独立的输出目录，且**绝对拒绝覆盖任何已存在的同名文件**；
-> 3. 写回过程中如果遇到任何错误（例如磁盘写满），程序会自动将本次创建的文件干净删除回滚，绝不留下半成品垃圾。
+> 1. **双入口安全契约明确分离**：
+>    - `process_song.py`：默认允许在安全临时副本中更新内嵌标签，校验成功后原子替换；`--no-tags` 纯歌词模式绝不碰音频内嵌标签；`--lyrics-only` 仅更新歌词帧，保护已有人工元数据。
+>    - `standardize_song.py`：`--in-place` 原地改写已被显式禁用；必须通过 `--output-dir` 指定独立输出目录，且**绝对拒绝覆盖任何已存在的同名文件**；未验证容器（如 M4A）不执行标准化写回。
+> 2. **音频主体流不可变校验 (v1.8.3)**：FLAC、MP3、WAV 写入前后自动计算容器音频帧/PCM 数据流哈希，一旦检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若音频边界不可判定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。
+> 3. **事务失败自动干净回滚**：写回或报告输出过程中如果遇到任何错误（例如磁盘写满或权限不足），程序会自动将本次创建的文件干净删除回滚，绝不留下半成品垃圾，更不损坏源文件。
 
 ---
 
@@ -195,10 +216,11 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 本项目配备了严谨的离线工程测试套件，涵盖各种冷门编码、极端时间戳、双声部念白与边界容器：
 
 ```bash
-# 1. 完整开发仓库测试：运行全部 45 个套件（653 项用例：642 通过 / 11 条件跳过，0 失败）
+# 1. 完整开发仓库测试：运行全部 48 个套件（674 项用例：663 通过 / 11 条件跳过，0 失败）
+# （注：11 条跳过为可选 GPU/声学依赖未加载时的预期条件跳过，核心安全与格式测试 0 跳过）
 python -B tests/run_all.py
 
-# 2. 纯净分发安装包测试：运行 40 个套件（615 项用例：纯 CPU 604 通过 / 11 跳过；GPU 容器 614 通过 / 1 跳过）
+# 2. 纯净分发安装包测试：运行全部 43 个套件（离线分发包实测口径）
 python -B tests/run_all.py
 
 # 3. 快速运行指定模块测试
@@ -209,6 +231,13 @@ python -B tests/run_all.py -k canto
 ---
 
 ## 📜 版本更新历史 (Changelog)
+
+### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
+- **TTML 时间输出三段式标准化**：输出严格遵循 W3C `HH:MM:SS.mmm` 时钟格式，消除两段式歧义；输入兼容历史 `MM:SS.mmm` 与秒级偏移；
+- **div 边界推导与结构化阻断**：无声明边界的单 `div` 自动推导子行起止并记录 `DIV_BOUNDARY_INFERRED`；对 `x-bg`、`x-roman`、Ruby、多 `div` 及相对时序模型实施严格结构化阻断，杜绝静默吞词；
+- **大文件流式哈希与音频流不可变验证**：替换全量读入为分块流式哈希；FLAC/MP3/WAV 容器写回前后执行容器级音频帧数据流摘要比对，杜绝音频数据意外篡改；
+- **GitHub CI 自动发现与 Windows 硬门禁**：Linux CI 矩阵扩展至 Python 3.10 与 3.13 并改为自动发现全部测试套件；Windows 烟测全面升级为核心阻塞门禁（`continue-on-error: false`）；
+- **文档与安全契约规范化**：分离 `process_song` 与 `standardize_song` 的安全契约，纠正文件名后备约定示例，禁用 `--in-place` 声明与清除超额表述。
 
 ### v1.8.2 (2026-11-10) —— 双格式标准化引擎与 Canonical 全面升级
 - **双格式标准化中枢**：构建独立的 Canonical Lyrics 标准数据模型与双向结构对齐审计器，提供行级/字级 ≤ 1ms 毫秒级一致性保障；

@@ -1,12 +1,9 @@
-name: Windows CPU smoke (observational, H17)
+name: Windows core blocking gate (v1.8.3)
 
-# 独立于 Ubuntu 主门禁的 Windows CPU 观察 job。
-# - 不计入 25 套件 / 434 用例主基线，主基线只指 tests/run_all.py 的 Ubuntu 离线结果。
-# - 观察期允许 continue-on-error，但结果必须写入 Job Summary 并输出 ::warning::，
-#   避免失败只埋在日志深处。
-# - 复审期限：达到第 10 次运行 或 第 14 个日历日（先到者），维护者必须书面决定
-#   「转阻断 / 批准延长并解释 / 修复失败」。本文件存在不代表该复审已执行。
-# - M4A 写回不因本 job 而变为已验证，仍为 NOT_VERIFIED。
+# Windows 平台关键能力硬门禁 (continue-on-error: false)
+# 覆盖缓存路径回退、ISRC 容器门禁、标准流程、标准化 CLI、
+# FLAC/MP3/WAV 容器回读、音频流主体不变性、TTML 外部规范与结构兼容性。
+# M4A 写回因缺少同级别物理断言仍保留为 NOT_VERIFIED。
 
 on:
   push:
@@ -15,7 +12,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows-smoke:
+  windows-core-gate:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,54 +24,81 @@ jobs:
 
       - name: Cache paths (Windows)
         id: cache_paths
-        continue-on-error: true
         shell: pwsh
-        run: python tests/test_cache_paths.py *>&1 | Tee-Object -FilePath cache_paths.log
+        run: python -B tests/test_cache_paths.py *>&1 | Tee-Object -FilePath cache_paths.log
 
       - name: ISRC and container safety (Windows)
         id: isrc
-        continue-on-error: true
         shell: pwsh
-        run: python tests/test_isrc_integration.py *>&1 | Tee-Object -FilePath isrc.log
+        run: python -B tests/test_isrc_integration.py *>&1 | Tee-Object -FilePath isrc.log
 
       - name: Process song flow (Windows)
         id: process_song
-        continue-on-error: true
         shell: pwsh
-        run: python tests/test_process_song.py *>&1 | Tee-Object -FilePath process_song.log
+        run: python -B tests/test_process_song.py *>&1 | Tee-Object -FilePath process_song.log
 
-      - name: Summarise Windows smoke
+      - name: Standardization CLI (Windows)
+        id: standard_cli
+        shell: pwsh
+        run: python -B tests/test_standard_cli.py *>&1 | Tee-Object -FilePath standard_cli.log
+
+      - name: Container tags readback (Windows)
+        id: container_tags
+        shell: pwsh
+        run: python -B tests/test_standard_container_tags.py *>&1 | Tee-Object -FilePath container_tags.log
+
+      - name: Audio stream invariance (Windows)
+        id: stream_invariance
+        shell: pwsh
+        run: python -B tests/test_audio_stream_invariance.py *>&1 | Tee-Object -FilePath stream_invariance.log
+
+      - name: TTML external conformance (Windows)
+        id: ttml_conformance
+        shell: pwsh
+        run: python -B tests/test_ttml_external_conformance.py *>&1 | Tee-Object -FilePath ttml_conformance.log
+
+      - name: TTML structural compatibility (Windows)
+        id: ttml_structural
+        shell: pwsh
+        run: python -B tests/test_ttml_structural_compat.py *>&1 | Tee-Object -FilePath ttml_structural.log
+
+      - name: Post-review hardening regression (Windows)
+        id: postreview
+        shell: pwsh
+        run: python -B tests/test_v182_postreview.py *>&1 | Tee-Object -FilePath postreview.log
+
+      - name: Summarise Windows core gate
         if: always()
         shell: pwsh
         env:
-          OUTCOME_CACHE: ${{ steps.cache_paths.outcome }}
-          OUTCOME_ISRC: ${{ steps.isrc.outcome }}
-          OUTCOME_PROCESS: ${{ steps.process_song.outcome }}
           RUN_SHA: ${{ github.sha }}
         run: |
-          $rows = @(
-            [pscustomobject]@{ Name = "test_cache_paths.py";      Outcome = $env:OUTCOME_CACHE;   File = "cache_paths.log" },
-            [pscustomobject]@{ Name = "test_isrc_integration.py"; Outcome = $env:OUTCOME_ISRC;    File = "isrc.log" },
-            [pscustomobject]@{ Name = "test_process_song.py";     Outcome = $env:OUTCOME_PROCESS; File = "process_song.log" }
+          $suites = @(
+            "cache_paths.log",
+            "isrc.log",
+            "process_song.log",
+            "standard_cli.log",
+            "container_tags.log",
+            "stream_invariance.log",
+            "ttml_conformance.log",
+            "ttml_structural.log",
+            "postreview.log"
           )
           $out = @()
-          $out += "## Windows CPU smoke (observational)"
+          $out += "## Windows Core Blocking Gate Results"
           $out += ""
           $out += "- Run SHA: $($env:RUN_SHA)"
-          $out += "- Not part of the Ubuntu offline baseline (25 suites / 434 cases)."
+          $out += "- All suites executed with strict blocking gate (continue-on-error: false)."
           $out += "- M4A tag write-back remains NOT_VERIFIED."
           $out += ""
-          $out += "| suite | step outcome | PASS | FAIL | SKIP |"
-          $out += "| --- | --- | --- | --- | --- |"
-          foreach ($r in $rows) {
+          $out += "| suite | PASS | FAIL | SKIP |"
+          $out += "| --- | --- | --- | --- |"
+          foreach ($file in $suites) {
             $log = ""
-            if (Test-Path $r.File) { $log = Get-Content $r.File -Raw }
+            if (Test-Path $file) { $log = Get-Content $file -Raw }
             $pass = ([regex]::Matches($log, "PASS")).Count
             $fail = ([regex]::Matches($log, "FAIL")).Count
             $skip = ([regex]::Matches($log, "SKIP")).Count
-            $out += "| $($r.Name) | $($r.Outcome) | $pass | $fail | $skip |"
-            if ($r.Outcome -ne "success") {
-              Write-Host "::warning title=Windows smoke::$($r.Name) outcome=$($r.Outcome) fail=$fail"
-            }
+            $out += "| $file | $pass | $fail | $skip |"
           }
           $out | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

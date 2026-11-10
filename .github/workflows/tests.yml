@@ -8,100 +8,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Parsers
-        run: python tests/test_parsers.py
-      - name: NetEase YRC verbatim
-        run: python tests/test_netease_yrc.py
-      - name: QQ QRC verbatim
-        run: python tests/test_qq_qrc.py
-      - name: Pipeline
-        run: python tests/test_pipeline.py
-      - name: Safety
-        run: python tests/test_m1_safety.py
-      - name: GPU plain-text fallback
-        run: python tests/test_gpu_plain.py
-      - name: Kugou duration gates
-        run: python tests/test_kugou_gates.py
-      - name: Converter prelude credits
-        run: python tests/test_converter_prelude.py
-      - name: Apple TTML ladder
-        run: python tests/test_apple_ttml.py
-      - name: lrc.red TTML and ISRC ladder
-        run: python tests/test_lrc_red.py
-      - name: Cover art ladder
-        run: python tests/test_cover_art.py
-      - name: Acoustic pipeline
-        run: python tests/test_acoustic_pipeline.py
-      - name: Jyutping G2P
-        run: python tests/test_jyutping.py
-      - name: Language routing
-        run: python tests/test_lang_detect.py
-      - name: Cantonese CTC align
-        run: python tests/test_canto_align.py
-      - name: CLI & End-to-end
-        run: python tests/test_cli.py
-      - name: Text utils & KRC decrypt
-        run: python tests/test_text_utils.py
-      - name: Process song orchestration
-        run: python tests/test_process_song.py
-      - name: Line axis calibration
-        run: python tests/test_line_axis.py
-      - name: Mandarin CTC align
-        run: python tests/test_acoustic_zh.py
-      - name: Acoustic gate
-        run: python tests/test_gate.py
-      - name: Quality control
-        run: python tests/test_qc.py
-      - name: v1.8.1 reproduction suite
-        run: python tests/test_v181_repro.py
-      - name: ISRC integration & container safety
-        run: python tests/test_isrc_integration.py
-      - name: Cache paths & drive isolation
-        run: python tests/test_cache_paths.py
-      - name: Release build determinism (H01)
-        run: python tests/test_release_build.py
-      - name: Leak guard synthetic rules (H02)
-        run: python tests/test_leak_guard.py
-      - name: lrc.red 429 single-count & entry coverage (H05)
-        run: python tests/test_lrc_red_429.py
-      - name: TTML timing triple & main-p denominator (H09/H10)
-        run: python tests/test_ttml_timing.py
-      - name: Version keyword ASCII boundaries (H04)
-        run: python tests/test_version_guard.py
-      - name: lrc.red search prefilter (H06)
-        run: python tests/test_lrc_red_prefilter.py
-      - name: NetEase year write-back evidence (H07)
-        run: python tests/test_netease_year.py
-      - name: Mirror sync dry-run & prune safety (H03)
-        run: python tests/test_sync_copies.py
-      - name: Process outcome contract (H12/H13)
-        run: python tests/test_process_outcome.py
-      - name: Benchmark script contract (H13, dev-only)
-        run: python tests/test_benchmark_contract.py
-      - name: Release verification entry (H14)
-        run: python tests/test_release_verify.py
-      - name: lrc.red terms compliance (H18)
-        run: python tests/test_lrc_red_terms.py
-      - name: pre-push hook fail-closed (H02)
-        run: python tests/test_prepush_hook.py
-      - name: v1.8.2 standard content cleaner (R2)
-        run: python tests/test_standard_content.py
-      - name: v1.8.2 standard prelude scheduler (R3)
-        run: python tests/test_standard_prelude.py
-      - name: v1.8.2 standard ELRC/TTML roundtrip auditor (R1)
-        run: python tests/test_elrc_ttml_roundtrip.py
-      - name: v1.8.2 standard container tags adapter (R4)
-        run: python tests/test_standard_container_tags.py
-      - name: v1.8.2 standard CLI entry
-        run: python tests/test_standard_cli.py
-      - name: v1.8.2 hardening and fault injection regression
-        run: python tests/test_v182_hardening.py
-      - name: Path & PII leak guard
-        run: python scripts/check_no_leaks.py
+      - name: Run all offline tests (auto-discovery)
+        run: python -B tests/run_all.py -v
+      - name: Leak guard check (public rules)
+        run: python -B scripts/check_no_leaks.py
