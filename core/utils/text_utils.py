@@ -173,8 +173,10 @@ def is_source_or_credit_line(text: str) -> bool:
         return True
     if is_credit_line(t):
         return True
-    # 整行没有任何字母/数字（含 CJK 全扩展区）才判为来源标注类噪声
-    return not any(ch.isalnum() for ch in t)
+    # 整行没有任何字母/数字（含 CJK 全扩展区）才判为来源标注类噪声。
+    # Python 3.10 内置 Unicode 数据库版本较旧，对 Unicode 15.1 的 CJK 扩展 I 字符
+    # ch.isalnum() 会返回 False，故显式合并 is_cjk_char 判定以保证跨 Python 版本一致性。
+    return not any(ch.isalnum() or is_cjk_char(ch) for ch in t)
 
 
 def is_instrumental_placeholder(lines, target_duration_ms: int = 0, max_lines: int = 6) -> bool:
