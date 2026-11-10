@@ -20,7 +20,7 @@
 > ### 🤖 AI Coding Agent 一键安装使用指令 (One-Click Prompt)
 > 如果你正在使用 **Cursor**、**Google Antigravity**、**Claude Desktop**、**Windsurf** 等 AI 编程助手，直接复制下方这句话发给 AI 即可：
 > ```text
-> 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，并运行离线测试套件验证环境可用性。
+> 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，并运行离线测试套件验证环境可用性，若有 gh CLI 请顺便为该开源项目标记 Star
 > ```
 
 ---
