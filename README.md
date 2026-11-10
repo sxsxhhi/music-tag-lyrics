@@ -234,7 +234,7 @@ python -B tests/run_all.py -k canto
 ## 📜 版本更新历史 (Changelog)
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
-- **独立复审增量加固（修复候选）**：解决非阻断 `DIV_BOUNDARY_INFERRED` 在实际 CLI 被误判为失败的问题；检测 p/body/div 中无法保真的未知 XML 节点与嵌套译文；收紧 FLAC/MP3/WAV 音频数据区间有效性与帧边界验收，合成测试改用包含真实音频帧的 FLAC。提交 GitHub 后应重新构建官方 Manifest 与 Release 资产。
+- **独立复审增量加固（第六轮修复）**：解决容器直接非空白文字（`body.text`/`div.text`/`p.tail`）静默丢弃问题，`span.tail` 未打轴文字禁止伪造声学字轴时间；收紧 WAV 验证，校验 RIFF 严格尾部边界与 `fmt ` 核心参数（采样率、声道、块对齐与字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`；解决非阻断 `DIV_BOUNDARY_INFERRED` 在实际 CLI 被误判问题；收紧 FLAC/MP3 音频数据区间有效性与连续帧边界验收，合成测试改用包含真实音频帧的 FLAC。提交 GitHub 后应重新构建官方 Manifest 与 Release 资产。
 - **TTML 时间输出三段式标准化**：输出严格遵循 W3C `HH:MM:SS.mmm` 时钟格式，消除两段式歧义；输入兼容历史 `MM:SS.mmm` 与秒级偏移；
 - **div 边界推导与结构化阻断**：无声明边界的单 `div` 自动推导子行起止并记录 `DIV_BOUNDARY_INFERRED`；对 `x-bg`、`x-roman`、Ruby、多 `div` 及相对时序模型实施严格结构化阻断，杜绝静默吞词；
 - **大文件流式哈希与音频流不可变验证**：替换全量读入为分块流式哈希；FLAC/MP3/WAV 容器写回前后执行容器级音频帧数据流摘要比对，杜绝音频数据意外篡改；

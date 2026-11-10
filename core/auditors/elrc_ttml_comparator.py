@@ -86,6 +86,7 @@ class ParsedWord:
     text:str
     start_ms:int
     end_ms:int
+    trailing_space:str=""
 
 @dataclass
 class ParsedLine:
@@ -169,6 +170,11 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
         return [],(0,0),[ComparisonIssue('XML_SYNTAX_ERROR',f'Invalid XML: {type(exc).__name__}')]
     if root.tag not in (f'{{{NT}}}tt', 'tt'):
         return [],(0,0),[ComparisonIssue('TTML_ROOT_INVALID', 'Expected TTML <tt> document root')]
+    if root.text and root.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <tt> is unsupported'))
+    for child in root:
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after root child is unsupported'))
 
     # Timing model checks: reject unsupported dur on div/p/span or timeContainer="seq"
     for elem in root.iter():
@@ -206,20 +212,28 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
     if len(bodies) != 1:
         return [],(0,0),problems+[ComparisonIssue('BODY_STRUCTURE_INVALID', 'Exactly one direct TTML body is required')]
     body = bodies[0]
+    if body.text and body.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <body> is unsupported'))
     for child in body:
         if child.tag not in (f'{{{NT}}}div', 'div'):
             problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
                                             'Unsupported direct body child (only div is modeled)'))
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after body child is unsupported'))
     divs=body.findall('./{*}div')
     if not divs:
         return [],(0,0),problems+[ComparisonIssue('DIV_MISSING','No TTML div')]
     if len(divs)>1:
         problems.append(ComparisonIssue('MULTI_DIV_UNSUPPORTED','Multi-div input is unsupported'))
     div=divs[0]
+    if div.text and div.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <div> is unsupported'))
     for child in div:
         if child.tag not in (f'{{{NT}}}p', 'p'):
             problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
                                             'Unsupported div child (only direct p is modeled)'))
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after div child is unsupported'))
 
     has_begin = 'begin' in div.attrib
     has_end = 'end' in div.attrib
@@ -286,27 +300,42 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
                 problems.append(ComparisonIssue('UNSUPPORTED_SPAN_ROLE', f'Unrecognized span role: {role}', key))
 
         pre=p.text or ''
-        words=[];inline=[];pieces=[pre]
-        for s in p.findall('./{*}span'):
-            role=s.get('{http://www.w3.org/ns/ttml#metadata}role') or s.get('role') or ''
-            if role=='x-translation':
-                inline.append(''.join(s.itertext()).strip());continue
-            elif role=='x-bg':
-                problems.append(ComparisonIssue('BACKGROUND_VOCAL_UNSUPPORTED', 'x-bg background vocal track is unsupported', key))
-                continue
-            elif role=='x-roman':
-                problems.append(ComparisonIssue('AUXILIARY_TRACK_UNSUPPORTED', 'x-roman auxiliary track is unsupported', key))
-                continue
+        words=[];inline=[];pieces=[]
+        spans = p.findall('./{*}span')
+        if spans:
+            if pre.strip():
+                is_cue = bool(re.match(r'^(\[[^\]]+\]|\([^\)]+\)|（[^）]+）|[^:：\s]{1,10}[：:])\s*$', pre.strip()))
+                if not is_cue:
+                    problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', f'Untimed text before first span lacks word timing: {pre.strip()}', key))
+            pieces.append(pre)
+            for s in spans:
+                if s.tail and s.tail.strip():
+                    problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', f'Untimed text after span lacks word timing: {s.tail.strip()}', key))
 
-            try:
-                wst=_time_ttml(s.get('begin',''), profile=profile)
-                wen=_time_ttml(s.get('end',''), profile=profile)
-            except ValueError:
-                problems.append(ComparisonIssue('WORD_TIME_INVALID','Invalid span time',key))
-                continue
-            if wen<=wst:problems.append(ComparisonIssue('WORD_TIME_INVALID','Nonpositive span',key))
-            txt=(s.text or '')+(s.tail or '')
-            words.append(ParsedWord(txt,wst,wen));pieces.append(txt)
+                role=s.get('{http://www.w3.org/ns/ttml#metadata}role') or s.get('role') or ''
+                if role=='x-translation':
+                    inline.append(''.join(s.itertext()).strip());continue
+                elif role=='x-bg':
+                    problems.append(ComparisonIssue('BACKGROUND_VOCAL_UNSUPPORTED', 'x-bg background vocal track is unsupported', key))
+                    continue
+                elif role=='x-roman':
+                    problems.append(ComparisonIssue('AUXILIARY_TRACK_UNSUPPORTED', 'x-roman auxiliary track is unsupported', key))
+                    continue
+
+                try:
+                    wst=_time_ttml(s.get('begin',''), profile=profile)
+                    wen=_time_ttml(s.get('end',''), profile=profile)
+                except ValueError:
+                    problems.append(ComparisonIssue('WORD_TIME_INVALID','Invalid span time',key))
+                    continue
+                if wen<=wst:problems.append(ComparisonIssue('WORD_TIME_INVALID','Nonpositive span',key))
+                word_txt = s.text or ''
+                words.append(ParsedWord(word_txt,wst,wen,trailing_space=s.tail or ''))
+                pieces.append(word_txt)
+                if s.tail:
+                    pieces.append(s.tail)
+        else:
+            pieces.append(pre)
 
         if key in trans and inline and trans[key]!=''.join(inline):
             problems.append(ComparisonIssue('TRANSLATION_CONFLICT','Head/inline translations conflict',key))

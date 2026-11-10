@@ -306,6 +306,128 @@ def test_f27_two_byte_flac_sync_is_not_a_complete_audio_frame():
         assert compute_audio_stream_digest(str(path))[0] != 'VERIFIED'
 
 
+def test_f28_direct_nonwhitespace_in_body_or_div_or_ptail_blocks():
+    # Body text, div text, and p tail non-whitespace text must block
+    # rather than silently disappearing.
+    div_begin = '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"><body><div begin="00:00:15.000" end="00:00:17.000">'
+    line = '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1"><span begin="00:00:15.000" end="00:00:17.000">测试文本</span></p>'
+    div_end = '</div></body></tt>'
+
+    # 1. Div text
+    raw_div = div_begin + '被遗漏的正文' + line + div_end
+    _, _, issues_div = parse_ttml_structural(raw_div)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues_div)
+    assert not compare_elrc_ttml(ELRC, raw_div).passed
+
+    # 2. Body text
+    raw_body = '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"><body>外层正文<div begin="00:00:15.000" end="00:00:17.000">' + line + div_end
+    _, _, issues_body = parse_ttml_structural(raw_body)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues_body)
+
+    # 3. P tail
+    raw_tail = div_begin + line + '行后残余文本' + div_end
+    _, _, issues_tail = parse_ttml_structural(raw_tail)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues_tail)
+
+
+def test_f29_span_tail_nonwhitespace_must_block_without_inventing_word_time():
+    div_begin = '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"><body><div begin="00:00:15.000" end="00:00:17.000">'
+    line = '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1"><span begin="00:00:15.000" end="00:00:17.000">测试文本</span>未提供逐字时间的文本</p>'
+    div_end = '</div></body></tt>'
+    raw = div_begin + line + div_end
+    _, _, issues = parse_ttml_structural(raw)
+    assert any(x.blocking and x.code == 'UNSUPPORTED_TEXT_NODE' for x in issues)
+
+
+def test_f30_wav_trailing_partial_riff_chunk_rejected():
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / 'sound.wav'
+        _make_wav(p)
+        assert compute_audio_stream_digest(str(p))[0] == 'VERIFIED'
+        b = bytearray(p.read_bytes())
+        b += b'JUNK'
+        b[4:8] = (len(b) - 8).to_bytes(4, 'little')
+        p.write_bytes(b)
+        assert compute_audio_stream_digest(str(p))[0] != 'VERIFIED'
+
+
+def test_f31_wav_fmt_validation_pcm_and_extensible():
+    import struct
+    with tempfile.TemporaryDirectory() as td:
+        # Invalid: sample_rate = 0
+        p = Path(td) / 'bad_sr.wav'
+        _make_wav(p)
+        b = bytearray(p.read_bytes())
+        b[24:28] = b'\x00\x00\x00\x00'
+        p.write_bytes(b)
+        assert compute_audio_stream_digest(str(p))[0] != 'VERIFIED'
+
+        # Invalid: block_align mismatch
+        p_ba = Path(td) / 'bad_ba.wav'
+        _make_wav(p_ba)
+        b = bytearray(p_ba.read_bytes())
+        b[32:34] = b'\x05\x00'
+        p_ba.write_bytes(b)
+        assert compute_audio_stream_digest(str(p_ba))[0] != 'VERIFIED'
+
+        # Valid: WAVE_FORMAT_EXTENSIBLE with PCM subformat
+        p_ext = Path(td) / 'extensible.wav'
+        fmt_data = struct.pack(
+            '<HHIIHH',
+            0xFFFE,   # WAVE_FORMAT_EXTENSIBLE
+            2,        # 2 channels
+            44100,    # sample_rate
+            176400,   # byte_rate (44100 * 4)
+            4,        # block_align (2 * 16 // 8)
+            16        # bits_per_sample
+        )
+        # cbSize=22, valid_bits=16, channel_mask=3, subformat=KSDATAFORMAT_SUBTYPE_PCM
+        ext_extra = struct.pack(
+            '<HHI',
+            22, 16, 3
+        ) + b'\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71'
+        fmt_chunk = b'fmt ' + struct.pack('<I', len(fmt_data + ext_extra)) + fmt_data + ext_extra
+        pcm_payload = b'\x00\x00\x00\x00' * 100
+        data_chunk = b'data' + struct.pack('<I', len(pcm_payload)) + pcm_payload
+        body = b'WAVE' + fmt_chunk + data_chunk
+        p_ext.write_bytes(b'RIFF' + struct.pack('<I', len(body)) + body)
+        assert compute_audio_stream_digest(str(p_ext))[0] == 'VERIFIED'
+
+
+def test_f32_p0_cli_end_to_end_rejects_missing_text_without_artifacts():
+    div_begin = '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"><body><div begin="00:00:15.000" end="00:00:17.000">'
+    line = '<p begin="00:00:15.000" end="00:00:17.000" itunes:key="L1"><span begin="00:00:15.000" end="00:00:17.000">测试文本</span></p>'
+    div_end = '</div></body></tt>'
+    raw = div_begin + '被遗漏的正文' + line + div_end
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / 'song.wav'
+        _make_wav(p)
+        p.with_suffix('.ttml').write_text(raw, encoding='utf-8')
+        dest = Path(td) / 'output'
+        result = standardize_single_song(str(p), mode='standardize', output_dir=str(dest), no_tags=True)
+        assert result['status'] != 'PASS'
+        assert not list(dest.glob('song.*'))
+
+
+def test_f33_valid_whitespace_inter_word_span_tail_preserved():
+    # Valid spaces between word spans must remain intact and parse cleanly.
+    raw = (
+        '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">'
+        '<body><div begin="00:00:10.000" end="00:00:14.000">'
+        '<p begin="00:00:10.000" end="00:00:14.000" itunes:key="L1">'
+        '<span begin="00:00:10.000" end="00:00:12.000">Hello</span> '
+        '<span begin="00:00:12.000" end="00:00:14.000">world</span>'
+        '</p></div></body></tt>'
+    )
+    lines, _, issues = parse_ttml_structural(raw)
+    assert not any(x.blocking for x in issues)
+    assert lines[0].text == 'Hello world'
+    assert len(lines[0].words) == 2
+    assert lines[0].words[0].text == 'Hello'
+    assert lines[0].words[1].text == 'world'
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(run(globals()))

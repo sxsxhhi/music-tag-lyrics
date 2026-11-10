@@ -418,8 +418,8 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - **TTML 时间规范与结构化阻断 (v1.8.3)**：
   - 输出格式强制 W3C `HH:MM:SS.mmm`；输入兼容历史两段式 `MM:SS.mmm` 与秒级偏移 `12.345s`；
   - 单 `div` 缺省边界时推导子行范围并标记**非阻断** `DIV_BOUNDARY_INFERRED`，实际 audit/standardize 入口必须保留该审计提示而不得误标为 `INPUT_PARSE_FAILED`；若存在时序倒挂或冲突则阻断 `DIV_TIME_CONFLICT`；
-  - 复杂 TTML 拓扑结构化阻断：对背景声部 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div`（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`）坚决阻断。**所有不受支持的 p/body/div 子元素与嵌套译文**一律报结构化阻断，不能因两个格式共同漏字而得到错误 PASS。
+  - 复杂 TTML 拓扑结构化阻断：对背景声部 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div`（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`）坚决阻断。**所有不受支持的 p/body/div 子元素、容器直接非空白文本节点（body.text/div.text/p.tail）与嵌套译文**一律报结构化阻断，`span.tail` 未对齐文本绝不伪造声学字轴时间；不能因两个格式共同漏字而得到错误 PASS。
 - **流式哈希与音频主体不可变验证 (v1.8.3)**：
   - 大音频文件哈希全面采用分块流式哈希（`sha256_file`），防止超大文件耗尽系统内存；
-  - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
+  - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。WAV 严密校验 RIFF 尾部边界与 `fmt ` 基础参数（采样率、声道、块对齐、字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`，尾部残块与非法参数安全拒绝。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
 - 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。

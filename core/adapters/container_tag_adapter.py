@@ -158,7 +158,36 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                 if name == b"fmt ":
                     if size < 16:
                         return unverified
+                    fmt_bytes = f.read(16)
+                    audio_format = int.from_bytes(fmt_bytes[0:2], "little")
+                    channels = int.from_bytes(fmt_bytes[2:4], "little")
+                    sample_rate = int.from_bytes(fmt_bytes[4:8], "little")
+                    byte_rate = int.from_bytes(fmt_bytes[8:12], "little")
+                    block_align = int.from_bytes(fmt_bytes[12:14], "little")
+                    bits_per_sample = int.from_bytes(fmt_bytes[14:16], "little")
+                    if channels == 0 or sample_rate == 0 or block_align == 0 or bits_per_sample == 0:
+                        return unverified
+                    expected_block_align = (channels * bits_per_sample + 7) // 8
+                    if block_align != expected_block_align:
+                        return unverified
+                    if byte_rate != sample_rate * block_align:
+                        return unverified
+                    if audio_format not in (1, 3, 0xFFFE):
+                        return unverified
+                    if audio_format == 0xFFFE:
+                        if size < 40:
+                            return unverified
+                        ext_bytes = f.read(24)
+                        sub_format = int.from_bytes(ext_bytes[8:10], "little")
+                        if sub_format not in (1, 3):
+                            return unverified
+                        f.seek(size - 40, os.SEEK_CUR)
+                    else:
+                        f.seek(size - 16, os.SEEK_CUR)
+                    if size & 1:
+                        f.seek(1, os.SEEK_CUR)
                     seen_fmt = True
+                    continue
                 if name == b"data":
                     if not seen_fmt or size == 0:
                         return unverified
@@ -177,7 +206,9 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                     f.seek(size + (size & 1), os.SEEK_CUR)
                 if f.tell() > riff_end:
                     return unverified
-            return ("VERIFIED", h.hexdigest()) if data_chunks else unverified
+            if f.tell() != riff_end:
+                return unverified
+            return ("VERIFIED", h.hexdigest()) if (data_chunks and seen_fmt) else unverified
     except (OSError, ValueError, OverflowError):
         return unverified
 
