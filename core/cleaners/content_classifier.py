@@ -133,6 +133,9 @@ def classify_line_role(
     line_index: int = 0,
     total_lines: int = 1,
     has_words: bool = False,
+    start_ms: Optional[int] = None,
+    explicit_display_title: bool = False,
+    production_context_confirmed: bool = False,
 ) -> Tuple[LineRole, Dict[str, Any]]:
     """对单行歌词文本执行深度语义角色分类。
     
@@ -188,6 +191,10 @@ def classify_line_role(
     # 6. 词曲署名提取与分类
     credit_pairs = _split_credit_tokens(clean)
     if credit_pairs:
+        # A long prose-like value on an unaligned row is ambiguous, not
+        # evidence of a staff member. Preserve it instead of losing lyrics.
+        if not has_words and any(len(val) >= 9 for _, val in credit_pairs):
+            return LineRole.UNKNOWN, {"reason": "AMBIGUOUS_CREDIT_OR_SPOKEN_CONTENT"}
         lyricists = []
         composers = []
         for kind, val in credit_pairs:
@@ -215,6 +222,12 @@ def classify_line_role(
     if m_prod:
         prod_role = m_prod.group(1).strip()
         prod_staff = m_prod.group(2).strip()
+        # Isolated thanks are particularly likely to be sung prose or a
+        # spoken dedication. Do not delete without adjacent staff context.
+        if re.search(r"鸣谢|鳴謝|感謝|感谢|thanks", prod_role, re.IGNORECASE) and not production_context_confirmed:
+            return LineRole.UNKNOWN, {"reason": "ISOLATED_THANKS_REQUIRE_REVIEW"}
+        if not has_words and len(prod_staff) >= 12 and not production_context_confirmed:
+            return LineRole.UNKNOWN, {"reason": "PROSE_LIKE_STAFF_ROW_REQUIRE_REVIEW"}
         return LineRole.PRODUCTION_CREDIT, {
             "prod_role": prod_role,
             "prod_staff": prod_staff,
@@ -281,10 +294,20 @@ def classify_line_role(
             or (artist_norm and clean_norm in (f"{title_norm} - {artist_norm}", f"{artist_norm} - {title_norm}"))
         )
         if is_title_match:
-            if not has_words:
-                return LineRole.TITLE, {"match_type": "UNTIMED_TITLE_METADATA"}
-            # Genuinely sung title with verbatim words must be preserved as singing line
-            return LineRole.SINGING, {"clean": clean, "sung_title": True}
+            if has_words:
+                # Positive acoustic evidence always beats a metadata-like title.
+                return LineRole.SINGING, {"clean": clean, "sung_title": True}
+            if explicit_display_title:
+                # Only an actual prelude/display marker is sufficient proof.
+                # A lyric beginning at 0ms may genuinely sing its own title.
+                return LineRole.TITLE, {"match_type": "CONFIRMED_DISPLAY_TITLE"}
+            # Without word stamps there is no evidence that a time-stamped
+            # title-looking line is merely visual metadata. Never delete it.
+            return LineRole.SINGING, {
+                "clean": clean,
+                "ambiguous_untimed_title": True,
+                "reason": "UNTIMED_TITLE_MAY_BE_SUNG",
+            }
 
     return LineRole.SINGING, {"clean": clean}
 
@@ -381,30 +404,31 @@ def classify_and_clean_all_lines(
                     classified_lines.append((t_line, {"is_attached_translation": True}))
                     continue
                 elif strong_language_evidence:
-                    # Language difference + equal timestamp is ambiguous (could be simultaneous vocals/harmony).
-                    # If mid-song (st_ms > 3000) without explicit translation provenance, flag REVIEW_REQUIRED
-                    # to prevent silent drop of singing line/harmony.
-                    prev_cline.translation = this_text
-                    t_line = CanonicalLine(
-                        stable_id=f"L{idx + 1}",
-                        source_index=idx,
-                        role=LineRole.TRANSLATION,
-                        start_ms=st_ms,
-                        end_ms=et_ms,
-                        text=raw_text,
-                        translation=raw_text.strip(),
-                    )
-                    classified_lines.append((t_line, {"is_attached_translation": True}))
-                    is_mid_song_ambiguous = (st_ms > 3000)
+                    # Different languages at one timestamp can be a duet.
+                    # No time-window exemption and NO heuristic translation
+                    # attachment: retain both lines and block auto delivery.
                     canonical.add_issue(
                         code="AMBIGUOUS_BILINGUAL_VOCALS",
-                        severity=IssueSeverity.REVIEW_REQUIRED if is_mid_song_ambiguous else IssueSeverity.INFO,
+                        severity=IssueSeverity.REVIEW_REQUIRED,
                         source_index=idx,
-                        evidence=f"Lines '{previous_text}' and '{this_text}' share timestamp {st_ms}ms without explicit translation flag",
-                        action="ATTACHED_HEURISTIC_TRANSLATION_REQUIRE_REVIEW" if is_mid_song_ambiguous else "ATTACHED_HEURISTIC_TRANSLATION",
-                        blocking=is_mid_song_ambiguous,
+                        evidence=f"Same-start different-language lines at {st_ms}ms have no explicit translation provenance",
+                        action="RETAIN_BOTH_LINES_REQUIRE_REVIEW",
+                        blocking=True,
                     )
-                    continue
+
+        # A nearby, unaligned staff row is supporting evidence for a staff
+        # block anywhere in the song, including the outro. This is not proof
+        # for unrelated spoken/sung content.
+        staff_neighbors = []
+        for offset in (-2, -1, 1, 2):
+            j = idx + offset
+            if j < 0 or j >= len(raw_lines):
+                continue
+            neighbor = raw_lines[j]
+            nt = strip_timing_tags(str(neighbor.get('text') or '')).strip()
+            if (not neighbor.get('words') and
+                (_PRODUCTION_KEYWORD_RE.match(nt) or _split_credit_tokens(nt))):
+                staff_neighbors.append(j)
 
         role, extra = classify_line_role(
             raw_text=raw_text,
@@ -413,8 +437,20 @@ def classify_and_clean_all_lines(
             line_index=idx,
             total_lines=len(raw_lines),
             has_words=bool(words),
+            start_ms=st_ms,
+            explicit_display_title=(
+                str(rline.get("semantic_role") or "").upper() in ("PRELUDE", "TITLE")
+                or bool(rline.get("is_display_title", False))
+            ),
+            production_context_confirmed=bool(staff_neighbors or rline.get('is_production_credit')),
         )
 
+        if extra.get("ambiguous_untimed_title"):
+            canonical.add_issue(
+                "UNTIMED_TITLE_AMBIGUOUS", IssueSeverity.REVIEW_REQUIRED,
+                source_index=idx, action="RETAIN_SINGING_REQUIRE_REVIEW",
+                blocking=True,
+            )
         if extra.get("ambiguous_credit_in_singing"):
             canonical.add_issue("CREDIT_LIKE_SUNG_TEXT_RETAINED", IssueSeverity.REVIEW_REQUIRED,
                                 source_index=idx, action="RETAIN_SUNG_LINE_FOR_REVIEW",

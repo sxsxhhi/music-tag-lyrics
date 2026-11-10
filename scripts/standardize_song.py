@@ -139,6 +139,11 @@ def standardize_single_song(
                     pass
         if os.path.lexists(report_abs):
             raise FileExistsError(f"REPORT_TARGET_EXISTS: Refusing to overwrite existing file at {report_path}")
+        parent = report_p.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        if not parent.is_dir():
+            raise NotADirectoryError(f"REPORT_PARENT_NOT_DIRECTORY: {report_path}")
     original_audio_hash=hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()
     embedded=read_container_tags(audio_abs)
     noext,_=os.path.splitext(audio_abs)
@@ -155,6 +160,9 @@ def standardize_single_song(
         'has_sidecar_elrc':bool(disk_elrc),'has_sidecar_ttml':bool(disk_ttml),
         'baseline_comparison':None,'format_audit':'NO_LYRICS',
         'issues':[],'prelude_plan':None,'actions_taken':[]}
+    # Track precisely which paths this invocation created. A report failure
+    # must not leave apparently successful outputs behind.
+    committed_outputs = []
     def issue(code,description='',blocking=True):
         report['issues'].append({'code':code,'message':description,'blocking':blocking})
         if blocking and report['status'] not in ('BLOCKED',):report['status']='REVIEW_REQUIRED'
@@ -163,6 +171,11 @@ def standardize_single_song(
             try:
                 _write_json_report(report_path, report)
             except Exception as exc:
+                for target in reversed(committed_outputs):
+                    try: os.unlink(target)
+                    except OSError: pass
+                committed_outputs.clear()
+                report['actions_taken'] = []
                 report['status'] = 'BLOCKED'
                 issue('REPORT_WRITE_FAILED', f"{type(exc).__name__}: {str(exc)}")
         return report
@@ -227,7 +240,7 @@ def standardize_single_song(
     if any(i.blocking or i.severity.value=='REVIEW_REQUIRED' for i in canonical.issues):
         report['status']='REVIEW_REQUIRED'
     if mode=='audit':
-        if report['format_audit'] == 'ONE_FORMAT_ONLY' and report['status'] != 'BLOCKED':
+        if report['format_audit'] == 'ONE_FORMAT_ONLY' and report['status'] == 'PASS':
             report['status'] = 'ONE_FORMAT_ONLY'
         return finish()
 
@@ -282,6 +295,7 @@ def standardize_single_song(
             committed.append(dst)
         report['actions_taken']=['WRITE_SIDECAR_LRC','WRITE_SIDECAR_SPL','WRITE_SIDECAR_TTML']
         if write_tags:report['actions_taken'].append('WRITE_VERIFIED_CONTAINER_TAGS')
+        committed_outputs.extend(committed)
     except (OSError,RuntimeError,ValueError) as exc:
         # Roll back only files this process just committed, NEVER preexisting.
         for dst in reversed(committed):

@@ -30,6 +30,11 @@ def find_first_singing_time(canonical: CanonicalLyrics) -> Tuple[Optional[int], 
     如果首句是真实演唱但缺少字块时间，返回 (None, "FIRST_SING_UNVERIFIED")。
     """
     for line in canonical.lines:
+        # A preserved but unresolved line before the first confirmed singer
+        # could itself be an earlier vocal/spoken line. Never leap over it
+        # and mislabel the later singer as the first vocal time.
+        if line.role == LineRole.UNKNOWN and line.text.strip():
+            return None, "FIRST_SING_UNVERIFIED"
         # 排除非演唱行（标题、词曲、制作名单、译文、占位、纯角色独占提示）
         if not line.is_singing:
             continue

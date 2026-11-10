@@ -4,13 +4,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10--3.13-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-629%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-614%20passed%20%7C%201%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Zero%20External%20Binaries-100%25%20Native-success?style=flat-square" alt="Dependencies"></a>
 
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV%20(Verified)-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
   <a href="#"><img src="https://img.shields.io/badge/Cover%20Art-1000x1000%20HD-purple?style=flat-square" alt="Cover Art"></a>
 </p>
+
+> **v1.8.2 复审候选说明**：当前文件属于未推送的安全修订候选；公开 GitHub Release 的状态与此候选不应混为一谈。
 
 > **一句话介绍**：让你的本地音乐也能拥有像 Apple Music 一样丝滑的逐字动效歌词，自动补齐超清专辑封面与规范的歌曲标签，还能用本地 AI 帮绝版老歌逐字打轴，**绝不乱改你原有的音频文件**。
 
@@ -165,11 +167,12 @@ python scripts/process_song.py "歌曲.flac" --write-isrc
 本项目配备了极其严苛的工程测试用例网络，涵盖各种奇怪歌词格式、字符集、连读念白与边界条件：
 
 ```bash
-# 1. Git 完整开发仓库：运行全部 44 个离线测试套件（640 项用例：629 通过 / 11 条件跳过，0 失败）
-python tests/run_all.py
+# 分发候选 ZIP（本轮独立复审）：40 套件 / 615 用例，614 PASS / 1 SKIP / 0 FAIL（Linux CPU 环境）
+python -B tests/run_all.py
 
-# 2. 分发安装包（已按分发视图剔除构建/同步等仅仓库侧工具）：运行 39 个离线测试套件（597 项用例：在含完整 torch 容器实测 596 通过 / 1 条件跳过；在纯 CPU 环境实测 586 通过 / 11 条件跳过，0 失败）
-python tests/run_all.py
+# Git 开发仓库尚需本机合并后重跑完整 CI 与发布构建/Hook 五类额外套件
+# 上轮仓库实测 44 套件 / 640 用例只是修复前基线，不可作为本候选的发布证明。
+python -B tests/run_all.py
 
 # 3. 快速运行指定模块测试
 python tests/run_all.py -k line_axis
@@ -179,8 +182,8 @@ python tests/run_all.py -k canto
 **验证范围（如实声明）**
 
 - **双层测试基线说明**：
-  - **Git 完整开发仓库**：包含全部 44 个离线测试套件（共 640 项用例，本地实测基线为 629 PASS / 11 SKIP / 0 FAIL）；
-  - **Release / Skill 分发包**：为保持分发包轻量且避免未分发的开发工具在包内引发假故障，分发视图依据 `scripts/_dist_view.py` 剔除了仅用于本地构建、镜像同步及 Git 钩子的开发侧工具及对应 5 个专用测试套件（`test_release_build`, `test_release_verify`, `test_sync_copies`, `test_prepush_hook`, `test_benchmark_contract`），包内包含 39 个套件共 597 项用例（在含完整 torch 容器中实测 596 PASS / 1 SKIP；在纯 CPU 环境实测 586 PASS / 11 SKIP / 0 FAIL）；
+  - **Git 完整开发仓库**：此前本机报告的修复前基线是 44 套件、640 用例（629 PASS / 11 SKIP / 0 FAIL）。本次修复候选并非完整 Git 工作区；合并新增测试和代码后必须重新验证，不可直接延用上述统计。
+  - **本轮 Skill 分发候选 ZIP**：40 套件、615 用例（Linux CPU 环境实测 614 PASS / 1 SKIP / 0 FAIL）。仍按分发视图排除 5 个只存在于开发仓库的专用套件（`test_release_build`, `test_release_verify`, `test_sync_copies`, `test_prepush_hook`, `test_benchmark_contract`）；本候选不是 Git 正式构建器已锁定的 Release 资产。
 - 上方数字是环境实测基线，Windows / GPU / 声学对齐（Demucs、Whisper、Wav2Vec2）属于维护者本地验证范围，公开 CI 未独立核验，相关用例在 CI 中以条件跳过呈现；
 - 缓存默认优先落在 Skill 目录 `.cache/`，该目录不可写时会按五级回退继续尝试系统缓存与 TEMP 并告警；`MTL_STRICT_STORAGE=1` 只约束**应用缓存目录**，不等于「整个进程不写系统盘」；
 - 容器矩阵中标注 `Verified in public CI` 的项有公开夹具支撑；标注 `Verified locally only` / `Not verified` 的项不作为公开保证。
@@ -223,7 +226,7 @@ python tests/run_all.py -k canto
 
 | 版本 | 发布日期 | 亮点概述 |
 | :---: | :---: | :--- |
-| **v1.8.2** | `2026-11-09` | **双格式标准化引擎 · ELRC ↔ TTML 独立双向结构对齐 (≤1ms) · 全曲制作署名全方位识别与安全剥离 · 首唱时间 T 与 A/B 前奏显示调度 · FLAC/MP3/WAV 容器安全回写与读回双校验 · 44 套件 629 用例通过**<br/>• 落实需求 R1：构建独立的 Canonical Lyrics 标准数据模型与双向结构对齐审计器，提供行级/字级 ≤ 1ms、div 边界 ≤ 2ms 毫秒级门禁与结构性故障归因；<br/>• 落实需求 R2：实现全曲多阶段制作署名精准识别与安全剥离，开头/正文中段/结尾制作名单自动剥离并回填元数据，唱词/念白/对白/原唱标记/演唱者声部标记绝对保留，存疑行严格标记为 REVIEW_REQUIRED 绝不误删；<br/>• 落实需求 R3：精准提取首唱时间戳 T，严格按规则规划前奏显示：T > 20s 使用模式 A（标题 1.5–12s、作词 12–16s、作曲 16–20s），T ≤ 20s 使用模式 B（标题 0–60%T、作词 60–80%T、作曲 80–100%T，含单署名/零署名与极短前奏收缩分支），T ≤ 0 跳过前奏，任何情况下绝对保持真实演唱字块与时间戳不可变；<br/>• 落实需求 R4：输出严格 3 位小数规范 ELRC 与单行标准 XML TTML；实现 FLAC/MP3/WAV 容器只读解析、工作副本隔离写入、磁盘读回一致性校验与安全回写（`--in-place` 为保证源音频安全已显式阻断，输出必须指定独立隔离目录，绝对拒绝覆盖任何已有目标文件）；<br/>• 新增标准化专用 CLI `scripts/standardize_song.py`，支持只读审计（`--mode audit`）与安全标准化（`--mode standardize`）；<br/>• 全量离线自动化测试套件扩充至 44 套件 640 用例（629 通过 / 11 条件跳过 / 0 失败），私有脱敏扫描 0 泄漏。 |
+| **v1.8.2** | `2026-11-09` | **双格式标准化引擎 · ELRC ↔ TTML 独立双向结构对齐 (≤1ms) · 全曲制作署名全方位识别与安全剥离 · 首唱时间 T 与 A/B 前奏显示调度 · FLAC/MP3/WAV 容器安全回写与读回双校验 · 分发候选 40 套件 614 用例通过**<br/>• 落实需求 R1：构建独立的 Canonical Lyrics 标准数据模型与双向结构对齐审计器，提供行级/字级 ≤ 1ms、div 边界 ≤ 2ms 毫秒级门禁与结构性故障归因；<br/>• 落实需求 R2：实现全曲多阶段制作署名精准识别与安全剥离，开头/正文中段/结尾制作名单自动剥离并回填元数据，唱词/念白/对白/原唱标记/演唱者声部标记绝对保留，存疑行严格标记为 REVIEW_REQUIRED 绝不误删；<br/>• 落实需求 R3：精准提取首唱时间戳 T，严格按规则规划前奏显示：T > 20s 使用模式 A（标题 1.5–12s、作词 12–16s、作曲 16–20s），T ≤ 20s 使用模式 B（标题 0–60%T、作词 60–80%T、作曲 80–100%T，含单署名/零署名与极短前奏收缩分支），T ≤ 0 跳过前奏，任何情况下绝对保持真实演唱字块与时间戳不可变；<br/>• 落实需求 R4：输出严格 3 位小数规范 ELRC 与单行标准 XML TTML；实现 FLAC/MP3/WAV 容器只读解析、工作副本隔离写入、磁盘读回一致性校验与安全回写（`--in-place` 为保证源音频安全已显式阻断，输出必须指定独立隔离目录，绝对拒绝覆盖任何已有目标文件）；<br/>• 新增标准化专用 CLI `scripts/standardize_song.py`，支持只读审计（`--mode audit`）与安全标准化（`--mode standardize`）；<br/>• 本轮独立修复候选验证：40 套件 615 用例（614 PASS / 1 SKIP / 0 FAIL）；本地权威仓库的真实私有指纹扫描及正式 Git 发布构建需在合并后重新执行。 |
 | **v1.8.1** | `2026-11-08` | **lrc.red 全球开放同步网络接入健壮化 · 缓存串歌与负缓存锁死根治 · ISRC 双向仲裁与原子安全门禁 · 缓存五级回退与分发瘦身 · 38 套件 567 用例全绿**<br/>• 修复 H02 私有指纹 segment 规则对带扩展名文件名的匹配漏检，补齐路径全等与 stem 全等检测；<br/>• 落实 H18 lrc.red 官方条款契约：`MTL_LRC_RED_CONTACT` 严格校验邮箱格式，缺省或非法时优雅跳过该源；导出 LRC/SPL 规范注入 `[re:lrc.red (https://lrc.red)]` 署名回链；<br/>• 改造 `core/utils/cache_paths.py` 五级候选链：默认优先使用 skill 根目录 `.cache/`（跟随工作区所在卷）；该目录不可写时按五级回退继续尝试系统缓存与 TEMP 并告警；如需严格限定单一目录须显式启用 `MTL_STRICT_STORAGE=1`；<br/>• 抽离 `scripts/_dist_view.py` 统一定义分发视图与排除规则，公开分发包剔除本机私有开发脚本、过程审计报告与版权夹具，包体积显著瘦身且工作树 sha256 零不一致；<br/>• 打包脚本与 `core.version` 单一信源全面对齐，Manifest 排除自身打包消除自指死锁；<br/>• 修复 lrc.red 缓存解耦：拆分远端原始记录与本地单曲仲裁，彻底杜绝缓存串歌污染与负缓存死锁；<br/>• 统一直查与搜索版本互斥（Live/Remix/Instrumental 严禁串歌）与时长门禁（±3000ms）；<br/>• ISRC 写回音频标签五重门禁保护（时长非空/差值≤3000ms/strict凭证/已有ISRC不覆盖）；<br/>• 全量离线自动化测试扩展至 38 套件 567 用例（556 通过 / 11 条件跳过 / 0 失败；分发包内为 33 套件 529 用例）。 |
 
 | **v1.8.0** | `2026-11-07` | **lrc.red 全球 ISRC 逐字网络接入 · Apple TTML 双引擎调度 · 366 项测试全绿**<br/>• 引入 lrc.red 全球歌词开放同步网络，作为 Apple TTML 的原生双引擎补充；<br/>• 支持基于本地 ISRC 编码直查 Apple Music TTML 逐字流光歌词；<br/>• 实现 lrc.red 专属 TTML 命名空间与逐字结构解析器。 |

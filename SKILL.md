@@ -202,7 +202,7 @@ flowchart TD
 - 解析：`core/parsers/`（`lrc_parser.py`、`ttml_parser.py`、`krc_parser.py`、`yrc_parser.py`、`qrc_parser.py`）
 - 解密：`core/decryptors/`（`krc_xor.py`、`qrc_des.py`）
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`python tests/run_all.py`（44 个套件 / 640 项用例，三态 PASS/SKIP/FAIL）。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
+- 离线测：`python tests/run_all.py`（当前分发修复候选：40 个套件 / 615 项用例，614 PASS / 1 SKIP / 0 FAIL；本机完整 Git 仓库须独立复检）。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
 
@@ -382,7 +382,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 ### 1. 固定处理顺序（不得交换）
 
 1. 安全读取现有歌词和标签，双格式都存在时先进行**只读基线审计**；仅有一种格式时标记 `ONE_FORMAT_ONLY`，不得声称已检查原始双格式一致性。
-2. **R2 全曲语义分类和清理**：制作名单可能出现在前奏、正文中间或片尾，必须逐行扫描，不能仅检查前 12 行或截断片尾。确认制作行后先提取可信词曲，再清理；真实演唱、原唱说明、角色提示、采样/对白来源和不确定行保留。带真实字轴且疑似署名的唱句不允许按关键词强删，标记 `REVIEW_REQUIRED` 并阻止自动写入；同时间戳不是译文充分证据。
+2. **R2 全曲语义分类和清理**：制作名单可能出现在前奏、正文中间或片尾，必须逐行扫描，不能仅检查前 12 行或截断片尾。确认制作行后先提取可信词曲，再清理；真实演唱、原唱说明、角色提示、采样/对白来源和不确定行保留。带真实字轴且疑似署名的唱句不允许按关键词强删，标记 `REVIEW_REQUIRED` 并阻止自动写入；同时间戳不是译文充分证据；**无来源凭证的跨语言同起唱行，无论位于 0–3 秒还是歌曲中段，都必须原样保留且触发 `REVIEW_REQUIRED`，不得启发式挂接或丢弃**。无字轴的同名标题行若缺少明确的展示元数据凭证，不得直接删除；保留并阻断首唱推断。
 3. **R3 在 R2 之后**确认首个真实演唱字块的起点 `T`；首句没有可信字轴时禁止使用第二句代替；按下表规划前奏显示，不移动或缩短任何真实字块。
 4. **R4** 用同一份 Canonical 数据独立生成三位毫秒 ELRC 和单行 TTML。译文通过 head 中带 `for` 的 Apple/iTunes 命名空间节点映射；正确保留词界空格、字间真实停顿、独占/行首角色与 lrc.red 回链。
 5. **R1** 首先检查 ELRC ↔ TTML，再独立与 Canonical 真值核对，比较文本、行数、角色、字块起止、词界、译文关联；行级/字级同源回读容差 ≤1ms，div 边界 ≤2ms。两个格式共同丢字也必须失败。
@@ -416,4 +416,4 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
 - 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。
 - TTML 多 `div`、未确认的演唱行级结束时间、缺少真实逐字的正文等无法安全表达的输入会明确阻断，而不是推断、伪造字轴或静默丢行。
-- 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件，但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。
+- 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。

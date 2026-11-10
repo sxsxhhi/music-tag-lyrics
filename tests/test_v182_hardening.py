@@ -123,7 +123,7 @@ def test_11_head_translation_namespace_is_not_ttml():
 def test_12_ttml_only_head_translated_output():
     with tempfile.TemporaryDirectory() as td:
         src=td+'/src.flac';_create_minimal_flac(src)
-        f=FLAC(src);f['ttmllyric']=[_TEST_TTML];f.save()
+        f=FLAC(src);del f['lyrics'];f['ttmllyric']=[_TEST_TTML];f.save()  # genuinely TTML-only
         r=standardize_single_song(src,'standardize',output_dir=td+'/out',no_tags=True)
         assert r['status']=='PASS',r
         assert '你好世界' in Path(td+'/out/src.lrc').read_text(encoding='utf-8')

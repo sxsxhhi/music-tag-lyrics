@@ -19,9 +19,11 @@ from mutagen.flac import FLAC
 from scripts.standardize_song import standardize_single_song
 from tests._testkit import run
 
+# The CLI fixture is deliberately monolingual: a same-timestamp Chinese
+# line in bare ELRC has no trustworthy translation provenance and must trigger
+# REVIEW_REQUIRED, not be silently consumed as an official translation.
 _TEST_ELRC = (
     "[00:01.000]<00:01.000>Hello<00:02.000> world<00:03.000>\n"
-    "[00:01.000]你好世界\n"
 )
 
 

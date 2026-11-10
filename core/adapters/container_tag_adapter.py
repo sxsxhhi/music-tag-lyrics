@@ -22,6 +22,7 @@ import mutagen
 from mutagen.flac import FLAC
 from mutagen.id3 import (
     ID3,
+    ID3NoHeaderError,
     TCOM,
     TEXT,
     TXXX,
@@ -231,8 +232,12 @@ def write_verified_standardized_container(
             _apply_id3_standard_lyrics(audio.tags,elrc_text,ttml_text,lyricist,composer)
             audio.save()
         elif ext=='.mp3':
-            try:id3=ID3(tmp)
-            except Exception: id3=ID3()
+            try:
+                id3 = ID3(tmp)
+            except ID3NoHeaderError:
+                # Only a genuinely absent ID3 header permits creating new tags.
+                # Malformed/unreadable existing tags must abort, not be erased.
+                id3 = ID3()
             old_v2 = getattr(id3, 'version', (2,4,0))[1]
             _apply_id3_standard_lyrics(id3,elrc_text,ttml_text,lyricist,composer)
             id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
