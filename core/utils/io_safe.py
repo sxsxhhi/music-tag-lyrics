@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """原子写文本与「副本改签再替换」的音频标签落盘。"""
 
+import hashlib
 import logging
 import os
 import shutil
@@ -10,6 +11,18 @@ from typing import Callable, Optional
 logger = logging.getLogger(__name__)
 
 TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "gbk", "gb18030")
+
+
+def sha256_file(filepath: str | os.PathLike, chunk_size: int = 1024 * 1024) -> str:
+    """流式分块计算文件的 SHA-256 哈希，杜绝大文件一次性加载至内存。"""
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def read_text_guess_encoding(path: str) -> Optional[str]:

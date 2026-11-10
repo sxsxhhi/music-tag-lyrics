@@ -31,24 +31,137 @@ from mutagen.id3 import (
 from mutagen.wave import WAVE
 
 from ..auditors.elrc_ttml_comparator import compare_elrc_ttml
+from ..utils.io_safe import sha256_file
 
 
 def _id3_cover_digest(id3) -> str:
     entries = sorted((str(x.desc), str(x.mime), int(x.type), bytes(x.data))
                      for x in id3.values() if getattr(x, 'FrameID', '') == 'APIC')
-    h=hashlib.sha256()
-    for desc,mime,typ,data in entries:
-        for part in (desc.encode('utf-8'),mime.encode('utf-8'),typ.to_bytes(4,'big'),data):
-            h.update(len(part).to_bytes(8,'big'));h.update(part)
+    h = hashlib.sha256()
+    for desc, mime, typ, data in entries:
+        for part in (desc.encode('utf-8'), mime.encode('utf-8'), typ.to_bytes(4, 'big'), data):
+            h.update(len(part).to_bytes(8, 'big'))
+            h.update(part)
     return h.hexdigest() if entries else ""
 
 
-def _sha_file(path):
-    h=hashlib.sha256()
-    with open(path,'rb') as f:
-        for chunk in iter(lambda:f.read(1024*1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
+def _sha_file(path: str) -> str:
+    return sha256_file(path)
+
+
+def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
+    """提取 FLAC 音频帧数据流并流式计算 SHA-256（跳过 METADATA_BLOCK）。"""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+            if magic != b"fLaC":
+                return "AUDIO_STREAM_NOT_VERIFIED", ""
+            while True:
+                hdr = f.read(4)
+                if len(hdr) < 4:
+                    return "AUDIO_STREAM_NOT_VERIFIED", ""
+                b0 = hdr[0]
+                is_last = (b0 & 0x80) != 0
+                length = (hdr[1] << 16) | (hdr[2] << 8) | hdr[3]
+                f.seek(length, os.SEEK_CUR)
+                if is_last:
+                    break
+            h = hashlib.sha256()
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+            return "VERIFIED", h.hexdigest()
+    except Exception:
+        return "AUDIO_STREAM_NOT_VERIFIED", ""
+
+
+def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
+    """提取 WAV data chunk 数据流并流式计算 SHA-256（跳过 RIFF 头与外部标签 chunk）。"""
+    try:
+        with open(path, "rb") as f:
+            riff = f.read(4)
+            if riff != b"RIFF":
+                return "AUDIO_STREAM_NOT_VERIFIED", ""
+            f.seek(4, os.SEEK_CUR)  # riff size
+            wave_tag = f.read(4)
+            if wave_tag != b"WAVE":
+                return "AUDIO_STREAM_NOT_VERIFIED", ""
+            while True:
+                hdr = f.read(8)
+                if len(hdr) < 8:
+                    break
+                chunk_id = hdr[:4]
+                chunk_size = int.from_bytes(hdr[4:8], "little")
+                if chunk_id == b"data":
+                    h = hashlib.sha256()
+                    bytes_left = chunk_size
+                    while bytes_left > 0:
+                        read_len = min(1024 * 1024, bytes_left)
+                        chunk = f.read(read_len)
+                        if not chunk:
+                            return "AUDIO_STREAM_NOT_VERIFIED", ""
+                        h.update(chunk)
+                        bytes_left -= len(chunk)
+                    return "VERIFIED", h.hexdigest()
+                else:
+                    skip = chunk_size + (chunk_size & 1)
+                    f.seek(skip, os.SEEK_CUR)
+            return "AUDIO_STREAM_NOT_VERIFIED", ""
+    except Exception:
+        return "AUDIO_STREAM_NOT_VERIFIED", ""
+
+
+def compute_mp3_audio_stream_digest(path: str) -> Tuple[str, str]:
+    """提取 MP3 有效音频帧区数据流并流式计算 SHA-256（排除 ID3v2、ID3v1 与 APEv2）。"""
+    try:
+        with open(path, "rb") as f:
+            data_start = 0
+            hdr = f.read(10)
+            if len(hdr) == 10 and hdr.startswith(b"ID3"):
+                flags = hdr[5]
+                footer_present = bool(flags & 0x10)
+                tag_size = ((hdr[6] & 0x7F) << 21) | ((hdr[7] & 0x7F) << 14) | ((hdr[8] & 0x7F) << 7) | (hdr[9] & 0x7F)
+                data_start = 10 + tag_size + (10 if footer_present else 0)
+            file_size = os.path.getsize(path)
+            data_end = file_size
+            if file_size >= 128:
+                f.seek(file_size - 128)
+                tag = f.read(3)
+                if tag == b"TAG":
+                    data_end -= 128
+            if data_end >= 32:
+                f.seek(data_end - 32)
+                tag_ape = f.read(8)
+                if tag_ape == b"APETAGEX":
+                    f.seek(data_end - 32 + 12)
+                    ape_size_bytes = f.read(4)
+                    if len(ape_size_bytes) == 4:
+                        ape_size = int.from_bytes(ape_size_bytes, "little")
+                        data_end = max(data_start, data_end - ape_size)
+            f.seek(data_start)
+            h = hashlib.sha256()
+            bytes_left = max(0, data_end - data_start)
+            while bytes_left > 0:
+                read_len = min(1024 * 1024, bytes_left)
+                chunk = f.read(read_len)
+                if not chunk:
+                    break
+                h.update(chunk)
+                bytes_left -= len(chunk)
+            return "VERIFIED", h.hexdigest()
+    except Exception:
+        return "AUDIO_STREAM_NOT_VERIFIED", ""
+
+
+def compute_audio_stream_digest(filepath: str) -> Tuple[str, str]:
+    """根据扩展名分发并计算容器音频数据流的保真哈希。"""
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext == ".flac":
+        return compute_flac_audio_stream_digest(filepath)
+    elif ext == ".wav":
+        return compute_wav_audio_stream_digest(filepath)
+    elif ext == ".mp3":
+        return compute_mp3_audio_stream_digest(filepath)
+    return "AUDIO_STREAM_NOT_VERIFIED", ""
 
 
 def read_container_tags(filepath: str) -> Dict[str, Any]:
@@ -214,6 +327,7 @@ def write_verified_standardized_container(
             raise ValueError("REVIEW_REQUIRED_CREDIT_CONFLICT:"+field)
     if lyricist and orig.get('lyricist'): lyricist=None
     if composer and orig.get('composer'): composer=None
+    orig_stream_st, orig_stream_hash = compute_audio_stream_digest(source)
     original_hash = _sha_file(source)
     os.makedirs(os.path.dirname(target),exist_ok=True)
     ext = os.path.splitext(target)[1]
@@ -261,11 +375,21 @@ def write_verified_standardized_container(
             raise RuntimeError('READBACK_FORMAT_MISMATCH')
         if _sha_file(source)!=original_hash:
             raise RuntimeError('SOURCE_CHANGED_DURING_WRITE')
+
+        # Audio stream invariance verification
+        rb_stream_st, rb_stream_hash = compute_audio_stream_digest(tmp)
+        if orig_stream_st != "VERIFIED" or rb_stream_st != "VERIFIED":
+            raise RuntimeError("AUDIO_STREAM_NOT_VERIFIED")
+        if orig_stream_hash != rb_stream_hash:
+            raise RuntimeError("AUDIO_STREAM_CORRUPTED")
+
         # Link is an atomic, non-clobbering commit to an absent target.
         # Never unlink an existing target, including in an exception handler.
         os.link(tmp,target_work_path)
         return {'status':'PASS','target_path':target_work_path,
-                'readback_tags':rb,'r1_max_delta_ms':r1.max_time_delta_ms}
+                'readback_tags':rb,'r1_max_delta_ms':r1.max_time_delta_ms,
+                'audio_stream_digest': rb_stream_hash,
+                'audio_stream_status': 'VERIFIED'}
     finally:
         if os.path.exists(tmp):os.unlink(tmp)
 

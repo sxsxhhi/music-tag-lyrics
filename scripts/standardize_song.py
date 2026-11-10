@@ -36,6 +36,7 @@ from core.parsers.ttml_parser import parse_ttml
 from core.renderers.standard_elrc_renderer import render_elrc_v182
 from core.renderers.standard_ttml_renderer import render_ttml_v182
 from core.schedulers.prelude_scheduler import plan_prelude_ab
+from core.utils.io_safe import sha256_file
 from core.version import __version__
 
 
@@ -144,7 +145,7 @@ def standardize_single_song(
             parent = parent.parent
         if not parent.is_dir():
             raise NotADirectoryError(f"REPORT_PARENT_NOT_DIRECTORY: {report_path}")
-    original_audio_hash=hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()
+    original_audio_hash=sha256_file(audio_abs)
     embedded=read_container_tags(audio_abs)
     noext,_=os.path.splitext(audio_abs)
     def read_optional(f):
@@ -288,7 +289,7 @@ def standardize_single_song(
                   composer=canonical.song.get('extracted_composer'))
             report['container_verification']=cr
             committed.append(target_audio)
-        if hashlib.sha256(Path(audio_abs).read_bytes()).hexdigest()!=original_audio_hash:
+        if sha256_file(audio_abs) != original_audio_hash:
             raise RuntimeError('SOURCE_MODIFIED_DURING_STANDARDIZATION')
         for dst,tmp in staged.items():
             os.link(tmp,dst)
@@ -358,7 +359,7 @@ def main():
     parser.add_argument(
         "--in-place",
         action="store_true",
-        help="明确授权原地修改（高风险，需严格满足前置安全门禁）",
+        help="原地修改源文件（为保护源音频绝对安全已显式禁用，调用将被阻断）",
     )
     parser.add_argument("--ref-lyrics", help="显式指定的只读参考歌词路径（用于角色恢复等）")
     parser.add_argument("--report", help="JSON 审计报告输出路径")
