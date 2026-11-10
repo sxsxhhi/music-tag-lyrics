@@ -67,6 +67,11 @@ jobs:
         shell: pwsh
         run: python -B tests/test_v182_postreview.py *>&1 | Tee-Object -FilePath postreview.log
 
+      - name: v1.8.3 final safety guard regression (Windows)
+        id: final_guard
+        shell: pwsh
+        run: python -B tests/test_v183_final_guard.py *>&1 | Tee-Object -FilePath final_guard.log
+
       - name: Summarise Windows core gate
         if: always()
         shell: pwsh
@@ -82,7 +87,8 @@ jobs:
             "stream_invariance.log",
             "ttml_conformance.log",
             "ttml_structural.log",
-            "postreview.log"
+            "postreview.log",
+            "final_guard.log"
           )
           $out = @()
           $out += "## Windows Core Blocking Gate Results"

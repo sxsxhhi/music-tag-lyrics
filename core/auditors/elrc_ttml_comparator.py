@@ -167,6 +167,8 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
     try: root=ET.fromstring(text)
     except (ET.ParseError,ValueError) as exc:
         return [],(0,0),[ComparisonIssue('XML_SYNTAX_ERROR',f'Invalid XML: {type(exc).__name__}')]
+    if root.tag not in (f'{{{NT}}}tt', 'tt'):
+        return [],(0,0),[ComparisonIssue('TTML_ROOT_INVALID', 'Expected TTML <tt> document root')]
 
     # Timing model checks: reject unsupported dur on div/p/span or timeContainer="seq"
     for elem in root.iter():
@@ -189,6 +191,9 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
 
     trans={}
     for n in root.findall('.//{*}iTunesMetadata/{*}translations/{*}translation/{*}text'):
+        if list(n):
+            problems.append(ComparisonIssue('UNSUPPORTED_TRANSLATION_STRUCTURE',
+                                            'Nested translation markup cannot be preserved'))
         key=n.get('for')
         if not key:
             problems.append(ComparisonIssue('TRANSLATION_MISSING_REFERENCE','Missing for= key'))
@@ -197,12 +202,24 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
             problems.append(ComparisonIssue('TRANSLATION_DUPLICATE_REFERENCE','Multiple translations for same key',key))
         trans[key]=(n.text or '').strip()
 
-    divs=root.findall('.//{*}body/{*}div')
+    bodies = root.findall('./{*}body')
+    if len(bodies) != 1:
+        return [],(0,0),problems+[ComparisonIssue('BODY_STRUCTURE_INVALID', 'Exactly one direct TTML body is required')]
+    body = bodies[0]
+    for child in body:
+        if child.tag not in (f'{{{NT}}}div', 'div'):
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
+                                            'Unsupported direct body child (only div is modeled)'))
+    divs=body.findall('./{*}div')
     if not divs:
         return [],(0,0),problems+[ComparisonIssue('DIV_MISSING','No TTML div')]
     if len(divs)>1:
         problems.append(ComparisonIssue('MULTI_DIV_UNSUPPORTED','Multi-div input is unsupported'))
     div=divs[0]
+    for child in div:
+        if child.tag not in (f'{{{NT}}}p', 'p'):
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
+                                            'Unsupported div child (only direct p is modeled)'))
 
     has_begin = 'begin' in div.attrib
     has_end = 'end' in div.attrib
@@ -246,15 +263,27 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
         if en<=st:
             problems.append(ComparisonIssue('LINE_TIME_INVALID','Nonpositive p duration',key))
 
-        # Check for nested span or ruby
+        # Fail closed on *every* direct p child. The legacy loop below only
+        # consumes immediate TTML spans; any other child (including direct ruby,
+        # br, or vendor extensions) would otherwise be silently discarded and
+        # could make two incomplete exports appear equal.
         for child in p:
-            if child.tag.endswith('span'):
-                if list(child):
-                    for sub in child:
-                        if sub.tag.endswith('span') or 'ruby' in sub.tag.lower() or 'ruby' in str(sub.attrib).lower():
-                            problems.append(ComparisonIssue('RUBY_UNSUPPORTED', 'Nested span or ruby structure is unsupported', key))
-                if 'ruby' in str(child.attrib).lower():
-                    problems.append(ComparisonIssue('RUBY_UNSUPPORTED', 'tts:ruby is unsupported', key))
+            local = child.tag.rsplit('}', 1)[-1].lower() if isinstance(child.tag, str) else ''
+            if local != 'span' or child.tag not in (f'{{{NT}}}span', 'span'):
+                code = 'RUBY_UNSUPPORTED' if 'ruby' in local else 'UNSUPPORTED_TEXT_STRUCTURE'
+                problems.append(ComparisonIssue(code, f'Unsupported direct <p> child: {local}', key))
+                continue
+            if any('ruby' in str(attr).lower() for attr in child.attrib):
+                problems.append(ComparisonIssue('RUBY_UNSUPPORTED', 'Ruby styling is unsupported', key))
+            if list(child):
+                descendant_tags = [e.tag.rsplit('}', 1)[-1].lower()
+                                   for e in child.iter() if e is not child and isinstance(e.tag, str)]
+                code = 'RUBY_UNSUPPORTED' if any(t in ('ruby', 'span', 'rt', 'rb') for t in descendant_tags) else 'UNSUPPORTED_TEXT_STRUCTURE'
+                problems.append(ComparisonIssue(code, 'Nested timed/text structure is unsupported', key))
+            role = (child.get('{http://www.w3.org/ns/ttml#metadata}role')
+                    or child.get('role') or '')
+            if role and role not in ('x-translation', 'x-bg', 'x-roman'):
+                problems.append(ComparisonIssue('UNSUPPORTED_SPAN_ROLE', f'Unrecognized span role: {role}', key))
 
         pre=p.text or ''
         words=[];inline=[];pieces=[pre]

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.2 R4-C)。
+"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.3 R4-C)。
 
 满足《歌曲检测与修补标准》§6 全部要求及方案铁律：
 1. FLAC 映射 lyrics (ELRC) + ttmllyric (TTML) + lyricist/composer；
@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import mutagen
 from mutagen.flac import FLAC
@@ -49,117 +49,218 @@ def _sha_file(path: str) -> str:
     return sha256_file(path)
 
 
+def _mpeg_layer3_frame_length(header: bytes) -> Optional[int]:
+    """Validate a fixed-bitrate MPEG Layer III frame header and its byte length.
+
+    This is a conservative *boundary* check, not an audio decoder or CRC check.
+    Free-format and reserved variants require dedicated validation and are
+    deliberately returned as unverified.
+    """
+    if len(header) != 4:
+        return None
+    bits = int.from_bytes(header, "big")
+    if ((bits >> 21) & 0x7ff) != 0x7ff:
+        return None
+    version_id = (bits >> 19) & 3
+    layer_id = (bits >> 17) & 3
+    bitrate_idx = (bits >> 12) & 15
+    sample_idx = (bits >> 10) & 3
+    if version_id == 1 or layer_id != 1 or bitrate_idx in (0, 15) or sample_idx == 3:
+        return None
+    bitrate_mpeg1 = (0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0)
+    bitrate_other = (0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0)
+    sample_rates = {3: (44100,48000,32000), 2: (22050,24000,16000), 0: (11025,12000,8000)}
+    bitrate = (bitrate_mpeg1 if version_id == 3 else bitrate_other)[bitrate_idx]
+    sample_rate = sample_rates[version_id][sample_idx]
+    padding = (bits >> 9) & 1
+    size = ((144000 if version_id == 3 else 72000) * bitrate) // sample_rate + padding
+    return size if size >= 4 else None
+
+
 def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
-    """提取 FLAC 音频帧数据流并流式计算 SHA-256（跳过 METADATA_BLOCK）。"""
+    """Hash a bounded FLAC audio frame region, never a missing/truncated one.
+
+    Validate the mandatory STREAMINFO block, every metadata extent, and the
+    first FLAC sync prefix. The digest establishes unchanged frame *bytes*,
+    not full FLAC decodability or correct audio checksums.
+    """
+    unverified = ("AUDIO_STREAM_NOT_VERIFIED", "")
     try:
         with open(path, "rb") as f:
-            magic = f.read(4)
-            if magic != b"fLaC":
-                return "AUDIO_STREAM_NOT_VERIFIED", ""
+            file_size = os.fstat(f.fileno()).st_size
+            if file_size < 4 + 4 + 34 + 2 or f.read(4) != b"fLaC":
+                return unverified
+            count = 0
             while True:
-                hdr = f.read(4)
-                if len(hdr) < 4:
-                    return "AUDIO_STREAM_NOT_VERIFIED", ""
-                b0 = hdr[0]
-                is_last = (b0 & 0x80) != 0
-                length = (hdr[1] << 16) | (hdr[2] << 8) | hdr[3]
-                f.seek(length, os.SEEK_CUR)
-                if is_last:
+                if f.tell() + 4 > file_size:
+                    return unverified
+                header = f.read(4)
+                last = bool(header[0] & 0x80)
+                kind = header[0] & 0x7f
+                size = int.from_bytes(header[1:], "big")
+                if count == 0 and (kind != 0 or size != 34):
+                    return unverified
+                if kind == 127 or size > file_size - f.tell():
+                    return unverified
+                if count == 0:
+                    streaminfo = f.read(34)
+                    if len(streaminfo) != 34:
+                        return unverified
+                    # STREAMINFO sample rate (20 bits), channels and bit depth.
+                    params = int.from_bytes(streaminfo[10:18], "big")
+                    sample_rate = (params >> 44) & 0xfffff
+                    if sample_rate == 0:
+                        return unverified
+                else:
+                    f.seek(size, os.SEEK_CUR)
+                count += 1
+                if last:
                     break
+            audio_start = f.tell()
+            # A two-byte sync marker is not a FLAC frame. Require room for
+            # the fixed header fields, header CRC and final frame CRC before
+            # accepting an audio region as a candidate stream.
+            if file_size - audio_start < 12:
+                return unverified
+            sync = f.read(2)
+            if sync[0] != 0xff or (sync[1] & 0xfe) != 0xf8:
+                return unverified
+            f.seek(audio_start)
             h = hashlib.sha256()
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
             return "VERIFIED", h.hexdigest()
-    except Exception:
-        return "AUDIO_STREAM_NOT_VERIFIED", ""
+    except (OSError, ValueError, OverflowError, IndexError):
+        return unverified
 
 
 def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
-    """提取 WAV data chunk 数据流并流式计算 SHA-256（跳过 RIFF 头与外部标签 chunk）。"""
+    """Hash nonempty PCM data within validated RIFF and chunk bounds."""
+    unverified = ("AUDIO_STREAM_NOT_VERIFIED", "")
     try:
         with open(path, "rb") as f:
-            riff = f.read(4)
-            if riff != b"RIFF":
-                return "AUDIO_STREAM_NOT_VERIFIED", ""
-            f.seek(4, os.SEEK_CUR)  # riff size
-            wave_tag = f.read(4)
-            if wave_tag != b"WAVE":
-                return "AUDIO_STREAM_NOT_VERIFIED", ""
-            while True:
-                hdr = f.read(8)
-                if len(hdr) < 8:
-                    break
-                chunk_id = hdr[:4]
-                chunk_size = int.from_bytes(hdr[4:8], "little")
-                if chunk_id == b"data":
-                    h = hashlib.sha256()
-                    bytes_left = chunk_size
-                    while bytes_left > 0:
-                        read_len = min(1024 * 1024, bytes_left)
-                        chunk = f.read(read_len)
-                        if not chunk:
-                            return "AUDIO_STREAM_NOT_VERIFIED", ""
-                        h.update(chunk)
-                        bytes_left -= len(chunk)
-                    return "VERIFIED", h.hexdigest()
+            file_size = os.fstat(f.fileno()).st_size
+            if file_size < 12 or f.read(4) != b"RIFF":
+                return unverified
+            riff_size = int.from_bytes(f.read(4), "little")
+            if f.read(4) != b"WAVE" or riff_size < 4 or 8 + riff_size > file_size:
+                return unverified
+            riff_end = 8 + riff_size
+            seen_fmt = False
+            data_chunks = 0
+            h = hashlib.sha256()
+            while f.tell() + 8 <= riff_end:
+                chunk = f.read(8)
+                name = chunk[:4]
+                size = int.from_bytes(chunk[4:], "little")
+                if size > riff_end - f.tell():
+                    return unverified
+                if name == b"fmt ":
+                    if size < 16:
+                        return unverified
+                    seen_fmt = True
+                if name == b"data":
+                    if not seen_fmt or size == 0:
+                        return unverified
+                    data_chunks += 1
+                    left = size
+                    while left:
+                        block = f.read(min(1024 * 1024, left))
+                        if not block:
+                            return unverified
+                        h.update(block)
+                        left -= len(block)
+                    if size & 1:
+                        f.seek(1, os.SEEK_CUR)
                 else:
-                    skip = chunk_size + (chunk_size & 1)
-                    f.seek(skip, os.SEEK_CUR)
-            return "AUDIO_STREAM_NOT_VERIFIED", ""
-    except Exception:
-        return "AUDIO_STREAM_NOT_VERIFIED", ""
+                    # Other chunks may be metadata; padding remains in RIFF.
+                    f.seek(size + (size & 1), os.SEEK_CUR)
+                if f.tell() > riff_end:
+                    return unverified
+            return ("VERIFIED", h.hexdigest()) if data_chunks else unverified
+    except (OSError, ValueError, OverflowError):
+        return unverified
 
 
 def compute_mp3_audio_stream_digest(path: str) -> Tuple[str, str]:
-    """提取 MP3 有效音频帧区数据流并流式计算 SHA-256（排除 ID3v2、ID3v1 与 APEv2）。"""
+    """Hash nonempty MPEG Layer III frames after validating basic boundaries.
+
+    Verifies MPEG sync/header lengths for at least two consecutive frames and
+    the ID3/APE metadata envelopes. A verified digest means *unchanged bytes*,
+    not that an entire MP3 bitstream was decoded or every frame CRC passed.
+    """
+    unverified = ("AUDIO_STREAM_NOT_VERIFIED", "")
     try:
         with open(path, "rb") as f:
-            data_start = 0
-            hdr = f.read(10)
-            if len(hdr) == 10 and hdr.startswith(b"ID3"):
-                flags = hdr[5]
-                footer_present = bool(flags & 0x10)
-                tag_size = ((hdr[6] & 0x7F) << 21) | ((hdr[7] & 0x7F) << 14) | ((hdr[8] & 0x7F) << 7) | (hdr[9] & 0x7F)
-                data_start = 10 + tag_size + (10 if footer_present else 0)
-            file_size = os.path.getsize(path)
-            data_end = file_size
-            if file_size >= 128:
-                f.seek(file_size - 128)
-                tag = f.read(3)
-                if tag == b"TAG":
-                    data_end -= 128
-            if data_end >= 32:
-                f.seek(data_end - 32)
-                tag_ape = f.read(8)
-                if tag_ape == b"APETAGEX":
-                    f.seek(data_end - 32 + 12)
-                    ape_size_bytes = f.read(4)
-                    if len(ape_size_bytes) == 4:
-                        ape_size = int.from_bytes(ape_size_bytes, "little")
-                        data_end = max(data_start, data_end - ape_size)
-            f.seek(data_start)
+            file_size = os.fstat(f.fileno()).st_size
+            if file_size < 8:
+                return unverified
+            initial = f.read(10)
+            start = 0
+            if initial.startswith(b"ID3"):
+                if len(initial) != 10 or initial[3] not in (2,3,4) or any(b & 0x80 for b in initial[6:10]):
+                    return unverified
+                tag_size = ((initial[6] & 0x7f) << 21) | ((initial[7] & 0x7f) << 14) | ((initial[8] & 0x7f) << 7) | (initial[9] & 0x7f)
+                start = 10 + tag_size + (10 if initial[5] & 0x10 else 0)
+                if start >= file_size:
+                    return unverified
+            elif initial[:3] == b"ID3":
+                return unverified
+            end = file_size
+            if end >= 128:
+                f.seek(end - 128)
+                if f.read(3) == b"TAG":
+                    end -= 128
+            if end - start >= 32:
+                f.seek(end - 32)
+                if f.read(8) == b"APETAGEX":
+                    f.seek(end - 32 + 12)
+                    raw = f.read(4)
+                    if len(raw) != 4:
+                        return unverified
+                    ape_size = int.from_bytes(raw, "little")
+                    if ape_size < 32 or ape_size > end - start:
+                        return unverified
+                    end -= ape_size
+            if end - start < 8:
+                return unverified
+            # Walk the complete frame region, not merely two prefix headers.
+            # Reject truncation or arbitrary payload trailing after valid frames.
+            pos = start
+            frame_count = 0
+            while pos < end:
+                if pos + 4 > end:
+                    return unverified
+                f.seek(pos)
+                frame_length = _mpeg_layer3_frame_length(f.read(4))
+                if frame_length is None or pos + frame_length > end:
+                    return unverified
+                pos += frame_length
+                frame_count += 1
+            if frame_count < 2 or pos != end:
+                return unverified
+            f.seek(start)
             h = hashlib.sha256()
-            bytes_left = max(0, data_end - data_start)
-            while bytes_left > 0:
-                read_len = min(1024 * 1024, bytes_left)
-                chunk = f.read(read_len)
-                if not chunk:
-                    break
-                h.update(chunk)
-                bytes_left -= len(chunk)
+            left = end - start
+            while left:
+                block = f.read(min(1024 * 1024, left))
+                if not block:
+                    return unverified
+                h.update(block)
+                left -= len(block)
             return "VERIFIED", h.hexdigest()
-    except Exception:
-        return "AUDIO_STREAM_NOT_VERIFIED", ""
+    except (OSError, ValueError, OverflowError, IndexError):
+        return unverified
 
 
 def compute_audio_stream_digest(filepath: str) -> Tuple[str, str]:
-    """根据扩展名分发并计算容器音频数据流的保真哈希。"""
+    """Dispatch conservative audio boundary and payload digest verification."""
     ext = os.path.splitext(filepath)[1].lower()
     if ext == ".flac":
         return compute_flac_audio_stream_digest(filepath)
-    elif ext == ".wav":
+    if ext == ".wav":
         return compute_wav_audio_stream_digest(filepath)
-    elif ext == ".mp3":
+    if ext == ".mp3":
         return compute_mp3_audio_stream_digest(filepath)
     return "AUDIO_STREAM_NOT_VERIFIED", ""
 
@@ -304,7 +405,7 @@ def write_verified_standardized_container(
 
     Unlike os.replace, os.link prevents overwrite on a concurrent target
     creation; failure cleanup affects exclusively our own temporary path.
-    In-place overwrite is intentionally unsupported in v1.8.2.
+    In-place overwrite is intentionally unsupported in v1.8.3.
     """
     source = os.path.realpath(source_audio_path)
     target = os.path.realpath(target_work_path)
@@ -315,7 +416,7 @@ def write_verified_standardized_container(
     if os.path.lexists(target_work_path):
         raise FileExistsError("TARGET_EXISTS: destination is already occupied")
     if os.path.splitext(target)[1].lower() not in ('.flac','.mp3','.wav'):
-        raise ValueError("Unsupported v1.8.2 output container")
+        raise ValueError("Unsupported v1.8.3 output container")
 
     # Check generated pair BEFORE making any copy.
     comp=compare_elrc_ttml(elrc_text,ttml_text)

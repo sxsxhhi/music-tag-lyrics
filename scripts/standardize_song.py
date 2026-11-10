@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.2)。
+"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.3)。
 
 满足《歌曲检测与修补标准》§2.4、§3、§4、§6 全部要求：
 1. 缺省 --mode audit 只读审计，绝无副作用；
@@ -45,8 +45,9 @@ def _read_ttml_for_standardization(raw: str) -> Dict[str, Any]:
     translation and original literal word gaps via the structural parser.
     """
     lines, _, issues = parse_ttml_structural(raw)
-    if issues:
-        raise ValueError("TTML_STRUCTURE_INVALID:" + ",".join(x.code for x in issues))
+    blocking_issues = [item for item in issues if item.blocking]
+    if blocking_issues:
+        raise ValueError("TTML_STRUCTURE_INVALID:" + ",".join(x.code for x in blocking_issues))
     if not lines:
         raise ValueError("TTML_NO_LINES")
     provenance = {}
@@ -68,7 +69,9 @@ def _read_ttml_for_standardization(raw: str) -> Dict[str, Any]:
                           'text':ln.text,'words':wrds,
                           'translation':ln.translation,
                           'semantic_role':ln.role})
-    return {'lines':converted,'tags':provenance,'time_precision':3}
+    return {'lines':converted,'tags':provenance,'time_precision':3,
+            'ttml_structure_notices': [dict(code=i.code, message=i.message, blocking=False)
+                                       for i in issues if not i.blocking]}
 
 
 def _stage_sidecar(directory: str, name: str, content: str) -> str:
@@ -210,6 +213,11 @@ def standardize_single_song(
         lrc_tags=parse_lrc(active_elrc).get('tags',{})
         parsed.setdefault('tags',{}).update({k:v for k,v in lrc_tags.items()
                        if k in ('re','ti','ar') and v})
+    # Preserve non-blocking structural provenance in the public audit report.
+    # Inferred div bounds are a supported input compatibility path, not a
+    # reason to return INPUT_PARSE_FAILED or silently discard the warning.
+    for notice in parsed.get('ttml_structure_notices', []):
+        issue(notice['code'], notice['message'], False)
     parsed.setdefault('tags',{}).update({k:v for k,v in (
         ('title',embedded.get('title')),('artist',embedded.get('artist')),
         ('lyricist',embedded.get('lyricist')),('composer',embedded.get('composer')) )

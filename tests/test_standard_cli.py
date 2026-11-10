@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 from mutagen.flac import FLAC
 from scripts.standardize_song import standardize_single_song
 from tests._testkit import run
+from tests._synthetic_flac import SYNTHETIC_FLAC_BYTES
 
 # The CLI fixture is deliberately monolingual: a same-timestamp Chinese
 # line in bare ELRC has no trustworthy translation provenance and must trigger
@@ -28,12 +29,11 @@ _TEST_ELRC = (
 
 
 def _create_minimal_flac(filepath: str) -> None:
-    streaminfo = b"\x10\x00\x10\x00\x00\x00\x00\x00\x00\x00\x0a\x00\x01\x00\x00\x00" + b"\x00" * 18
-    header = b"fLaC\x80\x00\x00\x22" + streaminfo
     with open(filepath, "wb") as f:
-        f.write(header)
+        f.write(SYNTHETIC_FLAC_BYTES)
     f_obj = FLAC(filepath)
-    f_obj.add_tags()
+    if f_obj.tags is None:
+        f_obj.add_tags()
     f_obj["title"] = ["测试曲目"]
     f_obj["artist"] = ["测试歌手"]
     f_obj["lyrics"] = [_TEST_ELRC]

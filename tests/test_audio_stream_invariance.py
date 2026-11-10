@@ -33,6 +33,7 @@ from core.adapters.container_tag_adapter import (
 )
 from core.utils.io_safe import sha256_file
 from tests._testkit import run
+from tests._synthetic_flac import SYNTHETIC_FLAC_BYTES
 
 _TEST_ELRC = "[00:01.000]<00:01.000>Audio<00:02.000> stream<00:03.000>\n"
 _TEST_TTML = (
@@ -47,13 +48,10 @@ _TEST_TTML = (
 )
 
 
-def _create_test_flac(filepath: str, extra_audio_bytes: bytes = b"FLAC_AUDIO_PAYLOAD") -> None:
-    streaminfo = b"\x10\x00\x10\x00\x00\x00\x00\x00\x00\x00\x0a\x00\x01\x00\x00\x00" + b"\x00" * 18
-    header = b"fLaC\x80\x00\x00\x22" + streaminfo
+def _create_test_flac(filepath: str) -> None:
     with open(filepath, "wb") as f:
-        f.write(header + extra_audio_bytes)
+        f.write(SYNTHETIC_FLAC_BYTES)
     flac = FLAC(filepath)
-    flac.add_tags()
     flac["title"] = ["Original FLAC"]
     flac.save()
 

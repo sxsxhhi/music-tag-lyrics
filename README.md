@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sxsxhhi/music-tag-lyrics/releases"><img src="https://img.shields.io/github/v/release/sxsxhhi/music-tag-lyrics?color=brightgreen&style=flat-square" alt="Release"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10--3.13-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-663%20passed%20%7C%2011%20skipped-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Offline%20Tests-auto%20discovered-brightgreen?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/Core%20Deps-Pure%20Python-blue?style=flat-square" alt="Dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/Audio%20Containers-FLAC%20%7C%20MP3%20%7C%20M4A%20%7C%20WAV-informational?style=flat-square" alt="Containers"></a>
   <a href="#"><img src="https://img.shields.io/badge/Lyrics-Enhanced%20LRC%20%2F%20SPL-orange?style=flat-square" alt="Standard"></a>
@@ -141,10 +141,10 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 
 1. **三段时钟输出标准**：所有新导出的 Apple TTML 标签严格使用 W3C TTML1 §10.3 规定的 `HH:MM:SS.mmm` 标准三段时钟格式（如 `begin="00:01:23.456"`），杜绝两段式在跨平台解析时的混淆；
 2. **输入宽容与历史兼容**：兼容解析 Apple Music / AMLL 社区历史两段式时钟（`01:23.456`）及以秒为单位的时钟偏移格式（`12.345s`），在读取阶段无损归一化为 Canonical 毫秒基准；
-3. **输出 Profile 范围声明**：本项目验证的是所选输出 Profile 与 Apple Music、AMLL 及各类现代流光播放器的实际渲染兼容性，并非 W3C/Apple 全量 XSD 认证；
+3. **输出 Profile 范围声明**：本项目通过独立时钟格式断言、结构化回读与双格式核验验证所选输出 Profile；尚未对所有 Apple/AMLL 播放器完成实机兼容性测试，也并非 W3C/Apple 全量 XSD 认证；
 4. **可审计的结构化阻断（绝不静默吞词）**：
    - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
-   - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断，拒绝生成残缺输出。
+   - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断。未知直接 XML 文本节点、无法处理的嵌套节点或译文标记，同样阻断，不允许静默忽略后返回一致性 PASS。
 
 ---
 
@@ -180,7 +180,7 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 > 1. **双入口安全契约明确分离**：
 >    - `process_song.py`：默认允许在安全临时副本中更新内嵌标签，校验成功后原子替换；`--no-tags` 纯歌词模式绝不碰音频内嵌标签；`--lyrics-only` 仅更新歌词帧，保护已有人工元数据。
 >    - `standardize_song.py`：`--in-place` 原地改写已被显式禁用；必须通过 `--output-dir` 指定独立输出目录，且**绝对拒绝覆盖任何已存在的同名文件**；未验证容器（如 M4A）不执行标准化写回。
-> 2. **音频主体流不可变校验 (v1.8.3)**：FLAC、MP3、WAV 写入前后自动计算容器音频帧/PCM 数据流哈希，一旦检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若音频边界不可判定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。
+> 2. **音频主体流不可变校验 (v1.8.3)**：FLAC、MP3、WAV 写入前后自动计算容器音频帧/PCM 数据流哈希，一旦检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；空音轨、元数据长度越界、无法辨认的帧边界等情形会安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。`VERIFIED` 仅表示**已确认音频字节区间且写前写后摘要一致**，并非完整音频解码、CRC 或播放器兼容性认证。当前 MP3 边界验证主要支持常规 MPEG Layer III 帧链；不支持的罕见编码采用安全拒绝策略。
 > 3. **事务失败自动干净回滚**：写回或报告输出过程中如果遇到任何错误（例如磁盘写满或权限不足），程序会自动将本次创建的文件干净删除回滚，绝不留下半成品垃圾，更不损坏源文件。
 
 ---
@@ -216,12 +216,13 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 本项目配备了严谨的离线工程测试套件，涵盖各种冷门编码、极端时间戳、双声部念白与边界容器：
 
 ```bash
-# 1. 完整开发仓库测试：运行全部 48 个套件（674 项用例：663 通过 / 11 条件跳过，0 失败）
-# （注：11 条跳过为可选 GPU/声学依赖未加载时的预期条件跳过，核心安全与格式测试 0 跳过）
+# 1. 开发仓库：自动发现全部 tests/test_*.py，含仓库专用发布测试
 python -B tests/run_all.py
 
-# 2. 纯净分发安装包测试：运行全部 43 个套件（离线分发包实测口径）
+# 2. 分发 ZIP：在新解压目录执行同一命令，套件数依分发清单而定
 python -B tests/run_all.py
+# v1.8.3 独立安全加固候选的分发套件：44 套件、663 用例；
+# 请以当前解释器的实际 PASS / SKIP / FAIL 统计为准。
 
 # 3. 快速运行指定模块测试
 python -B tests/run_all.py -k line_axis
@@ -233,6 +234,7 @@ python -B tests/run_all.py -k canto
 ## 📜 版本更新历史 (Changelog)
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
+- **独立复审增量加固（修复候选）**：解决非阻断 `DIV_BOUNDARY_INFERRED` 在实际 CLI 被误判为失败的问题；检测 p/body/div 中无法保真的未知 XML 节点与嵌套译文；收紧 FLAC/MP3/WAV 音频数据区间有效性与帧边界验收，合成测试改用包含真实音频帧的 FLAC。提交 GitHub 后应重新构建官方 Manifest 与 Release 资产。
 - **TTML 时间输出三段式标准化**：输出严格遵循 W3C `HH:MM:SS.mmm` 时钟格式，消除两段式歧义；输入兼容历史 `MM:SS.mmm` 与秒级偏移；
 - **div 边界推导与结构化阻断**：无声明边界的单 `div` 自动推导子行起止并记录 `DIV_BOUNDARY_INFERRED`；对 `x-bg`、`x-roman`、Ruby、多 `div` 及相对时序模型实施严格结构化阻断，杜绝静默吞词；
 - **大文件流式哈希与音频流不可变验证**：替换全量读入为分块流式哈希；FLAC/MP3/WAV 容器写回前后执行容器级音频帧数据流摘要比对，杜绝音频数据意外篡改；
