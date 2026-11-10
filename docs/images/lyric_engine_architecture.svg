@@ -75,7 +75,7 @@
   <rect width="960" height="480" rx="14" fill="var(--bg)"/>
 
   <!-- Header -->
-  <text x="24" y="32" class="title">🎵 music-tag-lyrics v1.8.2 全景架构与 Canonical 标准化流水线</text>
+  <text x="24" y="32" class="title">🎵 music-tag-lyrics v1.8.3 全景架构与 Canonical 标准化流水线</text>
   <text x="24" y="49" class="subtitle">直连全球曲库与 ISRC 网络 · 粤语/国语双声学 CTC 打轴 · Canonical 双向毫秒对齐与前奏流光调度 · 绝不破坏原音频本体</text>
 
   <!-- ==================== 1. 音频输入与标签规范 (x=20, w=130) ==================== -->
@@ -186,7 +186,7 @@
   <!-- ==================== 4. Canonical 标准化中枢 (x=658, w=172) ==================== -->
   <rect x="658" y="66" width="172" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
   <rect x="666" y="76" width="62" height="15" rx="3" fill="var(--accent-rose-bg)"/>
-  <text x="670" y="87" class="badge-txt" fill="var(--accent-rose)">v1.8.2 核心</text>
+  <text x="670" y="87" class="badge-txt" fill="var(--accent-rose)">v1.8.3 核心</text>
   <text x="666" y="108" class="sect-title">⚡ Canonical 中枢</text>
 
   <!-- Box 4.1: Double Check -->
