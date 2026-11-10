@@ -16,6 +16,15 @@
 
 ---
 
+> [!TIP]
+> ### 🤖 AI Coding Agent 一键安装使用指令 (One-Click Prompt)
+> 如果你正在使用 **Cursor**、**Google Antigravity**、**Claude Desktop**、**Windsurf** 等 AI 编程助手，直接复制下方这句话发给 AI 即可：
+> ```text
+> 帮我从 https://github.com/sxsxhhi/music-tag-lyrics/releases/latest 下载安装最新的 music-tag-lyrics skill，并运行离线测试套件验证环境可用性。
+> ```
+
+---
+
 ## 🎧 它能帮你解决哪些烦恼？
 
 每个认真整理本地无损曲库的人，几乎都踩过这些让人无可奈何的坑：
