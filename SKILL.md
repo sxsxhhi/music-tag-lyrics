@@ -202,7 +202,7 @@ flowchart TD
 - 解析：`core/parsers/`（`lrc_parser.py`、`ttml_parser.py`、`krc_parser.py`、`yrc_parser.py`、`qrc_parser.py`）
 - 解密：`core/decryptors/`（`krc_xor.py`、`qrc_des.py`）
 - 共享：`core/utils/`（http / time_utils / version_guard / text_utils / text_match / cache_paths / io_safe）
-- 离线测：`python tests/run_all.py`（当前分发修复候选：40 个套件 / 615 项用例，614 PASS / 1 SKIP / 0 FAIL；本机完整 Git 仓库须独立复检）。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
+- 离线测：`python -B tests/run_all.py`（45 个套件 / 653 项用例，642 PASS / 11 SKIP / 0 FAIL；分发包内为 40 套件 / 615 项用例）。⚠️ 本仓用例为函数式三态 runner，**不要**用 `unittest discover`（会输出 `NO TESTS RAN` 且退出码 0）。
 
 仓库：`https://github.com/sxsxhhi/music-tag-lyrics`
 
@@ -373,7 +373,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、双格式标准化与全曲内容治理（v1.8.2 修复候选）
+## 十一、双格式标准化与全曲内容治理（v1.8.2）
 
 > **独立、显式启用的新入口**：`scripts/standardize_song.py`。普通的
 > `scripts/process_song.py` 与旧版检索/声学/标签处理默认逻辑保持不变。
