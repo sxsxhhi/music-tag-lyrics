@@ -4,12 +4,12 @@
   "version": "1.8.3",
   "release_tag": "v1.8.3",
   "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
-  "build_timestamp_utc": "2026-11-10T13:46:26.525711+00:00",
-  "git_commit": "88d718f2a875561f196e43b03cf9dfa66a2bd27c",
+  "build_timestamp_utc": "2026-11-10T14:26:48.481109+00:00",
+  "git_commit": "9bd09890c11c2d2ec004b17f62290c87b1f08898",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.3.zip",
     "size_bytes": 1999697,
-    "sha256": "299bc405dac2778abb58b15ad88bec9ab5f698171385a9fa28c54ecd5809bc23",
+    "sha256": "e1d6f8e8416d9df6a9acc8f67aae8e7db9eea8fb38b11f90b665fea6c4dd2701",
     "file_count": 126
   },
   "members": {
@@ -70,7 +70,7 @@
     "core/utils/version_guard.py": "b5680c663fa4bda1cd683045ff6fddeb223b05be70e759f6c4cc0f4f0516bd69",
     "core/version.py": "f55e78f49c94fdb1d8d70af2945c9a8a0fc607ca82013c340f7a0a245dbfb244",
     "docs/images/cover_art_pipeline.svg": "15a5826fa9a83c049392f042cae094bad5e7e4ba7e4b003f35fe7eaedd4e6440",
-    "docs/images/lyric_engine_architecture.svg": "58a00e677aa4f2944255d167b99c965118b4e829012e01dcca0e7913370a75c6",
+    "docs/images/lyric_engine_architecture.svg": "81a561751fb75fa3b4456133c1d837260dccdd5c3d2ee3f0d75c3a648ec19bc9",
     "requirements-acoustic.txt": "0058a135a0d110bf937dc640222c0714acf0ad5823747495efacf6b3401ed86e",
     "requirements.txt": "038adbe637424dece44e3ee54b21c6ae30e410f6ad13d0bfa234b7b550656b81",
     "scripts/check_no_leaks.py": "65cf937f41e427d0582ac26a03a2d12eee5225b0e474809b95d50c7275ea20e5",
