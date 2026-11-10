@@ -11,10 +11,17 @@ NS_XML = "http://www.w3.org/XML/1998/namespace"
 
 
 def ms_to_ttml_time(ms: int) -> str:
-    if ms < 0: raise ValueError("Negative canonical timestamp")
-    minutes, rem = divmod(ms, 60000)
+    """Format milliseconds into strict W3C TTML clock-time (HH:MM:SS.mmm).
+    
+    Uses pure integer division without floating-point accumulation errors.
+    Hours may exceed 99 if needed; minutes and seconds are always 00-59.
+    """
+    if ms < 0:
+        raise ValueError("Negative canonical timestamp")
+    hours, rem = divmod(ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
     seconds, millis = divmod(rem, 1000)
-    return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
 
 
 def _prefix(line) -> str:

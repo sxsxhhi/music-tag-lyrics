@@ -93,7 +93,7 @@ def test_counter_word_time_offset_2ms():
     ttml = render_ttml_v182(c)
 
     # 篡改 TTML 中的一个 span 时间
-    corrupted_ttml = ttml.replace('begin="00:25.000"', 'begin="00:25.002"')
+    corrupted_ttml = ttml.replace('begin="00:00:25.000"', 'begin="00:00:25.002"')
     res = compare_elrc_ttml(elrc, corrupted_ttml)
     assert res.passed is False
     codes = [iss.code for iss in res.issues]
@@ -106,7 +106,7 @@ def test_counter_div_boundary_delta_3ms():
     elrc = render_elrc_v182(c)
     ttml = render_ttml_v182(c)
 
-    corrupted_ttml = ttml.replace('end="00:32.000"', 'end="00:32.003"')
+    corrupted_ttml = ttml.replace('end="00:00:32.000"', 'end="00:00:32.003"')
     res = compare_elrc_ttml(elrc, corrupted_ttml)
     assert res.passed is False
     codes = [iss.code for iss in res.issues]
