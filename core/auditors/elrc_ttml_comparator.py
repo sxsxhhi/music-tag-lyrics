@@ -168,16 +168,16 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
     except (ET.ParseError,ValueError) as exc:
         return [],(0,0),[ComparisonIssue('XML_SYNTAX_ERROR',f'Invalid XML: {type(exc).__name__}')]
 
-    # Timing model checks: reject unsupported dur or timeContainer="seq"
+    # Timing model checks: reject unsupported dur on div/p/span or timeContainer="seq"
     for elem in root.iter():
         if elem.tag.endswith('head') or elem.tag.endswith('metadata'):
             continue
-        if 'dur' in elem.attrib:
-            problems.append(ComparisonIssue('TIMING_MODEL_UNSUPPORTED', f"dur attribute on <{elem.tag.split('}')[-1]}> is unsupported"))
-            break
         tc = elem.attrib.get('timeContainer') or elem.attrib.get('{http://www.w3.org/ns/ttml}timeContainer')
         if tc and tc.lower() in ('seq', 'par'):
             problems.append(ComparisonIssue('TIMING_MODEL_UNSUPPORTED', f"timeContainer='{tc}' timing model is unsupported"))
+            break
+        if (elem.tag.endswith('div') or elem.tag.endswith('p') or elem.tag.endswith('span')) and 'dur' in elem.attrib:
+            problems.append(ComparisonIssue('TIMING_MODEL_UNSUPPORTED', f"dur attribute on <{elem.tag.split('}')[-1]}> is unsupported"))
             break
 
     # Declared agents
