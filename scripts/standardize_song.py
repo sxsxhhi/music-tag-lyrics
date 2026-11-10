@@ -29,8 +29,12 @@ from core.adapters.container_tag_adapter import (
     read_container_tags,
     write_verified_standardized_container,
 )
-from core.auditors.elrc_ttml_comparator import compare_elrc_ttml, verify_canonical_exports, parse_ttml_structural
+from core.auditors.elrc_ttml_comparator import (
+    compare_elrc_ttml, verify_canonical_exports,
+    parse_ttml_structural, parse_elrc_structural,
+)
 from core.cleaners.content_classifier import classify_and_clean_all_lines
+from core.models.canonical_lyrics import IssueSeverity
 from core.parsers.lrc_parser import parse_lrc
 from core.parsers.ttml_parser import parse_ttml
 from core.renderers.standard_elrc_renderer import render_elrc_v182
@@ -154,18 +158,40 @@ def standardize_single_song(
     embedded=read_container_tags(audio_abs)
     noext,_=os.path.splitext(audio_abs)
     def read_optional(f):
-        return Path(f).read_text('utf-8') if Path(f).is_file() else ''
-    disk_elrc=read_optional(noext+'.lrc') or read_optional(noext+'.spl')
-    disk_ttml=read_optional(noext+'.ttml')
-    active_elrc=embedded.get('lyrics') or disk_elrc
-    active_ttml=embedded.get('ttml') or disk_ttml
+        path = Path(f)
+        if not path.is_file():
+            return ''
+        # Bound disk sidecar reads *before* allocating/decode. The strict
+        # structural parsers enforce the same 16 MiB source size ceiling.
+        if path.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError('LYRICS_SOURCE_TOO_LARGE: ' + path.suffix.lower())
+        return path.read_text(encoding='utf-8-sig')
+    # Read every source independently. Selecting the first nonempty version
+    # *before* comparison would silently discard conflicting embedded/sidecar
+    # lyrics and misleadingly report all formats as consistent.
+    sources = {
+        'embedded_elrc': embedded.get('lyrics') or '',
+        'sidecar_lrc': read_optional(noext+'.lrc'),
+        'sidecar_spl': read_optional(noext+'.spl'),
+        'embedded_ttml': embedded.get('ttml') or '',
+        'sidecar_ttml': read_optional(noext+'.ttml'),
+    }
+    elrc_keys=('embedded_elrc','sidecar_lrc','sidecar_spl')
+    ttml_keys=('embedded_ttml','sidecar_ttml')
+    disk_elrc = sources['sidecar_lrc'] or sources['sidecar_spl']
+    disk_ttml = sources['sidecar_ttml']
+    active_elrc = next((sources[k] for k in elrc_keys if sources[k]), '')
+    active_ttml = next((sources[k] for k in ttml_keys if sources[k]), '')
     report={
         'version':__version__,'audio':audio_abs,'mode':mode,'status':'PASS',
         'has_embedded_elrc':bool(embedded.get('lyrics')),
         'has_embedded_ttml':bool(embedded.get('ttml')),
         'has_sidecar_elrc':bool(disk_elrc),'has_sidecar_ttml':bool(disk_ttml),
         'baseline_comparison':None,'format_audit':'NO_LYRICS',
-        'issues':[],'prelude_plan':None,'actions_taken':[]}
+        'issues':[],'prelude_plan':None,'actions_taken':[],
+        'source_inventory': {k: {'present': bool(v), 'sha256': hashlib.sha256(v.encode('utf-8')).hexdigest() if v else None}
+                             for k, v in sources.items()},
+        'source_audit': 'PENDING'}
     # Track precisely which paths this invocation created. A report failure
     # must not leave apparently successful outputs behind.
     committed_outputs = []
@@ -186,14 +212,83 @@ def standardize_single_song(
                 issue('REPORT_WRITE_FAILED', f"{type(exc).__name__}: {str(exc)}")
         return report
 
+    # Strictly validate *all* available sources, including those that will
+    # not be used for rendering. No selected high-priority source can hide a
+    # malformed or conflicting lower-priority source.
+    def _source_signature(data, fmt):
+        if fmt == 'ELRC':
+            parsed_lines = parse_elrc_structural(data)
+            # Differential check: the legacy parser feeds the actual
+            # canonical standardizer. A strict structural comparison alone is
+            # insufficient when that parser could invent or omit word spans.
+            legacy = parse_lrc(data)
+            if legacy.get('unparsed_lines') or len(legacy['lines']) != len(parsed_lines):
+                raise ValueError('ELRC_PARSER_DIVERGENCE: unconsumed or duplicated lyric line')
+            for strict_line, legacy_line in zip(parsed_lines, legacy['lines']):
+                if (strict_line.start_ms != legacy_line['start'] or
+                        strict_line.text.strip() != legacy_line['text'].strip()):
+                    raise ValueError('ELRC_PARSER_DIVERGENCE: text or line time changed')
+                if strict_line.words:
+                    legacy_words = legacy_line.get('words', [])
+                    if (len(strict_line.words) != len(legacy_words) or
+                            any((a.text, a.start_ms, a.end_ms) !=
+                                (str(b['text']), int(b['start']), int(b['end']))
+                                for a,b in zip(strict_line.words, legacy_words))):
+                        raise ValueError('ELRC_PARSER_DIVERGENCE: acoustic word axis changed')
+                    if strict_line.end_ms != legacy_line['end']:
+                        raise ValueError('ELRC_PARSER_DIVERGENCE: explicit line end changed')
+            return tuple((line.start_ms, line.end_ms, line.text,
+                          tuple((w.text,w.start_ms,w.end_ms) for w in line.words))
+                         for line in parsed_lines)
+        parsed_lines, bound, checks = parse_ttml_structural(data)
+        blocking = [i.code for i in checks if i.blocking]
+        if blocking:
+            raise ValueError('TTML_STRUCTURE_INVALID:' + ','.join(blocking))
+        return (bound,tuple((line.start_ms,line.end_ms,line.text,
+                      tuple((w.text,w.start_ms,w.end_ms) for w in line.words),
+                      line.translation or '',line.role,line.is_prelude)
+                     for line in parsed_lines))
+
+    validated = {}
+    invalid_sources = []
+    for name, data in sources.items():
+        if not data:
+            continue
+        try:
+            validated[name] = _source_signature(data, 'TTML' if name in ttml_keys else 'ELRC')
+        except (ValueError, TypeError, UnicodeError) as exc:
+            invalid_sources.append(name)
+            issue('SOURCE_LYRICS_INVALID', f'{name}: {type(exc).__name__}: {exc}')
+            issue('INPUT_PARSE_FAILED', f'Invalid source {name}: {exc}')
+    for family in (elrc_keys,ttml_keys):
+        available=[name for name in family if name in validated]
+        if len(available)>1:
+            baseline_name=available[0]
+            for name in available[1:]:
+                if validated[name]!=validated[baseline_name]:
+                    issue('SOURCE_LYRICS_CONFLICT', f'{baseline_name} differs from {name}')
+    report['source_audit'] = 'CONFLICT_OR_INVALID' if report['status']!='PASS' else 'VALIDATED_PENDING_FORMAT'
+    if report['status']!='PASS':
+        report['format_audit']='SOURCE_CONFLICT_OR_INVALID'
+        if invalid_sources:
+            report['status']='BLOCKED'
+        return finish()
+
     if active_elrc and active_ttml:
         baseline=compare_elrc_ttml(active_elrc,active_ttml)
         report['baseline_comparison']={'passed':baseline.passed,
             'max_time_delta_ms':baseline.max_time_delta_ms,
             'issues':[i.code for i in baseline.issues]}
         report['format_audit']='CONSISTENT' if baseline.passed else 'INCONSISTENT'
-        if not baseline.passed:issue('INPUT_FORMATS_CONFLICT','Existing ELRC/TTML differ')
+        if not baseline.passed:
+            issue('INPUT_FORMATS_CONFLICT','Existing ELRC/TTML differ')
+            report['source_audit']='CONFLICT_OR_INVALID'
+        else:
+            report['source_audit']='CONSISTENT'
     elif active_elrc or active_ttml:
+        n_sources = sum(bool(x) for x in sources.values())
+        report['source_audit'] = ('SAME_FORMAT_CONSISTENT' if n_sources > 1
+                                  else 'ONE_SOURCE_ONLY')
         report['format_audit']='ONE_FORMAT_ONLY'
         issue('ONE_FORMAT_ONLY','Cannot claim baseline cross-format consistency',False)
         if mode=='audit': report['status']='ONE_FORMAT_ONLY'
@@ -214,9 +309,14 @@ def standardize_single_song(
         return finish()
     # Preserve re: attribution even when TTML was preferred over ELRC.
     if active_elrc:
-        lrc_tags=parse_lrc(active_elrc).get('tags',{})
-        parsed.setdefault('tags',{}).update({k:v for k,v in lrc_tags.items()
-                       if k in ('re','ti','ar') and v})
+        for name in elrc_keys:
+            if not sources[name]:
+                continue
+            lrc_tags=parse_lrc(sources[name]).get('tags',{})
+            # Keep source attribution even when only the secondary sidecar
+            # carries a mandatory origin notice.
+            parsed.setdefault('tags',{}).update({k:v for k,v in lrc_tags.items()
+                           if k in ('re','ti','ar') and v})
     # Preserve non-blocking structural provenance in the public audit report.
     # Inferred div bounds are a supported input compatibility path, not a
     # reason to return INPUT_PARSE_FAILED or silently discard the warning.
@@ -242,6 +342,30 @@ def standardize_single_song(
     canonical=classify_and_clean_all_lines(parsed,ref_lyrics_data=reference,
         song_title=embedded.get('title',''),song_artist=embedded.get('artist',''),
         audio_path=audio_abs)
+    if active_ttml:
+        # The Apple/iTunes p-level semantic role is source evidence, not a
+        # decorative hint. Refuse successful output if semantic classification
+        # would re-label or remove a declared vocal/content role.
+        by_index={line.source_index:line for line in canonical.lines}
+        for original_index, original_line in enumerate(parsed.get('lines', [])):
+            declared=str(original_line.get('semantic_role') or '').upper()
+            if declared in ('SINGING','SPOKEN_CONTENT','SAMPLE_EXPLANATION',
+                            'PERFORMER_CUE','UNKNOWN','TRANSLATION'):
+                resolved=by_index.get(original_index)
+                if resolved is None or resolved.role.value!=declared:
+                    canonical.add_issue('INPUT_SEMANTIC_ROLE_CHANGED',
+                        severity=IssueSeverity.REVIEW_REQUIRED,
+                        source_index=original_index,
+                        action='BLOCK_UNVERIFIED_ROLE_RECLASSIFICATION',blocking=True)
+                elif declared in ('SAMPLE_EXPLANATION','PERFORMER_CUE') and original_line.get('words'):
+                    src_words=original_line['words']
+                    if (len(src_words)!=1 or
+                            int(src_words[0]['start'])!=int(original_line['start']) or
+                            int(src_words[0]['end'])!=int(original_line['end'])):
+                        canonical.add_issue('UNSUPPORTED_TIMED_NONSINGING_WORDS',
+                            severity=IssueSeverity.REVIEW_REQUIRED,
+                            source_index=original_index,
+                            action='RETAIN_SOURCE_REQUIRE_REVIEW',blocking=True)
     plan=plan_prelude_ab(canonical)
     report['prelude_plan']={'mode':plan.mode,'t_sing_ms':plan.t_sing_ms,
         'title_window':plan.title_window,'lyricist_window':plan.lyricist_window,

@@ -146,6 +146,21 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
    - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
    - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断。未知直接 XML 文本节点、无法处理的嵌套节点或译文标记，同样阻断，不允许静默忽略后返回一致性 PASS。
 
+### 🔎 逐来源歌词完整性审计（v1.8.3 独立整改）
+
+`standardize_song.py` 在选择输入之前，会分别登记并核验最多五个来源：**内嵌 ELRC、同名 `.lrc`、同名 `.spl`、内嵌 TTML、同名 `.ttml`**。同格式来源使用归一化后的唱词、字块时间、译文及结构信息对账；如果存在差异，报告 `SOURCE_LYRICS_CONFLICT` 并停止自动交付，绝不以「内嵌优先」静默覆盖其他来源。
+
+严格标准化入口增加以下保护：
+
+- **全文消费验证**：非法 LRC 元数据尾随文字、未闭合头、未知 ELRC `<...>` 行内片段以及不受支持的方括号词级时间标记，不会被跳过后宣称 `PASS`。常见文本中的字面 `<` 仍可作为歌词保留；语义无法确认时阻断并复核。
+- **有效时间轴**：`[offset]` 以整数毫秒同时作用于行级和逐字时间；重复、非法或导致负时间的偏移值被拒绝，避免「对账为 0ms 差异，实际输出却移动了时间」。无明确终点的最后一个逐字字块不再通过猜测 500ms 时长交付。
+- **双解析器一致性**：独立结构比较器与既有 LRC 解析器必须在歌词、时间及字块上给出相同结果；否则返回 `ELRC_PARSER_DIVERGENCE`，防止旧解析器暗中补时或漏字。
+- **语义角色保护**：不受支持的 TTML `p` 角色、未验证的 `P_` 前奏标记或会改变已声明角色/声学字轴的输入，要求人工复核。
+
+`source_inventory` 仅记录每个来源是否存在及原始文本的 SHA-256，**不把原始歌词复制进审计清单**。`source_audit` 反映来源校验状态；`format_audit` 另行记录 ELRC/TTML 之间的交叉格式一致性。这两项不能互相替代。
+
+> 本轮策略是 **Fail-closed** 而非「自动处理任何历史方言」：不受支持但可能包含演唱内容的结构，会得到可复核的阻断结果，而不会被修剪后输出。普通多平台歌词检索入口 `process_song.py` 保留原有兼容处理策略。
+
 ---
 
 ## 🏛️ 工作原理与架构设计
@@ -221,7 +236,7 @@ python -B tests/run_all.py
 
 # 2. 分发 ZIP：在新解压目录执行同一命令，套件数依分发清单而定
 python -B tests/run_all.py
-# v1.8.3 独立安全加固候选的分发套件：44 套件、663 用例；
+# v1.8.3 R9 独立修复候选：45 个分发套件、706 项用例；
 # 请以当前解释器的实际 PASS / SKIP / FAIL 统计为准。
 
 # 3. 快速运行指定模块测试
@@ -234,6 +249,7 @@ python -B tests/run_all.py -k canto
 ## 📜 版本更新历史 (Changelog)
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
+- **R9 独立输入完整性整改（待本机正式合并）**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试。本轮交付为候选 ZIP，**不是已经过本机正式发布门禁的 Release**。
 - **独立复审增量加固（第六轮修复）**：解决容器直接非空白文字（`body.text`/`div.text`/`p.tail`）静默丢弃问题，`span.tail` 未打轴文字禁止伪造声学字轴时间；收紧 WAV 验证，校验 RIFF 严格尾部边界与 `fmt ` 核心参数（采样率、声道、块对齐与字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`；解决非阻断 `DIV_BOUNDARY_INFERRED` 在实际 CLI 被误判问题；收紧 FLAC/MP3 音频数据区间有效性与连续帧边界验收，合成测试改用包含真实音频帧的 FLAC。提交 GitHub 后应重新构建官方 Manifest 与 Release 资产。
 - **TTML 时间输出三段式标准化**：输出严格遵循 W3C `HH:MM:SS.mmm` 时钟格式，消除两段式歧义；输入兼容历史 `MM:SS.mmm` 与秒级偏移；
 - **div 边界推导与结构化阻断**：无声明边界的单 `div` 自动推导子行起止并记录 `DIV_BOUNDARY_INFERRED`；对 `x-bg`、`x-roman`、Ruby、多 `div` 及相对时序模型实施严格结构化阻断，杜绝静默吞词；

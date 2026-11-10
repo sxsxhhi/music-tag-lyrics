@@ -11,8 +11,17 @@ from dataclasses import dataclass,field
 from typing import Any,List,Optional,Tuple
 from ..utils.time_utils import parse_time_string_to_ms
 
-ELINE=re.compile(r"^\[(\d+:\d+(?:\.\d+)?)\](.*)$")
-ETAG=re.compile(r"<(\d+:\d+(?:\.\d+)?)>([^<]*)")
+# Only a complete metadata line can be discarded. A partial tag or text after
+# a tag is user content of uncertain meaning, not permission to delete it.
+ELINE=re.compile(r"^\[(\d+:\d{1,2}(?:\.\d{1,3})?)\](.*)$")
+ETAG=re.compile(r"<(\d+:\d{1,2}(?:\.\d{1,3})?)>")
+EMETA=re.compile(r"^\[([A-Za-z][A-Za-z0-9_-]*):([^\]\r\n]*)\]$")
+# Known display metadata. Unknown extensions are not proof of dispensability.
+KNOWN_ELRC_META=frozenset({
+    'ti','ar','al','by','offset','length','hash','sign','qq','total',
+    're','au','ve','id','language','la'
+})
+ELRC_TAG_FRAGMENT=re.compile(r"<[^>]*>")
 NT="http://www.w3.org/ns/ttml"
 NI="http://music.apple.com/lyric-ttml-internal"
 
@@ -135,30 +144,108 @@ def _time_ttml(text: str, profile: str = "APPLE_AMLL_INPUT") -> int:
     return t
 
 
+def _elrc_ms(raw: str) -> int:
+    """Validate ELRC's MM:SS[.fff] values before interpreting any time."""
+    pieces = raw.split(':', 1)
+    if len(pieces) != 2 or not pieces[0].isdigit():
+        raise ValueError('ELRC_TIME_INVALID: malformed minute field')
+    if not re.fullmatch(r'[0-5]\d(?:\.\d{1,3})?', pieces[1]):
+        raise ValueError('ELRC_TIME_INVALID: seconds out of range or malformed')
+    result = _time_elrc(raw)
+    if result < 0:
+        raise ValueError('ELRC_TIME_INVALID: negative timestamp')
+    return result
+
+
+def _elrc_shift(raw_ms: int, offset_ms: int) -> int:
+    shifted = raw_ms + offset_ms
+    if shifted < 0:
+        # Legacy LRC parsing clamps negative values to zero, losing intervals.
+        # Strict cross-format checking must not claim the clamped axis is exact.
+        raise ValueError('ELRC_OFFSET_UNREPRESENTABLE: negative effective time')
+    return shifted
+
+
+def _reject_unknown_elrc_markup(chunk: str) -> None:
+    # A bare '<' such as 'I < 3' is literal; an unrecognized <...> is
+    # ambiguous markup. Never drop it or silently assign it an acoustic time.
+    if ELRC_TAG_FRAGMENT.search(chunk):
+        raise ValueError('ELRC_UNKNOWN_INLINE_MARKUP: unrecognized <...> fragment')
+
+
 def parse_elrc_structural(text:str)->List[ParsedLine]:
-    if len(text.encode('utf-8'))>16*1024*1024:raise ValueError("ELRC exceeds allowed size")
-    res=[]
-    for raw in text.splitlines():
-        if not raw.strip():continue
-        if re.match(r'^\[[a-zA-Z][a-zA-Z0-9_-]*:',raw):continue
-        m=ELINE.match(raw)
+    """Parse all recognized ELRC content, failing closed on unconsumed data.
+
+    The parser validates metadata as complete lines, checks *all* gaps around
+    word tags, and applies [offset] to both line and word axes exactly once.
+    This strict path is for standards/audit; legacy collection remains tolerant.
+    """
+    if not isinstance(text, str) or len(text.encode('utf-8')) > 16 * 1024 * 1024:
+        raise ValueError('ELRC_INVALID_INPUT: not text or too large')
+    res = []
+    offset = 0
+    saw_offset = False
+    for raw in text.lstrip('\ufeff').splitlines():
+        if not raw.strip():
+            continue
+        # A metadata-looking prefix is not a complete metadata line.
+        if raw.startswith('[') and re.match(r'^\[[A-Za-z]', raw):
+            mtag = EMETA.fullmatch(raw)
+            if mtag is None:
+                raise ValueError('ELRC_SYNTAX_ERROR: malformed metadata or trailing text')
+            key, value = mtag.group(1).lower(), mtag.group(2)
+            if key not in KNOWN_ELRC_META:
+                raise ValueError('ELRC_UNKNOWN_METADATA: unsupported metadata key '+key)
+            if key == 'offset':
+                if saw_offset or re.fullmatch(r'[+-]?\d{1,9}', value.strip()) is None:
+                    raise ValueError('ELRC_OFFSET_INVALID: repeated or malformed offset')
+                offset = int(value.strip()); saw_offset = True
+            # Header records cannot be interspersed after lyric rows if they
+            # change the axis; otherwise earlier lines would be inconsistent.
+            if key == 'offset' and res:
+                raise ValueError('ELRC_OFFSET_INVALID: offset appears after timed lines')
+            continue
+        m = ELINE.fullmatch(raw)
         if not m:
-            raise ValueError(f"ELRC_SYNTAX_ERROR: Malformed or unmodeled line cannot be preserved: {raw.strip()!r}")
-        st=_time_elrc(m.group(1));body=m.group(2);tags=list(ETAG.finditer(body));words=[];end=None;explicit=False
-        prefix=body[:tags[0].start()] if tags else ''
+            raise ValueError('ELRC_SYNTAX_ERROR: malformed or unmodeled nonempty line '+repr(raw[:90]))
+        start = _elrc_shift(_elrc_ms(m.group(1)), offset)
+        body = m.group(2)
+        # SPL bracket-word dialect can otherwise be misread by the legacy
+        # word parser while this structural parser sees literal text. Refuse
+        # unsupported mixed syntax rather than falsely claiming equivalence.
+        if re.search(r'\[\d+:\d{1,2}(?:\.\d{1,3})?\]', body):
+            raise ValueError('ELRC_INLINE_BRACKET_TIME_UNSUPPORTED: unmodeled SPL word marker')
+        tags = list(ETAG.finditer(body))
+        words=[]; end=None; explicit=False
         if tags:
-            for j,tag in enumerate(tags):
-                w_st=_time_elrc(tag.group(1));w_txt=tag.group(2)
-                w_end=_time_elrc(tags[j+1].group(1)) if j+1<len(tags) else w_st
-                if w_txt:
-                    words.append(ParsedWord(w_txt,w_st,w_end))
-            if tags[-1].group(2)=="":
-                explicit=True;end=_time_elrc(tags[-1].group(1))
-            elif words:end=words[-1].end_ms
+            prefix=body[:tags[0].start()]
+            _reject_unknown_elrc_markup(prefix)
+            # Every byte of body must belong to the literal prefix, to a
+            # valid timed token, or to a *literal* text segment. A malformed
+            # token between/after matches is never silently skipped.
+            for index, tag in enumerate(tags):
+                next_start = tags[index+1].start() if index+1 < len(tags) else len(body)
+                word_text = body[tag.end():next_start]
+                _reject_unknown_elrc_markup(word_text)
+                wst=_elrc_shift(_elrc_ms(tag.group(1)),offset)
+                wen=(_elrc_shift(_elrc_ms(tags[index+1].group(1)),offset)
+                     if index+1<len(tags) else wst)
+                if word_text:
+                    if index == len(tags)-1:
+                        # The terminal time tag is a mandatory explicit end
+                        # boundary for strict normalization; without one,
+                        # the legacy parser invents a 500ms final word.
+                        raise ValueError('ELRC_TERMINAL_WORD_END_UNVERIFIED: final token has no end timestamp')
+                    words.append(ParsedWord(word_text,wst,wen))
+            if not body[tags[-1].end():]:
+                explicit=True; end=_elrc_shift(_elrc_ms(tags[-1].group(1)),offset)
+            elif words:
+                end=words[-1].end_ms
             value=prefix+''.join(w.text for w in words)
         else:
+            _reject_unknown_elrc_markup(body)
             value=body
-        res.append(ParsedLine(f"L{len(res)+1}",st,end,value,words,None,explicit))
+        res.append(ParsedLine(f'L{len(res)+1}',start,end,value,words,None,explicit))
     return res
 
 
@@ -174,8 +261,7 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
     if root.text and root.text.strip():
         problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <tt> is unsupported'))
     for child in root:
-        child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-        if child_tag not in ('head', 'body'):
+        if child.tag not in (f'{{{NT}}}head', f'{{{NT}}}body', 'head', 'body'):
             problems.append(ComparisonIssue('UNSUPPORTED_ROOT_CHILD', f'Unsupported root child <{child.tag}> under <tt>', blocking=True))
         if child.tail and child.tail.strip():
             problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after root child is unsupported'))
@@ -273,10 +359,31 @@ def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[Li
         seen.add(key)
 
         p_role = p.get('{http://www.w3.org/ns/ttml#metadata}role') or p.get('role') or ''
+        itunes_role = p.get('{%s}role' % NI) or ''
+        supported_itunes_roles = {
+            'SINGING', 'SPOKEN_CONTENT', 'SAMPLE_EXPLANATION',
+            'PERFORMER_CUE', 'TITLE', 'LYRICIST', 'COMPOSER',
+            'PRODUCTION_CREDIT', 'PLACEHOLDER', 'TRANSLATION', 'UNKNOWN',
+            'PRELUDE',
+        }
+        if itunes_role and itunes_role not in supported_itunes_roles:
+            problems.append(ComparisonIssue('UNSUPPORTED_ITUNES_P_ROLE',
+                                            f'Unrecognized iTunes p role: {itunes_role}', key))
+        if key.startswith('P_') and (key not in {'P_TITLE','P_LYRICIST','P_COMPOSER'}
+                                     or itunes_role != 'PRELUDE'):
+            problems.append(ComparisonIssue('PRELUDE_MARKER_UNTRUSTED',
+                                            f'Unverified synthetic prelude marker: {key}', key))
+        if itunes_role == 'PRELUDE' and key not in {'P_TITLE','P_LYRICIST','P_COMPOSER'}:
+            problems.append(ComparisonIssue('PRELUDE_MARKER_UNTRUSTED',
+                                            f'Prelude role requires a reserved P_ key: {key}', key))
         if p_role == 'x-bg':
             problems.append(ComparisonIssue('BACKGROUND_VOCAL_UNSUPPORTED', 'x-bg background vocal track is unsupported', key))
         elif p_role == 'x-roman':
             problems.append(ComparisonIssue('AUXILIARY_TRACK_UNSUPPORTED', 'x-roman auxiliary track is unsupported', key))
+        elif p_role:
+            # An unfamiliar p-level semantic role is not an ordinary singer.
+            # iTunes roles are independently handled by the normal renderer.
+            problems.append(ComparisonIssue('UNSUPPORTED_P_ROLE', f'Unrecognized TTML p role: {p_role}', key))
 
         agent = p.get('{%s}agent'%NI) or p.get('agent') or p.get('{http://www.w3.org/ns/ttml#metadata}agent')
         if agent and agent not in declared_agents:

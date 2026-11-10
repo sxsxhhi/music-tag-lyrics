@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Tuple
 from ..utils.time_utils import parse_match_to_ms, apply_time_offset
 from ._common import parse_offset_tag
 
-LRC_TAG_RE = re.compile(r"^\[([a-zA-Z]+):([^\]]*)\]")
+LRC_TAG_RE = re.compile(r"^\[([a-zA-Z][a-zA-Z0-9_-]*):([^\]]*)\]$")
 # 分钟位 1-3 位（铁律 10.2「0 丢行」：旧版只认 1-2 位，[123:45.67] 这种 >99 分钟的行会被静默丢弃）
 LRC_TIME_RE = re.compile(r"\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
 WORD_TAG_RE = re.compile(r"<(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?>|\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
@@ -86,7 +86,10 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
     tags = {}
     raw_lines = []
     unparsed_lines = []
-    
+    # A UTF-8 BOM is a file transport marker, not a lyric character.
+    # Remove only a leading BOM; all other characters remain intact.
+    lrc_text = lrc_text.lstrip('\ufeff')
+
     for raw_line in lrc_text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -100,6 +103,11 @@ def parse_lrc(lrc_text: str, adjust: int = 0) -> Dict[str, Any]:
 
         # Match line time tags [01:23.45]
         time_matches = list(LRC_TIME_RE.finditer(line))
+        # Do not reinterpret a time tag buried in arbitrary malformed text
+        # as a valid entire lyric row.
+        if time_matches and time_matches[0].start() != 0:
+            unparsed_lines.append(line)
+            continue
         if not time_matches:
             unparsed_lines.append(line)
             continue
