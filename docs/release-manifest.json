@@ -4,18 +4,18 @@
   "version": "1.8.2",
   "release_tag": "v1.8.2",
   "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
-  "build_timestamp_utc": "2026-11-10T06:25:45.441973+00:00",
-  "git_commit": "0a11bb58056ce08b6968b47c12ce41dfca42243b",
+  "build_timestamp_utc": "2026-11-10T06:34:15.252306+00:00",
+  "git_commit": "45b84270bd2f9012783204ac826d29f0a73a4c3d",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.2.zip",
-    "size_bytes": 1964861,
-    "sha256": "7ea5ff4431c97d58d67b6688a82d4223116c0f3b60a2bd474fef51eda1e7e1a0",
+    "size_bytes": 1965093,
+    "sha256": "58a044b8a96b6c3bb5ed76d9c8fee2b074cd3316498bf6e523b2b13fe3e7b7fc",
     "file_count": 120
   },
   "members": {
     ".gitignore": "8fce40848096844df9c0416c514143012a42fe5dc49936db511a352845c449c7",
     "LICENSE": "441c01427103c3e7a4f236d8472c2f915229918084d6a5b6d128494fe8535e44",
-    "README.md": "c3d036eb6d181a914afb9caf037590c7528b1580c79b9492c3d90bf213adb52a",
+    "README.md": "2d41289999179b8c6e50017f1142f604d1154f8812cf76fce1e682edc5990e77",
     "SKILL.md": "cf40c0765ced57c3b22f5a98535e4dc4901afcdaa2559a64ca1c63b7583785f1",
     "core/acoustic/__init__.py": "7b8b3755e6f228e92ba93c54cd3e2ef73570576d2075eac637abe3790cc68e78",
     "core/acoustic/gate.py": "5148401feb7546ce8c787b54351682fece39fb7d857ea3c095d9b16dd3a2fd18",
