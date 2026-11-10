@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Independent structural ELRC/TTML parser and strict v1.8.2 verifier.
+"""Independent structural ELRC/TTML parser and strict v1.8.3 verifier.
 
 The comparison never interprets an equal timestamp alone as translation; TTML
 for= evidence is required. Source-canonical verification is a separate hard gate.
@@ -11,16 +11,91 @@ from dataclasses import dataclass,field
 from typing import Any,List,Optional,Tuple
 from ..utils.time_utils import parse_time_string_to_ms
 
-ELINE=re.compile(r"^\[(\d+:\d+(?:\.\d+)?)\](.*)$")
-ETAG=re.compile(r"<(\d+:\d+(?:\.\d+)?)>([^<]*)")
+# Only a complete metadata line can be discarded. A partial tag or text after
+# a tag is user content of uncertain meaning, not permission to delete it.
+ELINE=re.compile(r"^\[(\d+:\d{1,2}(?:\.\d{1,3})?)\](.*)$")
+ETAG=re.compile(r"<(\d+:\d{1,2}(?:\.\d{1,3})?)>")
+EMETA=re.compile(r"^\[([A-Za-z][A-Za-z0-9_-]*):([^\]\r\n]*)\]$")
+# Known display metadata. Unknown extensions are not proof of dispensability.
+KNOWN_ELRC_META=frozenset({
+    'ti','ar','al','by','offset','length','hash','sign','qq','total',
+    're','au','ve','id','language','la'
+})
+ELRC_TAG_FRAGMENT=re.compile(r"<[^>]*>")
 NT="http://www.w3.org/ns/ttml"
 NI="http://music.apple.com/lyric-ttml-internal"
+
+_RE_W3C_CLOCK = re.compile(r"^(\d{2,}):([0-5]\d):([0-5]\d)(?:\.(\d+))?$")
+_RE_APPLE_COLON = re.compile(r"^(\d+):([0-5]\d)(?:\.(\d+))?$")
+_RE_SECONDS_OFFSET = re.compile(r"^(\d+)(?:\.(\d+))?\s*s?$", re.IGNORECASE)
+
+
+def _parse_fraction_ms(frac: Optional[str]) -> int:
+    if not frac:
+        return 0
+    if len(frac) == 1:
+        return int(frac) * 100
+    if len(frac) == 2:
+        return int(frac) * 10
+    if len(frac) == 3:
+        return int(frac)
+    return int(frac[:3])
+
+
+def parse_ttml_time_ms(time_str: Optional[str], profile: str = "APPLE_AMLL_INPUT") -> Optional[int]:
+    """Profile-aware strict TTML timestamp parser.
+
+    Profiles:
+      - 'W3C_CLOCK': Strict W3C TTML §10.3 clock-time: HH:MM:SS[.fraction]
+        Minutes and seconds strictly 00-59. Hours >= 0 (2+ digits).
+      - 'APPLE_AMLL_INPUT': Tolerant input profile: accepts W3C_CLOCK (3-seg),
+        Apple/AMLL MM:SS[.fraction] (2-seg, seconds strictly 00-59),
+        or offset-time seconds ('15.000s' or '15.000').
+        Strictly rejects invalid seconds (e.g. '00:75.000'), negative numbers,
+        NaN, Infinity, empty/whitespace strings, and trailing garbage.
+    """
+    if not time_str or not isinstance(time_str, str):
+        return None
+    s = time_str.strip()
+    if not s or s.startswith("-"):
+        return None
+
+    # 1. Strict W3C Clock-time (HH:MM:SS.mmm)
+    m_w3c = _RE_W3C_CLOCK.match(s)
+    if m_w3c:
+        hours = int(m_w3c.group(1))
+        minutes = int(m_w3c.group(2))
+        seconds = int(m_w3c.group(3))
+        millis = _parse_fraction_ms(m_w3c.group(4))
+        return (hours * 3600 + minutes * 60 + seconds) * 1000 + millis
+
+    if profile == "W3C_CLOCK":
+        return None
+
+    # 2. Apple/AMLL 2-segment colon (MM:SS.mmm)
+    m_apple = _RE_APPLE_COLON.match(s)
+    if m_apple:
+        minutes = int(m_apple.group(1))
+        seconds = int(m_apple.group(2))
+        millis = _parse_fraction_ms(m_apple.group(3))
+        return (minutes * 60 + seconds) * 1000 + millis
+
+    # 3. Offset-time seconds (e.g. '15.000s' or '15.000')
+    m_sec = _RE_SECONDS_OFFSET.match(s)
+    if m_sec:
+        seconds = int(m_sec.group(1))
+        millis = _parse_fraction_ms(m_sec.group(2))
+        return seconds * 1000 + millis
+
+    return None
+
 
 @dataclass
 class ParsedWord:
     text:str
     start_ms:int
     end_ms:int
+    trailing_space:str=""
 
 @dataclass
 class ParsedLine:
@@ -49,53 +124,172 @@ class ComparisonResult:
     issues:List[ComparisonIssue]=field(default_factory=list)
     max_time_delta_ms:int=0
     max_div_delta_ms:int=0
+    div_inferred:bool=False
     def add_error(self,code,message,line_id=None,elrc_val=None,ttml_val=None):
-        self.issues.append(ComparisonIssue(code,message,line_id,elrc_val,ttml_val))
+        self.issues.append(ComparisonIssue(code,message,line_id,elrc_val,ttml_val,blocking=True))
         self.passed=False
 
 
-def _time(text):
-    t=parse_time_string_to_ms(text)
-    if t is None:raise ValueError("Invalid timestamp")
+def _time_elrc(text: str) -> int:
+    t = parse_time_string_to_ms(text)
+    if t is None:
+        raise ValueError("Invalid ELRC timestamp")
     return t
 
 
+def _time_ttml(text: str, profile: str = "APPLE_AMLL_INPUT") -> int:
+    t = parse_ttml_time_ms(text, profile=profile)
+    if t is None:
+        raise ValueError(f"Invalid TTML timestamp: {text}")
+    return t
+
+
+def _elrc_ms(raw: str) -> int:
+    """Validate ELRC's MM:SS[.fff] values before interpreting any time."""
+    pieces = raw.split(':', 1)
+    if len(pieces) != 2 or not pieces[0].isdigit():
+        raise ValueError('ELRC_TIME_INVALID: malformed minute field')
+    if not re.fullmatch(r'[0-5]\d(?:\.\d{1,3})?', pieces[1]):
+        raise ValueError('ELRC_TIME_INVALID: seconds out of range or malformed')
+    result = _time_elrc(raw)
+    if result < 0:
+        raise ValueError('ELRC_TIME_INVALID: negative timestamp')
+    return result
+
+
+def _elrc_shift(raw_ms: int, offset_ms: int) -> int:
+    shifted = raw_ms + offset_ms
+    if shifted < 0:
+        # Legacy LRC parsing clamps negative values to zero, losing intervals.
+        # Strict cross-format checking must not claim the clamped axis is exact.
+        raise ValueError('ELRC_OFFSET_UNREPRESENTABLE: negative effective time')
+    return shifted
+
+
+def _reject_unknown_elrc_markup(chunk: str) -> None:
+    # A bare '<' such as 'I < 3' is literal; an unrecognized <...> is
+    # ambiguous markup. Never drop it or silently assign it an acoustic time.
+    if ELRC_TAG_FRAGMENT.search(chunk):
+        raise ValueError('ELRC_UNKNOWN_INLINE_MARKUP: unrecognized <...> fragment')
+
+
 def parse_elrc_structural(text:str)->List[ParsedLine]:
-    if len(text.encode('utf-8'))>16*1024*1024:raise ValueError("ELRC exceeds allowed size")
-    res=[]
-    for raw in text.splitlines():
-        # DO NOT .strip() the payload: whitespace is part of the lyric.
-        if not raw.strip():continue
-        if re.match(r'^\[[a-zA-Z][a-zA-Z0-9_-]*:',raw):continue
-        m=ELINE.match(raw)
-        if not m:continue
-        st=_time(m.group(1));body=m.group(2);tags=list(ETAG.finditer(body));words=[];end=None;explicit=False
-        prefix=body[:tags[0].start()] if tags else ''
+    """Parse all recognized ELRC content, failing closed on unconsumed data.
+
+    The parser validates metadata as complete lines, checks *all* gaps around
+    word tags, and applies [offset] to both line and word axes exactly once.
+    This strict path is for standards/audit; legacy collection remains tolerant.
+    """
+    if not isinstance(text, str) or len(text.encode('utf-8')) > 16 * 1024 * 1024:
+        raise ValueError('ELRC_INVALID_INPUT: not text or too large')
+    res = []
+    offset = 0
+    saw_offset = False
+    for raw in text.lstrip('\ufeff').splitlines():
+        if not raw.strip():
+            continue
+        # A metadata-looking prefix is not a complete metadata line.
+        if raw.startswith('[') and re.match(r'^\[[A-Za-z]', raw):
+            mtag = EMETA.fullmatch(raw)
+            if mtag is None:
+                raise ValueError('ELRC_SYNTAX_ERROR: malformed metadata or trailing text')
+            key, value = mtag.group(1).lower(), mtag.group(2)
+            if key not in KNOWN_ELRC_META:
+                raise ValueError('ELRC_UNKNOWN_METADATA: unsupported metadata key '+key)
+            if key == 'offset':
+                if saw_offset or re.fullmatch(r'[+-]?\d{1,9}', value.strip()) is None:
+                    raise ValueError('ELRC_OFFSET_INVALID: repeated or malformed offset')
+                offset = int(value.strip()); saw_offset = True
+            # Header records cannot be interspersed after lyric rows if they
+            # change the axis; otherwise earlier lines would be inconsistent.
+            if key == 'offset' and res:
+                raise ValueError('ELRC_OFFSET_INVALID: offset appears after timed lines')
+            continue
+        m = ELINE.fullmatch(raw)
+        if not m:
+            raise ValueError('ELRC_SYNTAX_ERROR: malformed or unmodeled nonempty line '+repr(raw[:90]))
+        start = _elrc_shift(_elrc_ms(m.group(1)), offset)
+        body = m.group(2)
+        # SPL bracket-word dialect can otherwise be misread by the legacy
+        # word parser while this structural parser sees literal text. Refuse
+        # unsupported mixed syntax rather than falsely claiming equivalence.
+        if re.search(r'\[\d+:\d{1,2}(?:\.\d{1,3})?\]', body):
+            raise ValueError('ELRC_INLINE_BRACKET_TIME_UNSUPPORTED: unmodeled SPL word marker')
+        tags = list(ETAG.finditer(body))
+        words=[]; end=None; explicit=False
         if tags:
-            for j,tag in enumerate(tags):
-                w_st=_time(tag.group(1));w_txt=tag.group(2)
-                w_end=_time(tags[j+1].group(1)) if j+1<len(tags) else w_st
-                if w_txt:
-                    words.append(ParsedWord(w_txt,w_st,w_end))
-            if tags[-1].group(2)=="":
-                explicit=True;end=_time(tags[-1].group(1))
-            elif words:end=words[-1].end_ms
+            prefix=body[:tags[0].start()]
+            _reject_unknown_elrc_markup(prefix)
+            # Every byte of body must belong to the literal prefix, to a
+            # valid timed token, or to a *literal* text segment. A malformed
+            # token between/after matches is never silently skipped.
+            for index, tag in enumerate(tags):
+                next_start = tags[index+1].start() if index+1 < len(tags) else len(body)
+                word_text = body[tag.end():next_start]
+                _reject_unknown_elrc_markup(word_text)
+                wst=_elrc_shift(_elrc_ms(tag.group(1)),offset)
+                wen=(_elrc_shift(_elrc_ms(tags[index+1].group(1)),offset)
+                     if index+1<len(tags) else wst)
+                if word_text:
+                    if index == len(tags)-1:
+                        # The terminal time tag is a mandatory explicit end
+                        # boundary for strict normalization; without one,
+                        # the legacy parser invents a 500ms final word.
+                        raise ValueError('ELRC_TERMINAL_WORD_END_UNVERIFIED: final token has no end timestamp')
+                    words.append(ParsedWord(word_text,wst,wen))
+            if not body[tags[-1].end():]:
+                explicit=True; end=_elrc_shift(_elrc_ms(tags[-1].group(1)),offset)
+            elif words:
+                end=words[-1].end_ms
             value=prefix+''.join(w.text for w in words)
         else:
+            _reject_unknown_elrc_markup(body)
             value=body
-        res.append(ParsedLine(f"L{len(res)+1}",st,end,value,words,None,explicit))
+        res.append(ParsedLine(f'L{len(res)+1}',start,end,value,words,None,explicit))
     return res
 
 
-def parse_ttml_structural(text:str)->Tuple[List[ParsedLine],Tuple[int,int],List[ComparisonIssue]]:
+def parse_ttml_structural(text:str, profile: str = "APPLE_AMLL_INPUT")->Tuple[List[ParsedLine],Tuple[int,int],List[ComparisonIssue]]:
     problems=[];res=[]
     if len(text.encode('utf-8'))>16*1024*1024 or '<!DOCTYPE' in text.upper() or '<!ENTITY' in text.upper():
         return [],(0,0),[ComparisonIssue('XML_UNSAFE_INPUT','DTD/entity or oversized XML is rejected')]
     try: root=ET.fromstring(text)
     except (ET.ParseError,ValueError) as exc:
         return [],(0,0),[ComparisonIssue('XML_SYNTAX_ERROR',f'Invalid XML: {type(exc).__name__}')]
+    if root.tag not in (f'{{{NT}}}tt', 'tt'):
+        return [],(0,0),[ComparisonIssue('TTML_ROOT_INVALID', 'Expected TTML <tt> document root')]
+    if root.text and root.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <tt> is unsupported'))
+    for child in root:
+        if child.tag not in (f'{{{NT}}}head', f'{{{NT}}}body', 'head', 'body'):
+            problems.append(ComparisonIssue('UNSUPPORTED_ROOT_CHILD', f'Unsupported root child <{child.tag}> under <tt>', blocking=True))
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after root child is unsupported'))
+
+    # Timing model checks: reject unsupported dur on div/p/span or timeContainer="seq"
+    for elem in root.iter():
+        if elem.tag.endswith('head') or elem.tag.endswith('metadata'):
+            continue
+        tc = elem.attrib.get('timeContainer') or elem.attrib.get('{http://www.w3.org/ns/ttml}timeContainer')
+        if tc and tc.lower() in ('seq', 'par'):
+            problems.append(ComparisonIssue('TIMING_MODEL_UNSUPPORTED', f"timeContainer='{tc}' timing model is unsupported"))
+            break
+        if (elem.tag.endswith('div') or elem.tag.endswith('p') or elem.tag.endswith('span')) and 'dur' in elem.attrib:
+            problems.append(ComparisonIssue('TIMING_MODEL_UNSUPPORTED', f"dur attribute on <{elem.tag.split('}')[-1]}> is unsupported"))
+            break
+
+    # Declared agents
+    declared_agents = set()
+    for ag in root.findall('.//{*}metadata/{*}agent'):
+        for attr_k, attr_v in ag.attrib.items():
+            if attr_k.endswith('id') or attr_k == 'id':
+                declared_agents.add(attr_v)
+
     trans={}
     for n in root.findall('.//{*}iTunesMetadata/{*}translations/{*}translation/{*}text'):
+        if list(n):
+            problems.append(ComparisonIssue('UNSUPPORTED_TRANSLATION_STRUCTURE',
+                                            'Nested translation markup cannot be preserved'))
         key=n.get('for')
         if not key:
             problems.append(ComparisonIssue('TRANSLATION_MISSING_REFERENCE','Missing for= key'))
@@ -103,46 +297,195 @@ def parse_ttml_structural(text:str)->Tuple[List[ParsedLine],Tuple[int,int],List[
         if key in trans:
             problems.append(ComparisonIssue('TRANSLATION_DUPLICATE_REFERENCE','Multiple translations for same key',key))
         trans[key]=(n.text or '').strip()
-    divs=root.findall('.//{*}body/{*}div')
+
+    heads = root.findall('./{*}head')
+    if len(heads) > 1:
+        problems.append(ComparisonIssue('HEAD_STRUCTURE_INVALID', 'Multiple TTML <head> elements are unsupported'))
+    for h in heads:
+        if h.text and h.text.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <head> is unsupported'))
+        for child in h:
+            if child.tail and child.tail.strip():
+                problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after head child is unsupported'))
+
+    bodies = root.findall('./{*}body')
+    if len(bodies) != 1:
+        return [],(0,0),problems+[ComparisonIssue('BODY_STRUCTURE_INVALID', 'Exactly one direct TTML body is required')]
+    body = bodies[0]
+    if body.text and body.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <body> is unsupported'))
+    for child in body:
+        if child.tag not in (f'{{{NT}}}div', 'div'):
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
+                                            'Unsupported direct body child (only div is modeled)'))
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after body child is unsupported'))
+    divs=body.findall('./{*}div')
     if not divs:
         return [],(0,0),problems+[ComparisonIssue('DIV_MISSING','No TTML div')]
     if len(divs)>1:
-        problems.append(ComparisonIssue('MULTI_DIV_UNSUPPORTED','Multi-div input needs dedicated mapping'))
+        problems.append(ComparisonIssue('MULTI_DIV_UNSUPPORTED','Multi-div input is unsupported'))
     div=divs[0]
-    try:bound=(_time(div.attrib.get('begin','')), _time(div.attrib.get('end','')))
-    except ValueError:
-        bound=(0,0);problems.append(ComparisonIssue('DIV_TIME_INVALID','Invalid div boundary'))
+    if div.text and div.text.strip():
+        problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Direct non-whitespace text in <div> is unsupported'))
+    for child in div:
+        if child.tag not in (f'{{{NT}}}p', 'p'):
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_STRUCTURE',
+                                            'Unsupported div child (only direct p is modeled)'))
+        if child.tail and child.tail.strip():
+            problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', 'Non-whitespace text tail after div child is unsupported'))
+
+    has_begin = 'begin' in div.attrib
+    has_end = 'end' in div.attrib
+    explicit_bound: Optional[Tuple[int, int]] = None
+    div_inferred = False
+
+    if has_begin and has_end:
+        try:
+            div_b = _time_ttml(div.attrib['begin'], profile=profile)
+            div_e = _time_ttml(div.attrib['end'], profile=profile)
+            explicit_bound = (div_b, div_e)
+        except ValueError:
+            problems.append(ComparisonIssue('DIV_TIME_INVALID','Invalid explicit div boundary'))
+    elif has_begin or has_end:
+        problems.append(ComparisonIssue('DIV_TIME_INVALID','Partially missing div boundary'))
+    else:
+        div_inferred = True
+
     seen=set()
     for p in div.findall('./{*}p'):
-        try:st=_time(p.get('begin',''));en=_time(p.get('end',''))
-        except ValueError:
-            problems.append(ComparisonIssue('LINE_TIME_INVALID','Invalid p time'))
-            continue
-        if en<=st:
-            problems.append(ComparisonIssue('LINE_TIME_INVALID','Nonpositive p duration'))
         key=p.get('{%s}key'%NI) or p.get('key') or 'L'+str(len(res)+1)
         if key in seen:problems.append(ComparisonIssue('DUPLICATE_P_KEY','Repeated p key',key))
         seen.add(key)
-        pre=p.text or ''
-        words=[];inline=[];pieces=[pre]
-        for s in p.findall('./{*}span'):
-            role=s.get('{http://www.w3.org/ns/ttml#metadata}role') or s.get('role')
-            if role=='x-translation':
-                inline.append(''.join(s.itertext()).strip());continue
-            try:wst=_time(s.get('begin',''));wen=_time(s.get('end',''))
-            except ValueError:
-                problems.append(ComparisonIssue('WORD_TIME_INVALID','Invalid span time',key))
+
+        p_role = p.get('{http://www.w3.org/ns/ttml#metadata}role') or p.get('role') or ''
+        itunes_role = p.get('{%s}role' % NI) or ''
+        supported_itunes_roles = {
+            'SINGING', 'SPOKEN_CONTENT', 'SAMPLE_EXPLANATION',
+            'PERFORMER_CUE', 'TITLE', 'LYRICIST', 'COMPOSER',
+            'PRODUCTION_CREDIT', 'PLACEHOLDER', 'TRANSLATION', 'UNKNOWN',
+            'PRELUDE',
+        }
+        if itunes_role and itunes_role not in supported_itunes_roles:
+            problems.append(ComparisonIssue('UNSUPPORTED_ITUNES_P_ROLE',
+                                            f'Unrecognized iTunes p role: {itunes_role}', key))
+        if key.startswith('P_') and (key not in {'P_TITLE','P_LYRICIST','P_COMPOSER'}
+                                     or itunes_role != 'PRELUDE'):
+            problems.append(ComparisonIssue('PRELUDE_MARKER_UNTRUSTED',
+                                            f'Unverified synthetic prelude marker: {key}', key))
+        if itunes_role == 'PRELUDE' and key not in {'P_TITLE','P_LYRICIST','P_COMPOSER'}:
+            problems.append(ComparisonIssue('PRELUDE_MARKER_UNTRUSTED',
+                                            f'Prelude role requires a reserved P_ key: {key}', key))
+        if p_role == 'x-bg':
+            problems.append(ComparisonIssue('BACKGROUND_VOCAL_UNSUPPORTED', 'x-bg background vocal track is unsupported', key))
+        elif p_role == 'x-roman':
+            problems.append(ComparisonIssue('AUXILIARY_TRACK_UNSUPPORTED', 'x-roman auxiliary track is unsupported', key))
+        elif p_role:
+            # An unfamiliar p-level semantic role is not an ordinary singer.
+            # iTunes roles are independently handled by the normal renderer.
+            problems.append(ComparisonIssue('UNSUPPORTED_P_ROLE', f'Unrecognized TTML p role: {p_role}', key))
+
+        agent = p.get('{%s}agent'%NI) or p.get('agent') or p.get('{http://www.w3.org/ns/ttml#metadata}agent')
+        if agent and agent not in declared_agents:
+            problems.append(ComparisonIssue('TRANSLATION_AGENT_MISMATCH', f'Undeclared agent reference: {agent}', key))
+
+        try:
+            st=_time_ttml(p.get('begin',''), profile=profile)
+            en=_time_ttml(p.get('end',''), profile=profile)
+        except ValueError:
+            problems.append(ComparisonIssue('LINE_TIME_INVALID','Invalid p time',key))
+            continue
+        if en<=st:
+            problems.append(ComparisonIssue('LINE_TIME_INVALID','Nonpositive p duration',key))
+
+        # Fail closed on *every* direct p child. The legacy loop below only
+        # consumes immediate TTML spans; any other child (including direct ruby,
+        # br, or vendor extensions) would otherwise be silently discarded and
+        # could make two incomplete exports appear equal.
+        for child in p:
+            local = child.tag.rsplit('}', 1)[-1].lower() if isinstance(child.tag, str) else ''
+            if local != 'span' or child.tag not in (f'{{{NT}}}span', 'span'):
+                code = 'RUBY_UNSUPPORTED' if 'ruby' in local else 'UNSUPPORTED_TEXT_STRUCTURE'
+                problems.append(ComparisonIssue(code, f'Unsupported direct <p> child: {local}', key))
                 continue
-            if wen<=wst:problems.append(ComparisonIssue('WORD_TIME_INVALID','Nonpositive span',key))
-            txt=(s.text or '')+(s.tail or '')
-            words.append(ParsedWord(txt,wst,wen));pieces.append(txt)
+            if any('ruby' in str(attr).lower() for attr in child.attrib):
+                problems.append(ComparisonIssue('RUBY_UNSUPPORTED', 'Ruby styling is unsupported', key))
+            if list(child):
+                descendant_tags = [e.tag.rsplit('}', 1)[-1].lower()
+                                   for e in child.iter() if e is not child and isinstance(e.tag, str)]
+                code = 'RUBY_UNSUPPORTED' if any(t in ('ruby', 'span', 'rt', 'rb') for t in descendant_tags) else 'UNSUPPORTED_TEXT_STRUCTURE'
+                problems.append(ComparisonIssue(code, 'Nested timed/text structure is unsupported', key))
+            role = (child.get('{http://www.w3.org/ns/ttml#metadata}role')
+                    or child.get('role') or '')
+            if role and role not in ('x-translation', 'x-bg', 'x-roman'):
+                problems.append(ComparisonIssue('UNSUPPORTED_SPAN_ROLE', f'Unrecognized span role: {role}', key))
+
+        pre=p.text or ''
+        words=[];inline=[];pieces=[]
+        spans = p.findall('./{*}span')
+        if spans:
+            if pre.strip():
+                is_cue = bool(re.match(r'^(\[[^\]]+\]|\([^\)]+\)|（[^）]+）|[^:：\s]{1,10}[：:])\s*$', pre.strip()))
+                if not is_cue:
+                    problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', f'Untimed text before first span lacks word timing: {pre.strip()}', key))
+            pieces.append(pre)
+            for s in spans:
+                if s.tail and s.tail.strip():
+                    problems.append(ComparisonIssue('UNSUPPORTED_TEXT_NODE', f'Untimed text after span lacks word timing: {s.tail.strip()}', key))
+
+                role=s.get('{http://www.w3.org/ns/ttml#metadata}role') or s.get('role') or ''
+                if role=='x-translation':
+                    inline.append(''.join(s.itertext()).strip());continue
+                elif role=='x-bg':
+                    problems.append(ComparisonIssue('BACKGROUND_VOCAL_UNSUPPORTED', 'x-bg background vocal track is unsupported', key))
+                    continue
+                elif role=='x-roman':
+                    problems.append(ComparisonIssue('AUXILIARY_TRACK_UNSUPPORTED', 'x-roman auxiliary track is unsupported', key))
+                    continue
+
+                try:
+                    wst=_time_ttml(s.get('begin',''), profile=profile)
+                    wen=_time_ttml(s.get('end',''), profile=profile)
+                except ValueError:
+                    problems.append(ComparisonIssue('WORD_TIME_INVALID','Invalid span time',key))
+                    continue
+                if wen<=wst:problems.append(ComparisonIssue('WORD_TIME_INVALID','Nonpositive span',key))
+                word_txt = s.text or ''
+                words.append(ParsedWord(word_txt,wst,wen,trailing_space=s.tail or ''))
+                pieces.append(word_txt)
+                if s.tail:
+                    pieces.append(s.tail)
+        else:
+            pieces.append(pre)
+
         if key in trans and inline and trans[key]!=''.join(inline):
             problems.append(ComparisonIssue('TRANSLATION_CONFLICT','Head/inline translations conflict',key))
         res.append(ParsedLine(key,st,en,''.join(pieces),words,
                               trans.get(key) or ''.join(inline) or None,True,
                               key.startswith('P_'),p.get('{%s}role'%NI) or ''))
+
     for key in trans:
         if key not in seen:problems.append(ComparisonIssue('TRANSLATION_HANGING_REFERENCE','Unmatched translation for=',key))
+
+    if div_inferred:
+        if res:
+            mins_p = min(x.start_ms for x in res)
+            maxs_p = max(x.end_ms or x.start_ms for x in res)
+            bound = (mins_p, maxs_p)
+            problems.append(ComparisonIssue('DIV_BOUNDARY_INFERRED', 'div boundary was inferred from child p elements', blocking=False))
+        else:
+            bound = (0, 0)
+            problems.append(ComparisonIssue('DIV_TIME_UNRESOLVED', 'Empty div with no child elements to infer boundary'))
+    elif explicit_bound is not None:
+        bound = explicit_bound
+        if res:
+            mins_p = min(x.start_ms for x in res)
+            maxs_p = max(x.end_ms or x.start_ms for x in res)
+            if bound[0] > mins_p or bound[1] < maxs_p:
+                problems.append(ComparisonIssue('DIV_TIME_CONFLICT', f'Explicit div boundary [{bound[0]}, {bound[1]}] conflicts with child p range [{mins_p}, {maxs_p}]'))
+    else:
+        bound = (0, 0)
+
     return res,bound,problems
 
 
@@ -169,8 +512,17 @@ def compare_elrc_ttml(elrc_text:str,ttml_text:str)->ComparisonResult:
         res.add_error('ELRC_SYNTAX_ERROR',str(exc));return res
     ttml,bound,issues=parse_ttml_structural(ttml_text)
     if issues:
-        for issue in issues:res.add_error(issue.code,issue.message,issue.line_id)
-        return res
+        has_blocking = False
+        for issue in issues:
+            if issue.blocking:
+                res.add_error(issue.code,issue.message,issue.line_id)
+                has_blocking = True
+            else:
+                res.issues.append(issue)
+                if issue.code == 'DIV_BOUNDARY_INFERRED':
+                    res.div_inferred = True
+        if has_blocking:
+            return res
     elrc=_elrc_corresponding_lines(raw_elrc,ttml)
     if len(elrc)!=len(ttml):
         res.add_error('LINE_MISSING',f'ELRC {len(elrc)} vs TTML {len(ttml)}');return res
@@ -209,10 +561,28 @@ def verify_canonical_exports(canonical,elrc_text:str,ttml_text:str)->ComparisonR
     """Third independent oracle: two identical but corrupt exports MUST fail."""
     out=compare_elrc_ttml(elrc_text,ttml_text)
     if not out.passed:return out
+
+    # Verify self-generated TTML strictly complies with W3C_CLOCK profile
+    try:
+        root = ET.fromstring(ttml_text)
+        for elem in root.iter():
+            for attr in ('begin', 'end'):
+                if attr in elem.attrib:
+                    val = elem.attrib[attr]
+                    if parse_ttml_time_ms(val, profile="W3C_CLOCK") is None:
+                        out.add_error('W3C_CLOCK_FORMAT_VIOLATION', f"Timestamp '{val}' in <{elem.tag.split('}')[-1]}> is not valid W3C clock-time (HH:MM:SS.mmm)")
+                        return out
+    except Exception as exc:
+        out.add_error('XML_SYNTAX_ERROR', f'Generated TTML invalid XML: {type(exc).__name__}')
+        return out
+
     tlines,_,issues=parse_ttml_structural(ttml_text)
     if issues:
-        for x in issues:out.add_error(x.code,x.message,x.line_id)
-        return out
+        for x in issues:
+            if x.blocking:
+                out.add_error(x.code,x.message,x.line_id)
+        if not out.passed:
+            return out
     expected=[]
     p=canonical.prelude
     if p and p.mode in ('A','B'):
