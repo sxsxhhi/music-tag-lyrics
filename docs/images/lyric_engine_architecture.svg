@@ -3,299 +3,247 @@
     <style>
       :root {
         --bg: #ffffff;
-        --panel-bg: #f6f8fa;
-        --panel-border: #d0d7de;
+        --panel-bg: #f8fafc;
+        --panel-border: #e2e8f0;
         --card-bg: #ffffff;
-        --card-border: #e1e4e8;
-        --text-title: #1f2328;
-        --text-body: #24292f;
-        --text-sub: #57606a;
-        --accent-blue: #0969da;
-        --accent-blue-bg: #ddf4ff;
-        --accent-purple: #8250df;
-        --accent-purple-bg: #fbefff;
-        --accent-green: #1a7f37;
-        --accent-green-bg: #dafbe1;
-        --accent-orange: #bc4c00;
-        --accent-orange-bg: #fff1e5;
-        --accent-red: #cf222e;
-        --accent-red-bg: #ffebe9;
-        --line: #8c959f;
-        --arrow: #57606a;
+        --card-border: #cbd5e1;
+        --text-title: #0f172a;
+        --text-body: #334155;
+        --text-sub: #64748b;
+        --accent-blue: #0284c7;
+        --accent-blue-bg: #e0f2fe;
+        --accent-purple: #7c3aed;
+        --accent-purple-bg: #ede9fe;
+        --accent-green: #16a34a;
+        --accent-green-bg: #dcfce7;
+        --accent-amber: #d97706;
+        --accent-amber-bg: #fef3c7;
+        --accent-rose: #e11d48;
+        --accent-rose-bg: #ffe4e6;
+        --line: #94a3b8;
+        --arrow: #64748b;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #0d1117;
-          --panel-bg: #161b22;
-          --panel-border: #30363d;
-          --card-bg: #21262d;
-          --card-border: #363b42;
-          --text-title: #f0f6fc;
-          --text-body: #c9d1d9;
-          --text-sub: #8b949e;
-          --accent-blue: #58a6ff;
-          --accent-blue-bg: #0d2d5e;
-          --accent-purple: #bc8cff;
-          --accent-purple-bg: #351a68;
-          --accent-green: #3fb950;
-          --accent-green-bg: #11381c;
-          --accent-orange: #f0883e;
-          --accent-orange-bg: #4d2306;
-          --accent-red: #f85149;
-          --accent-red-bg: #491316;
-          --line: #6e7681;
-          --arrow: #8b949e;
+          --bg: #0b0f19;
+          --panel-bg: #111827;
+          --panel-border: #1f2937;
+          --card-bg: #1e293b;
+          --card-border: #334155;
+          --text-title: #f8fafc;
+          --text-body: #e2e8f0;
+          --text-sub: #94a3b8;
+          --accent-blue: #38bdf8;
+          --accent-blue-bg: #082f49;
+          --accent-purple: #a78bfa;
+          --accent-purple-bg: #2e1065;
+          --accent-green: #4ade80;
+          --accent-green-bg: #052e16;
+          --accent-amber: #fbbf24;
+          --accent-amber-bg: #451a03;
+          --accent-rose: #fb7185;
+          --accent-rose-bg: #4c0519;
+          --line: #475569;
+          --arrow: #94a3b8;
         }
       }
-      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
-      .title { font-size: 18px; font-weight: 700; fill: var(--text-title); }
-      .subtitle { font-size: 12px; fill: var(--text-sub); }
-      .sect-title { font-size: 13px; font-weight: 700; fill: var(--text-title); }
-      .card-title { font-size: 12px; font-weight: 600; fill: var(--text-title); }
-      .card-desc { font-size: 11px; fill: var(--text-sub); }
-      .badge-text { font-size: 10px; font-weight: 600; }
-      .branch-lbl { font-size: 10px; font-weight: 600; fill: var(--text-sub); }
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+      .title { font-size: 17px; font-weight: 700; fill: var(--text-title); letter-spacing: -0.2px; }
+      .subtitle { font-size: 11.5px; fill: var(--text-sub); }
+      .sect-title { font-size: 12px; font-weight: 700; fill: var(--text-title); }
+      .card-title { font-size: 11px; font-weight: 600; fill: var(--text-title); }
+      .card-body { font-size: 10px; fill: var(--text-body); }
+      .card-sub { font-size: 9.5px; fill: var(--text-sub); }
+      .badge-txt { font-size: 9px; font-weight: 700; }
     </style>
 
-    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--arrow)"/>
+    <marker id="arr" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--arrow)"/>
     </marker>
-    <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-green)"/>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--accent-blue)"/>
     </marker>
-    <marker id="arrow-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--accent-blue)"/>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--accent-green)"/>
+    </marker>
+    <marker id="arr-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--accent-purple)"/>
     </marker>
   </defs>
 
   <!-- Background -->
-  <rect width="960" height="480" rx="12" fill="var(--bg)"/>
+  <rect width="960" height="480" rx="14" fill="var(--bg)"/>
 
   <!-- Header -->
-  <text x="32" y="34" class="title">🎵 music-tag-lyrics v1.7.0 全景调度与双引擎声学打轴架构</text>
-  <text x="32" y="52" class="subtitle">七源梯级智能搜词（网易 YRC / QQ QRC 逐字）→ 国语/粤语双专用 CTC 逐行窗声学打轴 → 逐行合理性闸 → 起唱点校准 (−60ms) → 三位一体交付</text>
+  <text x="24" y="32" class="title">🎵 music-tag-lyrics v1.8.2 全景架构与 Canonical 标准化流水线</text>
+  <text x="24" y="49" class="subtitle">直连全球曲库与 ISRC 网络 · 粤语/国语双声学 CTC 打轴 · Canonical 双向毫秒对齐与前奏流光调度 · 绝不破坏原音频本体</text>
 
-  <!-- ==================== Section 1: Input & Tag Clean (x=28, w=136) ==================== -->
-  <rect x="28" y="72" width="136" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
-  <text x="40" y="96" class="sect-title">🎧 音频读取与清洗</text>
+  <!-- ==================== 1. 音频输入与标签规范 (x=20, w=130) ==================== -->
+  <rect x="20" y="66" width="130" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
+  <text x="32" y="88" class="sect-title">🎧 音频读取与清洗</text>
 
-  <!-- Step 1.1 Audio Input -->
-  <g transform="translate(36, 112)">
-    <rect width="120" height="92" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="10" y="22" class="card-title">音频母体文件</text>
-    <text x="10" y="40" class="card-desc">FLAC / MP3 / M4A</text>
-    <text x="10" y="56" class="card-desc">WAV / OGG / DSF</text>
-    <rect x="10" y="66" width="100" height="18" rx="4" fill="var(--accent-blue-bg)"/>
-    <text x="16" y="79" class="badge-text" fill="var(--accent-blue)">原地只读无破坏</text>
-  </g>
+  <!-- Card 1.1: Audio input -->
+  <rect x="28" y="102" width="114" height="106" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <rect x="36" y="112" width="46" height="16" rx="4" fill="var(--accent-blue-bg)"/>
+  <text x="40" y="124" class="badge-txt" fill="var(--accent-blue)">原始母盘</text>
+  <text x="36" y="144" class="card-title">FLAC / MP3</text>
+  <text x="36" y="159" class="card-title">M4A / WAV</text>
+  <text x="36" y="177" class="card-sub">只读探测元数据</text>
+  <text x="36" y="193" class="card-sub" fill="var(--accent-green)">✔ 绝不直接改动</text>
 
-  <!-- Flow 1.1 -> 1.2 -->
-  <path d="M 96 204 L 96 226" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Card 1.2: Tag cleaning -->
+  <rect x="28" y="222" width="114" height="152" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="36" y="242" class="card-title">🏷️ 规范化洗标</text>
+  <text x="36" y="260" class="card-body">• 合唱歌手用 / 分隔</text>
+  <text x="36" y="277" class="card-body">• 4 位年份规范化</text>
+  <text x="36" y="294" class="card-body">• 自动提取词曲作者</text>
+  <text x="36" y="311" class="card-body">• 标题-歌手防空兜底</text>
+  <text x="36" y="328" class="card-body">• 单帧 USLT 避免冲突</text>
+  <text x="36" y="347" class="card-sub" fill="var(--accent-amber)">已有信息绝对保护</text>
+  <text x="36" y="362" class="card-sub" fill="var(--accent-green)">✔ 零覆盖手填元数据</text>
 
-  <!-- Step 1.2 Tag Clean -->
-  <g transform="translate(36, 230)">
-    <rect width="120" height="196" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="10" y="22" class="card-title">🏷️ 标签安全规范化</text>
-    <text x="10" y="42" class="card-desc">• 规范合唱歌手 /</text>
-    <text x="10" y="58" class="card-desc">• 4位标准年份清洗</text>
-    <text x="10" y="74" class="card-desc">• 作词/作曲自动补</text>
-    <text x="10" y="90" class="card-desc">• 歌名-歌手防空兜底</text>
-    <text x="10" y="106" class="card-desc">• 单帧 USLT 避免冲突</text>
-    <text x="10" y="122" class="card-desc">• 原文件名绝对不改</text>
-    <rect x="10" y="152" width="100" height="20" rx="4" fill="var(--accent-green-bg)"/>
-    <text x="14" y="166" class="badge-text" fill="var(--accent-green)">原地原子安全替换</text>
-  </g>
+  <!-- Connect 1 -> 2 -->
+  <path d="M 142 155 L 166 155" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arr-blue)"/>
+  <path d="M 142 298 L 166 298" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- Flow 1 -> 2 -->
-  <path d="M 164 250 L 186 250" stroke="var(--line)" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <!-- ==================== 2. 全球多源梯级检索 (x=166, w=268) ==================== -->
+  <rect x="166" y="66" width="268" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
+  <text x="178" y="88" class="sect-title">🌐 全球多源梯级搜词 (单调防降级)</text>
 
-  <!-- ==================== Section 2: Seven-tier Cascade (x=188, w=384) ==================== -->
-  <rect x="188" y="72" width="384" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
-  <text x="202" y="96" class="sect-title">🌐 七级多源歌词调度 (单调等级门禁)</text>
-  <rect x="466" y="82" width="96" height="20" rx="4" fill="var(--accent-purple-bg)"/>
-  <text x="472" y="96" class="badge-text" fill="var(--accent-purple)">防低级源降级顶替</text>
+  <!-- Tier 1: Apple TTML + lrc.red -->
+  <rect x="176" y="102" width="248" height="72" rx="8" fill="var(--card-bg)" stroke="var(--accent-purple)" stroke-width="1.5"/>
+  <rect x="184" y="110" width="78" height="15" rx="3" fill="var(--accent-purple-bg)"/>
+  <text x="188" y="121" class="badge-txt" fill="var(--accent-purple)">T1 官方母带逐字</text>
+  <text x="270" y="122" class="badge-txt" fill="var(--accent-green)">双引擎直连</text>
+  <text x="184" y="141" class="card-title">Apple Music TTML + lrc.red</text>
+  <text x="184" y="157" class="card-sub">毫秒级字块 · 全球 ISRC 直通 · 独立 iTunes 命名空间</text>
 
-  <!-- ROW 1 (Priority Tiers 1-3) -->
-  <rect x="198" y="112" width="364" height="140" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-dasharray="3 3"/>
-  <text x="208" y="130" class="badge-text" fill="var(--accent-blue)">⭐ 官方逐字优先梯级 (Tier 1 ~ 4)</text>
+  <!-- Tier 2: NetEase YRC -->
+  <rect x="176" y="180" width="120" height="66" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <rect x="182" y="188" width="56" height="14" rx="3" fill="var(--accent-blue-bg)"/>
+  <text x="186" y="198" class="badge-txt" fill="var(--accent-blue)">T2 网易云</text>
+  <text x="182" y="217" class="card-title">YRC 原生逐字</text>
+  <text x="182" y="232" class="card-sub">同轴 ytlrc 精修双语</text>
 
-  <!-- T1: Apple TTML -->
-  <g transform="translate(206, 140)">
-    <rect width="82" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--accent-blue)" stroke-width="1.5"/>
-    <text x="5" y="17" class="card-title" style="font-size:9.5px" fill="var(--accent-blue)">T1 Apple</text>
-    <text x="5" y="34" class="card-desc" style="font-size:9px">• 4 源攒票容灾</text>
-    <text x="5" y="50" class="card-desc" style="font-size:9px">• iTunes 毫秒</text>
-    <text x="5" y="66" class="card-desc" style="font-size:9px">• 3 位母带逐字</text>
-    <rect x="5" y="77" width="72" height="16" rx="3" fill="var(--accent-blue-bg)"/>
-    <text x="8" y="89" class="badge-text" style="font-size:8.5px" fill="var(--accent-blue)">官方母带</text>
-  </g>
+  <!-- Tier 3: QQ Music QRC -->
+  <rect x="304" y="180" width="120" height="66" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <rect x="310" y="188" width="58" height="14" rx="3" fill="var(--accent-green-bg)"/>
+  <text x="314" y="198" class="badge-txt" fill="var(--accent-green)">T3 QQ 音乐</text>
+  <text x="310" y="217" class="card-title">QRC 3DES 逐字</text>
+  <text x="310" y="232" class="card-sub">高精度字(起,长)切片</text>
 
-  <path d="M 288 191 L 294 191" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Tier 4: Kugou -->
+  <rect x="176" y="252" width="120" height="54" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="184" y="271" class="card-title">T4 酷狗 KRC 逐字</text>
+  <text x="184" y="287" class="card-sub">XOR 解密 · Live 互斥门禁</text>
 
-  <!-- T2: NetEase YRC -->
-  <g transform="translate(296, 140)">
-    <rect width="82" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="5" y="17" class="card-title" style="font-size:9.5px">T2 网易云</text>
-    <text x="5" y="34" class="card-desc" style="font-size:9px">• YRC 原生逐字</text>
-    <text x="5" y="50" class="card-desc" style="font-size:9px">• 官方 tlyric</text>
-    <text x="5" y="66" class="card-desc" style="font-size:9px">• 杜绝机械机翻</text>
-    <rect x="5" y="77" width="72" height="16" rx="3" fill="var(--accent-purple-bg)"/>
-    <text x="8" y="89" class="badge-text" style="font-size:8.5px" fill="var(--accent-purple)">逐字 + 翻译</text>
-  </g>
+  <!-- Tier 5: Fallbacks -->
+  <rect x="304" y="252" width="120" height="54" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="312" y="271" class="card-title">T5~T7 开放网络</text>
+  <text x="312" y="287" class="card-sub">AMLL / LRCSHARE / LIB</text>
 
-  <path d="M 378 191 L 384 191" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Route Decision Box -->
+  <rect x="176" y="314" width="248" height="66" rx="8" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="186" y="333" class="card-title">🔀 命中结果智能分流</text>
+  <text x="186" y="350" class="card-body">已有优质逐字歌词 ──► 直接进入标准化审计</text>
+  <text x="186" y="367" class="card-body" fill="var(--accent-amber)">仅有纯文本 / 绝版老歌 ──► 切入本地声学打轴</text>
 
-  <!-- T3: QQ Music QRC (v1.7.0) -->
-  <g transform="translate(386, 140)">
-    <rect width="82" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="5" y="17" class="card-title" style="font-size:9.5px">T3 QQ QRC</text>
-    <text x="5" y="34" class="card-desc" style="font-size:9px">• 3DES 解密</text>
-    <text x="5" y="50" class="card-desc" style="font-size:9px">• 绝对毫秒逐字</text>
-    <text x="5" y="66" class="card-desc" style="font-size:9px">• 自带词曲信息</text>
-    <rect x="5" y="77" width="72" height="16" rx="3" fill="var(--accent-green-bg)"/>
-    <text x="8" y="89" class="badge-text" style="font-size:8.5px" fill="var(--accent-green)">v1.7 新增</text>
-  </g>
+  <!-- Connect 2 -> 4 (Directly to Canonical) -->
+  <path d="M 424 138 C 500 138, 580 140, 658 140" stroke="var(--accent-purple)" stroke-width="2" marker-end="url(#arr-purple)"/>
+  <text x="470" y="132" class="badge-txt" fill="var(--accent-purple)">逐字直通 Canonical</text>
 
-  <path d="M 468 191 L 474 191" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Connect 2 -> 3 (Fallback to Acoustic) -->
+  <path d="M 424 355 L 448 355" stroke="var(--accent-amber)" stroke-width="1.8" marker-end="url(#arr)"/>
 
-  <!-- T4: Kugou KRC -->
-  <g transform="translate(476, 140)">
-    <rect width="82" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="5" y="17" class="card-title" style="font-size:9.5px">T4 酷狗</text>
-    <text x="5" y="34" class="card-desc" style="font-size:9px">• 原生 KRC 逐字</text>
-    <text x="5" y="50" class="card-desc" style="font-size:9px">• 华语高命中</text>
-    <text x="5" y="66" class="card-desc" style="font-size:9px">• 尾奏 Solo 保护</text>
-    <rect x="5" y="77" width="72" height="16" rx="3" fill="var(--accent-blue-bg)"/>
-    <text x="8" y="89" class="badge-text" style="font-size:8.5px" fill="var(--accent-blue)">华语主力源</text>
-  </g>
+  <!-- ==================== 3. 本地 AI 声学打轴 (x=448, w=196) ==================== -->
+  <rect x="448" y="66" width="196" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
+  <text x="458" y="88" class="sect-title">🎙️ 本地 AI 声学打轴</text>
 
-  <!-- Flow Row 1 to Row 2 -->
-  <path d="M 558 191 Q 570 191 570 256 T 206 256 L 206 288" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <!-- Demucs v4 -->
+  <rect x="456" y="162" width="180" height="64" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="466" y="182" class="card-title">Demucs v4 音轨分离</text>
+  <text x="466" y="198" class="card-sub">高质量提取纯净人声音轨</text>
+  <text x="466" y="213" class="card-sub" fill="var(--accent-blue)">消灭伴奏干扰 · 消除底噪</text>
 
-  <!-- ROW 2 (Fallback Tiers 4-6) -->
-  <rect x="198" y="272" width="364" height="142" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-dasharray="3 3"/>
-  <text x="208" y="290" class="badge-text" fill="var(--accent-orange)">🔄 官方翻译 / 逐字兜底与全球开源 (Tier 5 ~ 7)</text>
+  <!-- Dual CTC Models -->
+  <rect x="456" y="234" width="180" height="106" rx="8" fill="var(--card-bg)" stroke="var(--accent-blue)" stroke-width="1.5"/>
+  <rect x="464" y="242" width="86" height="15" rx="3" fill="var(--accent-blue-bg)"/>
+  <text x="468" y="253" class="badge-txt" fill="var(--accent-blue)">双专用 CTC 引擎</text>
+  <text x="466" y="274" class="card-title">普通话 + 粤语 逐行窗</text>
+  <text x="466" y="291" class="card-sub">• 703 类无调粤拼字典消歧</text>
+  <text x="466" y="306" class="card-sub">• 逐行切窗对齐彻底防漂移</text>
+  <text x="466" y="322" class="card-sub" fill="var(--accent-green)">✔ 基于原词打轴，绝不听写盲猜</text>
 
-  <!-- T5: AMLL -->
-  <g transform="translate(206, 300)">
-    <rect width="108" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="6" y="18" class="card-title" style="font-size:10.5px">T5 AMLL</text>
-    <text x="6" y="36" class="card-desc">• 社区 NCM 直连</text>
-    <text x="6" y="52" class="card-desc">• TTML 官方母带</text>
-    <text x="6" y="68" class="card-desc">• 丰富曲库深度扩充</text>
-    <rect x="6" y="78" width="96" height="16" rx="3" fill="var(--accent-blue-bg)"/>
-    <text x="10" y="90" class="badge-text" fill="var(--accent-blue)">社区母带精选</text>
-  </g>
+  <!-- Axis & QC -->
+  <rect x="456" y="348" width="180" height="74" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="466" y="367" class="card-title">起唱微调与双层质检</text>
+  <text x="466" y="384" class="card-sub">• 行轴自动下沉 60ms 刚好亮起</text>
+  <text x="466" y="400" class="card-sub">• 软硬字宽闸门消除异常长音</text>
 
-  <path d="M 314 351 L 326 351" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Connect 3 -> 4 (Acoustic to Canonical) -->
+  <path d="M 636 295 C 646 295, 650 250, 658 250" stroke="var(--line)" stroke-width="1.8" marker-end="url(#arr-blue)"/>
 
-  <!-- T6: LRCSHARE -->
-  <g transform="translate(328, 300)">
-    <rect width="108" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="6" y="18" class="card-title" style="font-size:10.5px">T6 LRCSHARE</text>
-    <text x="6" y="36" class="card-desc">• 社区云端 TTML/LRC</text>
-    <text x="6" y="52" class="card-desc">• 多语言版本精准筛</text>
-    <text x="6" y="68" class="card-desc">• 免无谓请求拦截</text>
-    <rect x="6" y="78" width="96" height="16" rx="3" fill="var(--accent-blue-bg)"/>
-    <text x="10" y="90" class="badge-text" fill="var(--accent-blue)">多语言高精库</text>
-  </g>
+  <!-- ==================== 4. Canonical 标准化中枢 (x=658, w=172) ==================== -->
+  <rect x="658" y="66" width="172" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
+  <rect x="666" y="76" width="62" height="15" rx="3" fill="var(--accent-rose-bg)"/>
+  <text x="670" y="87" class="badge-txt" fill="var(--accent-rose)">v1.8.2 核心</text>
+  <text x="666" y="108" class="sect-title">⚡ Canonical 中枢</text>
 
-  <path d="M 436 351 L 448 351" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Box 4.1: Double Check -->
+  <rect x="666" y="120" width="156" height="78" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="674" y="139" class="card-title">双向结构对齐审计</text>
+  <text x="674" y="156" class="card-sub">• ELRC ↔ TTML 毫秒对齐</text>
+  <text x="674" y="171" class="card-sub">• 容差 ≤ 1ms / div ≤ 2ms</text>
+  <text x="674" y="186" class="card-sub" fill="var(--accent-green)">同源丢字强校验</text>
 
-  <!-- T7: LRCLIB -->
-  <g transform="translate(450, 300)">
-    <rect width="104" height="102" rx="6" fill="var(--panel-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="6" y="18" class="card-title" style="font-size:10.5px">T7 LRCLIB</text>
-    <text x="6" y="36" class="card-desc">• 全球最大开放歌词</text>
-    <text x="6" y="52" class="card-desc">• 同步歌词免认证</text>
-    <text x="6" y="68" class="card-desc">• 小众冷门大兜底</text>
-    <rect x="6" y="78" width="92" height="16" rx="3" fill="var(--accent-orange-bg)"/>
-    <text x="10" y="90" class="badge-text" fill="var(--accent-orange)">全球开放曲库</text>
-  </g>
+  <!-- Box 4.2: Credit clean -->
+  <rect x="666" y="206" width="156" height="96" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="674" y="225" class="card-title">全曲制作署名剥离</text>
+  <text x="674" y="242" class="card-sub">• 前中后制作名单扫描</text>
+  <text x="674" y="257" class="card-sub">• 自动剥离回填词曲元数据</text>
+  <text x="674" y="272" class="card-sub">• 唱词/念白/原唱绝对保留</text>
+  <text x="674" y="287" class="card-sub" fill="var(--accent-amber)">存疑行复核，绝不误删</text>
 
-  <!-- Flow 2 -> 3 Branches -->
-  <path d="M 572 191 L 588 191" stroke="var(--accent-green)" stroke-width="2" marker-end="url(#arrow-green)"/>
-  <text x="562" y="178" class="badge-text" fill="var(--accent-green)">命中逐字</text>
+  <!-- Box 4.3: Prelude Scheduler -->
+  <rect x="666" y="310" width="156" height="88" rx="8" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
+  <text x="674" y="329" class="card-title">前奏倒计时流光排版</text>
+  <text x="674" y="346" class="card-sub">• 精准锁定首唱时间 T</text>
+  <text x="674" y="361" class="card-sub">• T &gt; 20s: 模式 A 固定窗口</text>
+  <text x="674" y="376" class="card-sub">• T ≤ 20s: 模式 B 比例收缩</text>
+  <text x="674" y="391" class="card-sub" fill="var(--accent-green)">演唱字块绝对零改动</text>
 
-  <path d="M 572 351 L 584 351 L 584 270 L 590 270" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="472" y="430" class="branch-lbl">有行无字 → GPU</text>
+  <!-- Connect 4 -> 5 -->
+  <path d="M 822 155 L 844 155" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <path d="M 822 254 L 844 254" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <path d="M 822 355 L 844 355" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arr-green)"/>
 
-  <!-- ==================== Section 3: v1.7.0 Acoustic Engine & QC (x=592, w=256) ==================== -->
-  <rect x="592" y="72" width="256" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--accent-purple)" stroke-width="1.5"/>
-  <text x="604" y="96" class="sect-title" fill="var(--accent-purple)">⚡ 1.7.0 声学打轴 · 闸门 · 质检中枢</text>
+  <!-- ==================== 5. 规范化三位一体交付 (x=844, w=96) ==================== -->
+  <rect x="844" y="66" width="96" height="398" rx="10" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1"/>
+  <text x="852" y="88" class="sect-title">📦 规范交付</text>
 
-  <!-- 3.1 Dual-Engine Windowed CTC -->
-  <g transform="translate(602, 112)">
-    <rect width="236" height="104" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="8" y="18" class="card-title">🎤 双专用 CTC 逐行切窗打轴</text>
-    <text x="8" y="34" class="card-desc">• 粤语：wav2vec2-cantonese</text>
-    <text x="8" y="50" class="card-desc">• 国语：wav2vec2-chinese</text>
-    <text x="8" y="66" class="card-desc">• 逐行窗对齐：彻底消灭全局漂移与吞停顿</text>
-    <rect x="8" y="76" width="220" height="18" rx="3" fill="var(--accent-purple-bg)"/>
-    <text x="14" y="89" class="badge-text" fill="var(--accent-purple)">绝不改词 · 英文大小写回退 · 标点间隙吸附</text>
-  </g>
+  <!-- Delivery 1: ELRC -->
+  <rect x="850" y="106" width="84" height="66" rx="7" fill="var(--card-bg)" stroke="var(--accent-green)" stroke-width="1.2"/>
+  <text x="858" y="125" class="card-title" fill="var(--accent-green)">.lrc 逐字</text>
+  <text x="858" y="141" class="card-sub">Enhanced</text>
+  <text x="858" y="156" class="card-sub">3位毫秒流光</text>
 
-  <!-- Flow 3.1 -> 3.2 -->
-  <path d="M 720 216 L 720 228" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Delivery 2: SPL -->
+  <rect x="850" y="180" width="84" height="66" rx="7" fill="var(--card-bg)" stroke="var(--accent-purple)" stroke-width="1.2"/>
+  <text x="858" y="199" class="card-title" fill="var(--accent-purple)">.spl 歌词</text>
+  <text x="858" y="215" class="card-sub">椒盐音乐原生</text>
+  <text x="858" y="230" class="card-sub">精修双语译文</text>
 
-  <!-- 3.2 Gate -->
-  <g transform="translate(602, 230)">
-    <rect width="236" height="96" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="8" y="18" class="card-title">🛡️ 逐行合理性闸 (Gate) · 自动回退</text>
-    <text x="8" y="34" class="card-desc">• 双阈值 1200ms / 硬限 1600ms</text>
-    <text x="8" y="50" class="card-desc">• 长音放行(&lt;250ms) / 吞停顿拦截</text>
-    <text x="8" y="66" class="card-desc">• 异常行还原旧值，记 gate_reverts</text>
-    <rect x="8" y="72" width="220" height="16" rx="3" fill="var(--accent-green-bg)"/>
-    <text x="14" y="84" class="badge-text" fill="var(--accent-green)">粤语熔断转普通话 · zh 出货横向验货门禁</text>
-  </g>
+  <!-- Delivery 3: TTML -->
+  <rect x="850" y="254" width="84" height="66" rx="7" fill="var(--card-bg)" stroke="var(--accent-blue)" stroke-width="1.2"/>
+  <text x="858" y="273" class="card-title" fill="var(--accent-blue)">.ttml 规范</text>
+  <text x="858" y="289" class="card-sub">单行 Apple XML</text>
+  <text x="858" y="304" class="card-sub">独立 head 译文</text>
 
-  <!-- Flow 3.2 -> 3.3 -->
-  <path d="M 720 326 L 720 338" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Delivery 4: Container -->
+  <rect x="850" y="328" width="84" height="74" rx="7" fill="var(--card-bg)" stroke="var(--accent-amber)" stroke-width="1.2"/>
+  <text x="858" y="347" class="card-title" fill="var(--accent-amber)">音频标签</text>
+  <text x="858" y="363" class="card-sub">安全副本回写</text>
+  <text x="858" y="378" class="card-sub">回读双重比对</text>
+  <text x="858" y="393" class="card-sub" fill="var(--accent-green)">零损伤源音频</text>
 
-  <!-- 3.3 Line Axis & QC -->
-  <g transform="translate(602, 340)">
-    <rect width="236" height="106" rx="6" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1"/>
-    <text x="8" y="18" class="card-title">📐 起唱轴校准与闭环质检 (Line Axis &amp; QC)</text>
-    <text x="8" y="34" class="card-desc">• 行标签下沉：开口前 60ms，绝不抢跑</text>
-    <text x="8" y="50" class="card-desc">• 防重叠：后推≤99ms，间距≥50ms</text>
-    <text x="8" y="66" class="card-desc">• QC 闭环：L1 修复 / L2 分诊 / L3 复检</text>
-    <rect x="8" y="78" width="220" height="18" rx="3" fill="var(--accent-blue-bg)"/>
-    <text x="14" y="91" class="badge-text" fill="var(--accent-blue)">双语译文成对跟随 · 彻底告别播放器抽搐跳屏</text>
-  </g>
-
-  <!-- Flow 3 -> 4 Delivery -->
-  <path d="M 848 264 L 866 264" stroke="var(--accent-green)" stroke-width="2" marker-end="url(#arrow-green)"/>
-
-  <!-- ==================== Section 4: Delivery (x=868, w=64) ==================== -->
-  <rect x="868" y="72" width="64" height="384" rx="8" fill="var(--panel-bg)" stroke="var(--panel-border)" stroke-width="1.5"/>
-  <text x="874" y="96" class="sect-title">💎 交付</text>
-
-  <g transform="translate(872, 112)">
-    <rect width="56" height="334" rx="6" fill="var(--card-bg)" stroke="var(--accent-green)" stroke-width="1.5"/>
-    <text x="6" y="24" class="card-title" fill="var(--accent-green)">三位一体</text>
-    <text x="6" y="44" class="card-desc">同目录</text>
-
-    <line x1="6" y1="56" x2="50" y2="56" stroke="var(--card-border)" stroke-width="1"/>
-
-    <text x="6" y="80" class="card-title">.spl</text>
-    <text x="6" y="96" class="card-desc">椒盐逐字</text>
-
-    <line x1="6" y1="112" x2="50" y2="112" stroke="var(--card-border)" stroke-width="1"/>
-
-    <text x="6" y="136" class="card-title">.lrc</text>
-    <text x="6" y="152" class="card-desc">ELRC标准</text>
-
-    <line x1="6" y1="168" x2="50" y2="168" stroke="var(--card-border)" stroke-width="1"/>
-
-    <text x="6" y="192" class="card-title">内嵌</text>
-    <text x="6" y="208" class="card-desc">USLT/©lyr</text>
-
-    <line x1="6" y1="224" x2="50" y2="224" stroke="var(--card-border)" stroke-width="1"/>
-
-    <rect x="4" y="240" width="48" height="82" rx="4" fill="var(--accent-green-bg)"/>
-    <text x="6" y="260" class="badge-text" fill="var(--accent-green)">100%</text>
-    <text x="6" y="278" class="badge-text" fill="var(--accent-green)">SHA-256</text>
-    <text x="6" y="296" class="badge-text" fill="var(--accent-green)">逐字节</text>
-    <text x="6" y="312" class="badge-text" fill="var(--accent-green)">严格一致</text>
-  </g>
 </svg>
