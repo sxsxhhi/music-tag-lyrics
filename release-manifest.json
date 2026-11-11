@@ -4,19 +4,19 @@
   "version": "1.8.4",
   "release_tag": "v1.8.4",
   "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
-  "build_timestamp_utc": "2026-11-11T05:26:27.771312+00:00",
-  "git_commit": "a335759c0f7b4778d76cb228030e3e3045f3230a",
+  "build_timestamp_utc": "2026-11-11T07:41:32.666927+00:00",
+  "git_commit": "df85de5395bf27fe71787bd2212ae44d008e580b",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.4.zip",
-    "size_bytes": 2005312,
-    "sha256": "088080e2cb2fc4fb4ed7803838da36fd3f7fd5877fc23e99d8332c29abdab001",
-    "file_count": 127
+    "size_bytes": 2009846,
+    "sha256": "3ac4d3f843c7c9483fea7db55d3da5e66faa8e3d8912cf480f81447de2533ce0",
+    "file_count": 128
   },
   "members": {
     ".gitignore": "8fce40848096844df9c0416c514143012a42fe5dc49936db511a352845c449c7",
     "LICENSE": "441c01427103c3e7a4f236d8472c2f915229918084d6a5b6d128494fe8535e44",
-    "README.md": "906e06124849717890970d3c1027c257cd5b07fdf8477f770aa1f71045b32c91",
-    "SKILL.md": "0c0432d679db46856abcbabc067452bbf01f6c9eebf0769653aedfb98c6e043c",
+    "README.md": "96fae470aa1fc5f2d24959787c8c48db6b5121cff2f6c6a09a68c2611794023f",
+    "SKILL.md": "7e60d3724b6efec3eeb2a017cafed12683d4e481945bc9567823e70511f83775",
     "core/acoustic/__init__.py": "7b8b3755e6f228e92ba93c54cd3e2ef73570576d2075eac637abe3790cc68e78",
     "core/acoustic/gate.py": "5148401feb7546ce8c787b54351682fece39fb7d857ea3c095d9b16dd3a2fd18",
     "core/acoustic/qc.py": "0e2f494d85343937e0a5f8fdf6cd6161e2f66a39efcf7dd3739ab34bc54751a0",
@@ -24,7 +24,7 @@
     "core/acoustic_aligner.py": "fc178e00eb7545c4ed99c6de36dd1e4b0853429aa5177ec18e0c6f3df358964a",
     "core/acoustic_canto.py": "86ee42906936c89331826457c93aaf69ed607e66f1f04f8237cb0c434f52ab5d",
     "core/acoustic_quality.py": "b03c335ece3ad22b9ad1f22fce7dc4d238af678fa6bab4f4719912a046c6ed50",
-    "core/adapters/container_tag_adapter.py": "4cf8fd3c1afd400b0c7092076242260e74a805e7b5c48bf8c9e33ee0353f1210",
+    "core/adapters/container_tag_adapter.py": "e0bf9918f6979c58debe596662dd3530a354a2fc6369ccb366d4c8ab0819a515",
     "core/aggregator.py": "2dc17d82d668fdca3cd38cf4b384c061e8754ab7e1dda59d6178a2d04641f630",
     "core/auditors/elrc_ttml_comparator.py": "a76f18ca8489c51499f29422066fd9e62042c46c5b052dde4c873a1773b90ebd",
     "core/cleaners/content_classifier.py": "49ff6604d256dd2b91a0e9949b233cd8ee854cdb74ca3f36942ce54ee5280e96",
@@ -76,7 +76,7 @@
     "scripts/check_no_leaks.py": "65cf937f41e427d0582ac26a03a2d12eee5225b0e474809b95d50c7275ea20e5",
     "scripts/lyric_validator.py": "b770951d55bcc0c496548ba047a260cec5da279c7c85821d7c6327ccf8fb1b16",
     "scripts/process_song.py": "0bd6858c872dcc1e45c3e13fe5b0c5bb84500e703b30f5bd2eee77b0b55aa584",
-    "scripts/standardize_song.py": "8f75b3eb20a604ad1e78e618927eb3ca5e3412e23cf11ad19cf2fdfa542a9d07",
+    "scripts/standardize_song.py": "c384207d46057902d8b648ce9f300a50f20c00098821a75e7e16d73a95d8e42c",
     "scripts/tag_editor.py": "d1584adea6f644923587d4ed05415593e22b0b9513ca6b210cdcf0fd6536e287",
     "scripts/ttml2lyrics.py": "52bd9b33be8d706cc78ed2859f40d17b587ee18520776039574aade36c00d689",
     "tests/_synthetic_flac.py": "a874401f256bdc13bec35d0c91d0c38597286d5f80789e820dfadd504c66b056",
@@ -139,6 +139,7 @@
     "tests/test_v183_final_guard.py": "ba4e832f0060265350b3fbecf0953d1a438fdc313993ba54baa2b5a20f7488a5",
     "tests/test_v183_round9_integrity.py": "98b6221adf07c9224a3caa3ab0b4ae9489171acef4f844bbf32d566314943964",
     "tests/test_v184_multitrack_integrity.py": "a7629e2cb7eafda4b0f29573d579748fb2d63fbf65d811cea8d01cb86c34e940",
+    "tests/test_v184_security_regressions.py": "1d3cfa2b07c90e7cc168718a065a8352ddabd2afb056f35e0fa976354a8ed474",
     "tests/test_version_guard.py": "a58e874b04f4801e6532a9849272b04f67e5d5d24f964f71b1da43966dcec71c"
   },
   "platforms_verified": [
