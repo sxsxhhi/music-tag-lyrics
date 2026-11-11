@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import hashlib
+import json
 from typing import Any, Dict, Optional, Tuple
 
 import mutagen
@@ -322,6 +323,7 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         "_extra_lyrics_raw": [],
         "_extra_ttml_raw": [],
         "_primary_uslt_key": None,
+        "_primary_ttml_key": None,
     }
 
     if not os.path.exists(filepath):
@@ -438,24 +440,30 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
     info["genre"] = _get("TCON")
     info["isrc"] = _get("TSRC")
 
-    # 兼容读取 TXXX:LYRICIST 与 TXXX:COMPOSER，以及多轨 TXXX:TTMLLYRIC
+    # Keep *every* value of the selected TXXX:TTMLLYRIC frame. Mutagen
+    # stores a multi-value TXXX in one frame; replacing the frame wholesale
+    # otherwise silently destroys all trailing values.
     for k, frame in id3.items():
         if isinstance(frame, TXXX):
             desc = (frame.desc or "").upper()
             if desc == "TTMLLYRIC":
-                ttml_val = frame.text[0] if frame.text else ""
-                if not info["ttml"]:
-                    info["ttml"] = ttml_val
+                values = list(frame.text or [])
+                if info["_primary_ttml_key"] is None:
+                    info["_primary_ttml_key"] = str(k)
+                    info["ttml"] = values[0] if values else ""
+                    secondary = enumerate(values[1:], start=1)
                 else:
-                    ttml_bytes = ttml_val.encode("utf-8")
+                    secondary = enumerate(values, start=0)
+                for idx, ttml_val in secondary:
+                    value_bytes = ttml_val.encode("utf-8")
                     info["extra_ttml"].append({
                         "container": "ID3",
                         "kind": "TXXX:TTMLLYRIC",
-                        "key": str(k),
-                        "sha256": hashlib.sha256(ttml_bytes).hexdigest(),
-                        "bytes": len(ttml_bytes),
+                        "key": f"{k}[{idx}]",
+                        "sha256": hashlib.sha256(value_bytes).hexdigest(),
+                        "bytes": len(value_bytes),
                     })
-                    info["_extra_ttml_raw"].append((str(k), frame))
+                    info["_extra_ttml_raw"].append(ttml_val)
             elif desc == "LYRICIST" and not info["lyricist"]:
                 info["lyricist"] = frame.text[0] if frame.text else ""
             elif desc == "COMPOSER" and not info["composer"]:
@@ -478,13 +486,16 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
             eng_empty = next((item for item in empty_desc_uslt if getattr(item[1], "lang", "").lower() == "eng"), None)
             primary_k, primary_frame = eng_empty if eng_empty else empty_desc_uslt[0]
         else:
-            primary_k, primary_frame = all_uslt[0]
+            # Described-only USLT frames are translations/commentaries, not
+            # evidence of an editable primary. Never promote the first one.
+            primary_k, primary_frame = None, None
 
-        info["lyrics"] = primary_frame.text or ""
-        info["_primary_uslt_key"] = primary_k
+        if primary_frame is not None:
+            info["lyrics"] = primary_frame.text or ""
+            info["_primary_uslt_key"] = primary_k
 
         for k, frame in all_uslt:
-            if k == primary_k:
+            if primary_k is not None and k == primary_k:
                 continue
             text_bytes = (frame.text or "").encode("utf-8")
             info["extra_lyrics"].append({
@@ -499,7 +510,18 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
             info["_extra_lyrics_raw"].append((k, frame))
 
     for k, frame in all_sylt:
-        sylt_bytes = repr(getattr(frame, "text", [])).encode("utf-8")
+        # Include the complete semantically relevant frame envelope, not just
+        # timestamped text; type/format/encoding alterations must fail closed.
+        sylt_payload = {
+            "lang": str(getattr(frame, "lang", "")),
+            "desc": str(getattr(frame, "desc", "")),
+            "encoding": int(getattr(frame, "encoding", -1)),
+            "format": int(getattr(frame, "format", -1)),
+            "type": int(getattr(frame, "type", -1)),
+            "text": [[str(t), int(ms)] for t, ms in getattr(frame, "text", [])],
+        }
+        sylt_bytes = json.dumps(sylt_payload, ensure_ascii=False,
+                                sort_keys=True, separators=(",", ":")).encode("utf-8")
         info["extra_lyrics"].append({
             "container": "ID3",
             "kind": "SYLT",
@@ -566,7 +588,8 @@ def write_verified_standardized_container(
         elif isinstance(audio,WAVE):
             if audio.tags is None: audio.add_tags()
             _apply_id3_standard_lyrics(audio.tags, elrc_text, ttml_text, lyricist, composer,
-                                       primary_uslt_key=orig.get('_primary_uslt_key'))
+                                       primary_uslt_key=orig.get('_primary_uslt_key'),
+                                       primary_ttml_key=orig.get('_primary_ttml_key'))
             audio.save()
         elif ext=='.mp3':
             try:
@@ -577,7 +600,8 @@ def write_verified_standardized_container(
                 id3 = ID3()
             old_v2 = getattr(id3, 'version', (2,4,0))[1]
             _apply_id3_standard_lyrics(id3, elrc_text, ttml_text, lyricist, composer,
-                                       primary_uslt_key=orig.get('_primary_uslt_key'))
+                                       primary_uslt_key=orig.get('_primary_uslt_key'),
+                                       primary_ttml_key=orig.get('_primary_ttml_key'))
             id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
         else:
             raise ValueError('Unrecognized or unsupported audio container')
@@ -611,8 +635,21 @@ def write_verified_standardized_container(
         # Link is an atomic, non-clobbering commit to an absent target.
         # Never unlink an existing target, including in an exception handler.
         os.link(tmp,target_work_path)
+        # Public result is a deliberately small, serializable verification DTO.
+        # rb contains raw lyrics, raw secondary tracks and Mutagen Frame objects;
+        # none of them may cross into a JSON report or caller-facing result.
+        public_readback = {
+            'has_cover': bool(rb['has_cover']),
+            'cover_digest': rb['cover_digest'],
+            'id3_version': rb['id3_version'],
+            'secondary_lyrics_count': len(rb['extra_lyrics']),
+            'secondary_ttml_count': len(rb['extra_ttml']),
+            'primary_elrc_sha256': hashlib.sha256(rb['lyrics'].encode('utf-8')).hexdigest(),
+            'primary_ttml_sha256': hashlib.sha256(rb['ttml'].encode('utf-8')).hexdigest(),
+            'protected_metadata_verified': True,
+        }
         return {'status':'PASS','target_path':target_work_path,
-                'readback_tags':rb,'r1_max_delta_ms':r1.max_time_delta_ms,
+                'readback_tags':public_readback,'r1_max_delta_ms':r1.max_time_delta_ms,
                 'audio_stream_digest': rb_stream_hash,
                 'audio_stream_status': 'VERIFIED'}
     finally:
@@ -626,29 +663,35 @@ def _apply_id3_standard_lyrics(
     lyricist: Optional[str] = None,
     composer: Optional[str] = None,
     primary_uslt_key: Optional[str] = None,
+    primary_ttml_key: Optional[str] = None,
 ) -> None:
     """安全向 ID3 帧集合写入标准歌词与词曲，完整保留其余语言与同步歌词轨。"""
-    # 仅移除原主 USLT 帧，以及没有任何 desc 描述的主歌词空帧或旧的 USLT::eng
-    # 绝不删除带特定描述（如 Translation）的二次 USLT 帧或任何 SYLT 同步歌词帧！
+    # Only an explicitly identified main USLT may be replaced. Described
+    # translation tracks and other empty-desc language tracks remain intact.
     for k in list(id3.keys()):
-        frame = id3.get(k)
-        if isinstance(frame, USLT):
-            if primary_uslt_key and str(k) == primary_uslt_key:
-                del id3[k]
-            elif not getattr(frame, "desc", ""):
+        if primary_uslt_key is not None and str(k) == primary_uslt_key:
+            if isinstance(id3.get(k), USLT):
                 del id3[k]
 
-    # 写入单帧标准主歌词 USLT::eng
+    # The target slot must never hide another unprotected frame.
+    eng_slot = id3.get("USLT::eng")
+    if eng_slot is not None:
+        raise ValueError('AMBIGUOUS_PRIMARY_USLT: canonical slot occupied')
     id3["USLT::eng"] = USLT(encoding=3, lang="eng", desc="", text=elrc_text)
 
-    # 清除旧的主 TXXX:TTMLLYRIC（保留其他 TXXX 扩展标签）
-    for k in list(id3.keys()):
-        frame = id3.get(k)
-        if isinstance(frame, TXXX) and getattr(frame, "desc", "").upper() == "TTMLLYRIC":
-            del id3[k]
-
-    # 写入标准 TXXX:TTMLLYRIC
-    id3["TXXX:TTMLLYRIC"] = TXXX(encoding=3, desc="TTMLLYRIC", text=[ttml_text])
+    # Replace only the selected TTML frame, retaining *all trailing values*.
+    # Other case-variant TTMLLYRIC frames, if present, are untouched.
+    ttml_extra_values = []
+    if primary_ttml_key is not None:
+        selected = id3.get(primary_ttml_key)
+        if not isinstance(selected, TXXX) or not selected.text:
+            raise ValueError('AMBIGUOUS_PRIMARY_TTML: selected frame unavailable')
+        ttml_extra_values = list(selected.text[1:])
+        del id3[primary_ttml_key]
+    if id3.get('TXXX:TTMLLYRIC') is not None:
+        raise ValueError('AMBIGUOUS_PRIMARY_TTML: canonical slot occupied')
+    id3['TXXX:TTMLLYRIC'] = TXXX(encoding=3, desc='TTMLLYRIC',
+                                 text=[ttml_text] + ttml_extra_values)
 
     # 词曲
     if lyricist:

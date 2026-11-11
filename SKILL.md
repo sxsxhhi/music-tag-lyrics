@@ -415,7 +415,7 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - `--output-dir` 为标准化必填，不得等于音频源目录；已有同名目标一律拒绝，不自动覆盖。音频工作副本只支持 FLAC、MP3、WAV 的本轮标准化写回；M4A 标准化工作副本写回尚未纳入验证，保持只读/阻断；旧普通流程的其他容器能力不受此限制。
 - 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
 - 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。
-- **多轨多语言歌词保真 (v1.8.4)**：标准化写回完整保留 FLAC 多值 lyrics、MP3/WAV 额外 USLT 与全部 SYLT 同步歌词帧。主歌词写入标准单帧 USLT::eng，其余副轨原样保留并对账摘要哈希。同标识冲突安全阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`）。
+- **多轨歌词安全写回 (v1.8.4 补丁复审)**：保留 FLAC 多值 lyrics / ttmllyric、MP3/WAV 描述性 USLT 与 SYLT、ID3 TXXX:TTMLLYRIC 多文本值；仅替换已明确识别的主 USLT，其余轨道通过摘要及 SYLT 帧完整语义属性核验。FLAC 合法多值不因空语言描述误报冲突；无描述主轨竞争仍须阻断。公开 JSON 审计报告仅存受限摘要，不携带 Mutagen 帧、原始副轨歌词或自由文本异常证据。错误、意外篡改或音频流变化均不得交付新副本。
 - **TTML 时间规范与结构化阻断 (v1.8.3)**：
   - 输出格式强制 W3C `HH:MM:SS.mmm`；输入兼容历史两段式 `MM:SS.mmm` 与秒级偏移 `12.345s`；
   - 单 `div` 缺省边界时推导子行范围并标记**非阻断** `DIV_BOUNDARY_INFERRED`，实际 audit/standardize 入口必须保留该审计提示而不得误标为 `INPUT_PARSE_FAILED`；若存在时序倒挂或冲突则阻断 `DIV_TIME_CONFLICT`；
