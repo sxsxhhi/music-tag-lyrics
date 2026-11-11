@@ -104,10 +104,3 @@ def preserve_id3v1(path: str | os.PathLike):
         if present is not None:
             raise Id3v1IntegrityError("ID3V1_DUPLICATED: 写入库自行生成了 ID3v1 尾块")
         _append(path, tail)
-
-
-def assert_preserved(before_sha256: str, path: str | os.PathLike, *, code: str) -> None:
-    """比对写入前后的 ID3v1 摘要，不一致即抛错。"""
-    after = id3v1_sha256(path)
-    if after != before_sha256:
-        raise Id3v1IntegrityError(f"{code}: ID3v1 尾块被改写")
