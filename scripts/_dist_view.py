@@ -26,6 +26,9 @@ EXCLUDE_DIRS = {
     "env",
     # 仓库开发用 git 钩子，不进分发包
     "git-hooks",
+    # CLI（gh 等）在 CWD 落下的本地状态：device-id 之类的设备标识，
+    # 既不进发布包，也不得随镜像同步到权威包
+    ".local",
 }
 
 # 排除文件后缀

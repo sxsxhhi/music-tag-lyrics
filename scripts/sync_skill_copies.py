@@ -38,6 +38,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts._dist_view import is_dir_excluded, is_file_excluded
 
+# 二进制成员：复制时保持原字节，不做换行归一。
+# 目前分发视图里只有 tests/fixtures/media 的两个夹具属于此类。
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav", ".dsf",
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip",
+    }
+)
+
 MANIFEST_NAME = ".mtl-sync-manifest.json"
 TRUSTED_ROOTS_ENV = "MTL_TRUSTED_MIRROR_ROOTS"
 PROTECTED_DIRS_ENV = "MTL_PROTECTED_DIRS"
@@ -165,6 +174,22 @@ def _read_manifest(target: Path) -> set[str] | None:
     return {str(x).replace("\\", "/") for x in managed if isinstance(x, str)}
 
 
+def _copy_member(src: Path, dest: Path) -> None:
+    """复制单个成员，并把文本文件的换行归一为 LF。
+
+    v1.8.5 起正式包成员字节取自 **git 索引 blob**（`.gitattributes` 统一 `eol=lf`），
+    而本工具直接复制工作树字节；在 `core.autocrlf=true` 的 Windows 检出上工作树是
+    CRLF，会导致镜像与 `release-manifest.json` 的成员哈希不符，也让「权威包 == 发布
+    产物」无法用同一份哈希清单核验。这里统一归一为 LF。
+    """
+    suffix = dest.suffix.lower()
+    data = src.read_bytes()
+    if suffix not in _BINARY_SUFFIXES and b"\r\n" in data:
+        data = data.replace(b"\r\n", b"\n")
+    dest.write_bytes(data)
+    shutil.copystat(src, dest)
+
+
 def sync_to(
     target: Path,
     *,
@@ -201,7 +226,7 @@ def sync_to(
         dest_file = target / rel_str
         if not dry_run:
             dest_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest_file)
+            _copy_member(src, dest_file)
         stats["copied"] += 1
 
     if not no_prune and previous is not None:
