@@ -173,15 +173,23 @@ def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) ->
         if os.path.splitext(filepath)[1].lower() == ".flac":
             # v1.8.5 / H-A2：APPLICATION/SEEKTABLE/CUESHEET 不受音频流摘要保护。
             orig_flac_blocks = flac_metadata_fingerprint(filepath)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("safe_save_audio_tags: 预检读取异常，拒绝改签: %s (%s)", filepath, exc)
+        return False
+    if os.path.splitext(filepath)[1].lower() == ".flac" and orig_flac_blocks is None:
+        logger.warning("safe_save_audio_tags: FLAC 扩展块指纹无法取得，拒绝改签: %s", filepath)
+        return False
     if orig_stream_st != "VERIFIED":
         logger.warning("safe_save_audio_tags: 音频流无法可靠验证，拒绝改签: %s", filepath)
         return False
 
     # v1.8.5 / H-A1：音频流摘要刻意排除 ID3v1，这里补第三道闸。
     # 即使将来有调用方绕过 core.utils.id3v1.preserve_id3v1，也不会把 legacy 标签改坏。
-    orig_id3v1 = id3v1_sha256(filepath)
+    try:
+        orig_id3v1 = id3v1_sha256(filepath)
+    except Exception as exc:
+        logger.warning("safe_save_audio_tags: ID3v1 尾块预检失败，拒绝改签: %s (%s)", filepath, exc)
+        return False
 
     # Guard against an external application changing the source while our
     # private copy is being rewritten. This cannot replace an OS file lock,

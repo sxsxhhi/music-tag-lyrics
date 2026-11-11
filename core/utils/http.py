@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # v1.8.5 / H-C1：歌词类 API 的正常响应都在几十 KB 量级，2 MiB 已远超实际需要。
 # 未显式指定上限的调用点用这个保守默认值，避免异常/恶意响应导致无界内存占用。
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+# Resource downloads may be larger than lyric JSON, but must also have a
+# finite default limit. Cover art already supplies a tighter explicit limit.
+DEFAULT_MAX_BINARY_BYTES = 16 * 1024 * 1024
 
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
@@ -141,7 +144,7 @@ def http_post_json_body(
 def http_get_bytes(
     url: str,
     timeout: float = 10.0,
-    max_bytes: int = 0,
+    max_bytes: int = DEFAULT_MAX_BINARY_BYTES,
     user_agent: str = UA_DESKTOP
 ) -> Optional[bytes]:
     """下载二进制内容。非 2xx、传输失败、超过 max_bytes 上限（>0 时）一律返回 None。
@@ -177,9 +180,13 @@ def http_get_text_ex(
     headers: Optional[Dict[str, str]] = None,
     timeout: float = 3.0,
     user_agent: str = UA_DEFAULT,
-    max_bytes: int = 0,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> HttpResult:
-    """带状态码、体长、耗时与精细异常的 HTTP GET。校验证书，不吞状态码。"""
+    """带状态码和耗时的 HTTP GET；默认对所有响应（含 HTTPError）施加 2 MiB 上限。
+
+    显式 ``max_bytes<=0`` 才允许无界读取，供确有需要的受控调用方使用。
+    超限时返回 ``error='oversized'`` 且 ``text=''``，不向上层暴露截断正文。
+    """
     req_headers = {"User-Agent": user_agent}
     if headers:
         req_headers.update(headers)
@@ -204,12 +211,16 @@ def http_get_text_ex(
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         try:
             raw = exc.read(max_bytes + 1) if max_bytes > 0 else exc.read()
-            text = raw.decode("utf-8", errors="ignore")
             bytes_len = len(raw)
+            if max_bytes > 0 and bytes_len > max_bytes:
+                # Avoid returning partial error HTML/JSON as if the body were complete.
+                error, text = "oversized", ""
+            else:
+                error, text = "", raw.decode("utf-8", errors="ignore")
         except Exception:
-            raw, text, bytes_len = b"", "", 0
+            text, bytes_len, error = "", 0, "body_read_error"
         resp_headers = dict(exc.headers.items()) if hasattr(exc, "headers") and exc.headers else {}
-        return HttpResult(status=exc.code, text=text, bytes_len=bytes_len, elapsed_ms=elapsed_ms, error="", headers=resp_headers)
+        return HttpResult(status=exc.code, text=text, bytes_len=bytes_len, elapsed_ms=elapsed_ms, error=error, headers=resp_headers)
     except (socket.timeout, TimeoutError) as exc:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=elapsed_ms, error="timeout")

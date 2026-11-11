@@ -432,6 +432,12 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - 多文件协同落盘在操作系统拒绝原子还原时保留 `.tmp_bak*` 物理备份，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`。
 - 新增安全防回归测试套件（`test_v184_round12_safety.py` 与 `test_v184_round13_safety.py`），已纳入 Windows 核心阻塞门禁与离线全套件自动化发现。
 
+### v1.8.5 独立复核 R2：错误状态必须 Fail-Closed
+- `http_get_text_ex` 默认 `max_bytes=2 MiB`，HTTP 2xx 和 429/4xx/5xx 均只读取 `max_bytes+1` 字节；超限必须返回 `error='oversized'`，不得将截断的正文当作完整响应。正常小型 429 仍保留状态码与退避机制；`max_bytes=0` 仅为调用方**显式**退出上限。`http_get_bytes` 默认限制 16 MiB，封面调用方继续使用更严格的显式上限。
+- ID3v1 尾块读取的 `None` **只能表示可靠确认不存在**；`stat/open/seek/read` 异常或不完整读取必须抛出完整性错误。`safe_save_audio_tags` 的 ID3v1 原始快照也属于失败保护范围，异常时必须返回 `False` 且不触碰原件；最终尾块摘要由独立读取逻辑核验。
+- FLAC APPLICATION/SEEKTABLE/CUESHEET 指纹预检读取失败（`None` 或异常）即拒绝日常及标准化写回；合法空字典 `{}` 代表无扩展块、不得误判成不可验证。
+- `tests/test_v185_r2_failclosed.py` 与 v1.8.5 其余四个安全套件已纳入 Windows 阻塞门禁；Linux `run_all.py` 自动发现。对正式发布的承诺仍需经过完整 Git 索引构建、双 Manifest、私有词表扫描以及云端 CI 验证。
+
 ### ID3v1 保真、元数据块指纹与发布可复现（v1.8.5）
 - **MP3 ID3v1 逐字节保持**：mutagen 的 `ID3.save(v1=…)` 没有「保持不变」语义（`0`=删除、`1`=更新、`2`=创建），默认 `v1=1` 会把既有 ID3v1 的 title/artist/album/year 从 ID3v2 重写，并**无条件清空 comment**；非 Latin-1 文本（中文等）还会降级成 `???`。v1.8.5 起统一走「剥离 → 保存 → 原样附加」：写入前把末尾 128 字节 `TAG` 块切下、保存后原封附回，使 mutagen 完全看不到 ID3v1。日常 `update_audio_tags`、标准化 `write_verified_standardized_container` 与 `safe_save_audio_tags` 第三道闸共同保证逐字节不变；凭空创建、重复写入或摘要不符分别按 `ID3V1_CREATED` / `ID3V1_DUPLICATED` / `ID3V1_CHANGED` 阻断，绝不静默放行。
 - **ID3v1 可核验性**：`read_container_tags` 输出 `id3v1_present` 与 `id3v1_sha256`，标准化报告的 `readback_tags` 增加 `id3v1_preserved`，让「保留」可被外部复算而不是只靠声明。

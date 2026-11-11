@@ -1,4 +1,4 @@
-name: Windows core blocking gate (v1.8.4)
+name: Windows core blocking gate (v1.8.5)
 
 # Windows 平台关键能力硬门禁 (continue-on-error: false)
 # 覆盖缓存路径回退、ISRC 容器门禁、标准流程、标准化 CLI、
@@ -102,6 +102,33 @@ jobs:
         shell: pwsh
         run: python -B tests/test_v184_round13_safety.py *>&1 | Tee-Object -FilePath r13_safety.log
 
+      # v1.8.5：ID3v1 保真 / FLAC 块指纹 / 抓取上限 / 独立审计反例 / R2 fail-closed。
+      # 这些是 P1 级数据保真回归，必须与既有安全回归同等对待（原先只在 Linux run_all 覆盖）。
+      - name: v1.8.5 independent audit regressions (Windows)
+        id: v185_audit
+        shell: pwsh
+        run: python -B tests/test_v185_postrelease_audit.py *>&1 | Tee-Object -FilePath v185_audit.log
+
+      - name: v1.8.5 ID3v1 fidelity (Windows)
+        id: v185_id3v1
+        shell: pwsh
+        run: python -B tests/test_v185_id3v1_fidelity.py *>&1 | Tee-Object -FilePath v185_id3v1.log
+
+      - name: v1.8.5 FLAC metadata fingerprint (Windows)
+        id: v185_fingerprint
+        shell: pwsh
+        run: python -B tests/test_v185_metadata_fingerprint.py *>&1 | Tee-Object -FilePath v185_fingerprint.log
+
+      - name: v1.8.5 HTTP response limits (Windows)
+        id: v185_http_limits
+        shell: pwsh
+        run: python -B tests/test_v185_http_limits.py *>&1 | Tee-Object -FilePath v185_http_limits.log
+
+      - name: v1.8.5 R2 fail-closed regressions (Windows)
+        id: v185_r2
+        shell: pwsh
+        run: python -B tests/test_v185_r2_failclosed.py *>&1 | Tee-Object -FilePath v185_r2.log
+
       - name: Summarise Windows core gate
         if: always()
         shell: pwsh
@@ -124,7 +151,12 @@ jobs:
             "security_regressions.log",
             "release_gate_regressions.log",
             "r12_safety.log",
-            "r13_safety.log"
+            "r13_safety.log",
+            "v185_audit.log",
+            "v185_id3v1.log",
+            "v185_fingerprint.log",
+            "v185_http_limits.log",
+            "v185_r2.log"
           )
           $out = @()
           $out += "## Windows Core Blocking Gate Results"

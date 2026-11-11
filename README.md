@@ -249,6 +249,13 @@ python -B tests/run_all.py -k canto
 
 ## 📜 版本更新历史 (Changelog)
 
+### v1.8.5 独立复核修正（R2，已按最小范围合入本仓）
+
+- **HTTP 入口遗漏补齐**：实际用于 Apple TTML、iTunes、lrc.red 的 `http_get_text_ex` 现在默认最多读取 2 MiB，连 HTTP 429/4xx 错误响应也限制读取且明确返回 `error='oversized'`；小型错误响应保留原先的状态码、正文和退避语义。共享二进制下载函数 `http_get_bytes` 默认上限为 16 MiB，调用方仍可指定更严格的额度。
+- **ID3v1 读取失败 Fail-Closed**：区分「成功确认无 ID3v1」与 `stat/open/seek/read` 异常及短读；异常不再伪装成无标签。额外独立校验原始与暂存尾块，常规改签预检失败时返回失败且不替换源文件。
+- **FLAC 指纹缺失 Fail-Closed**：标准化及日常改签中，源扩展元数据指纹为 `None` 或读取抛错时直接阻断；合法空指纹 `{}` 仍可保存。
+- **自包含回归**：新增 `tests/test_v185_r2_failclosed.py`，覆盖 HTTP 成功/错误响应大小限制、ID3v1 异常短读与旁路模拟、FLAC 正反路径。本节改动来自外部独立复核，已按最小范围合入本仓并纳入 Windows 阻塞门禁；正式发布仍须经 Git 索引构建、私有词表扫描与云端 CI 验证，未经批准不得推送 GitHub。
+
 ### v1.8.5 (2026-11-11) —— 元数据保真收口、校验契约补强与发布可复现
 
 - **MP3 ID3v1 逐字节保真（安全修复）**：`mutagen` 的 `ID3.save(v1=…)` 没有「保持不变」语义（`0`=删除、`1`=更新、`2`=创建），默认 `v1=1` 会在仅改歌词时把既有 ID3v1 的 title/artist/album/year 从 ID3v2 重写、**无条件清空 comment**，非 Latin-1 文本还会降级成 `???`；而音频流摘要刻意排除 ID3v1，改动完全不可见。v1.8.5 改为「剥离 → 保存 → 原样附加」：写入前切下末尾 128 字节 `TAG` 块、保存后原封附回，日常与标准化两条路径 + `safe_save_audio_tags` 第三道闸共同保证字节不变；凭空创建/重复写入/摘要不符分别以 `ID3V1_CREATED` / `ID3V1_DUPLICATED` / `ID3V1_CHANGED` 阻断；

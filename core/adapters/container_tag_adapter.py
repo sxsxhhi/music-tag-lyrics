@@ -428,11 +428,12 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
     if not os.path.exists(filepath):
         return info
 
-    # v1.8.5 / H-A1：ID3v1 尾块与 ID3v2 帧体系完全独立，必须单独盘点。
-    # mutagen 看不到它，音频流摘要也刻意排除它，只有这里能给出可核验的事实。
-    v1_tail = read_id3v1_tail(filepath)
-    info["id3v1_present"] = v1_tail is not None
-    info["id3v1_sha256"] = id3v1_sha256(filepath)
+    # v1.8.5 / H-A1：ID3v1 只存在于 MP3。仅对 .mp3 探测，避免把目录或非 MP3 容器
+    # 的读取失败误报成 ID3v1 完整性问题（R2 曾让只读巡检 API 对任意路径抛
+    # ID3V1_READ_FAILED，掩盖了真正原因，也使 FLAC/M4A/OGG 多做一次无意义的尾读）。
+    if os.path.splitext(filepath)[1].lower() == ".mp3" and os.path.isfile(filepath):
+        info["id3v1_present"] = read_id3v1_tail(filepath) is not None
+        info["id3v1_sha256"] = id3v1_sha256(filepath)
 
     try:
         audio = mutagen.File(filepath)
@@ -704,6 +705,12 @@ def write_verified_standardized_container(
         # v1.8.5 / H-A2：APPLICATION/SEEKTABLE/CUESHEET 等块不在音频流摘要、
         # 也不在 Vorbis 键值闸门内，必须单独取多重集快照。
         orig_flac_blocks = flac_metadata_fingerprint(source)
+        if orig_flac_blocks is None:
+            raise RuntimeError('AUDIO_STREAM_NOT_VERIFIED:flac_metadata_unreadable')
+    elif ext == '.flac':
+        # An unreadable FLAC must never bypass the extension-block gate simply
+        # because mutagen failed to construct a FLAC object.
+        raise RuntimeError('AUDIO_STREAM_NOT_VERIFIED:flac_metadata_unreadable')
     elif isinstance(source_audio, WAVE) and getattr(source_audio, "tags", None):
         orig_id3_frames = dict(source_audio.tags.items())
     elif ext == '.mp3' or (source_audio is not None and getattr(source_audio, "tags", None) and isinstance(source_audio.tags, ID3)):

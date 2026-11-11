@@ -38,28 +38,38 @@ class Id3v1IntegrityError(RuntimeError):
     """ID3v1 保护失败：调用方必须放弃落盘。"""
 
 
-def read_id3v1_tail(path: str | os.PathLike) -> Optional[bytes]:
-    """返回末尾 128 字节的 ID3v1 块；不存在则返回 None。
+def _read_id3v1_tail_checked(path: str | os.PathLike) -> Optional[bytes]:
+    """Return the exact ID3v1 tail or None only on a successful negative read.
 
-    只做字节判定，不解析字段——解析会让「保留原样」失去意义。
+    A read/seek/stat failure or short read is NOT evidence of absence. Distinguish
+    it from a legitimate file without ID3v1 so all writers can fail closed.
     """
     try:
-        size = os.path.getsize(path)
-        if size < ID3V1_SIZE:
-            return None
         with open(path, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size < ID3V1_SIZE:
+                return None
             handle.seek(-ID3V1_SIZE, os.SEEK_END)
             tail = handle.read(ID3V1_SIZE)
-    except OSError:
-        return None
-    if len(tail) != ID3V1_SIZE or not tail.startswith(ID3V1_MAGIC):
-        return None
-    return tail
+    except OSError as exc:
+        raise Id3v1IntegrityError("ID3V1_READ_FAILED") from exc
+    if len(tail) != ID3V1_SIZE:
+        raise Id3v1IntegrityError("ID3V1_SHORT_READ")
+    return tail if tail.startswith(ID3V1_MAGIC) else None
+
+
+def read_id3v1_tail(path: str | os.PathLike) -> Optional[bytes]:
+    """Return a 128-byte ID3v1 tail, or None if reliably absent; raise on I/O errors."""
+    return _read_id3v1_tail_checked(path)
 
 
 def id3v1_sha256(path: str | os.PathLike) -> str:
-    """ID3v1 块的摘要；不存在时返回空串（便于直接比较）。"""
-    tail = read_id3v1_tail(path)
+    """Independently read the tail for a write-commit integrity check.
+
+    Keeping this separate from the writer's read_id3v1_tail also makes a bad
+    writer/mocked negative read detectable in the final readback gate.
+    """
+    tail = _read_id3v1_tail_checked(path)
     return hashlib.sha256(tail).hexdigest() if tail is not None else ""
 
 
