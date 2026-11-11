@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.4 R4-C)。
+"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.4 R13)。
 
 满足《歌曲检测与修补标准》§6 全部要求及方案铁律：
 1. FLAC 映射 lyrics (ELRC) + ttmllyric (TTML) + lyricist/composer；
@@ -140,7 +140,7 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
 
 
 def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
-    """Hash nonempty PCM data within validated RIFF and chunk bounds."""
+    """Hash the PCM/float data, fmt parameters and all non-ID3 RIFF chunks."""
     unverified = ("AUDIO_STREAM_NOT_VERIFIED", "")
     try:
         with open(path, "rb") as f:
@@ -202,6 +202,8 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                     if not seen_fmt or size == 0:
                         return unverified
                     data_chunks += 1
+                    h.update(b"WAV_DATA_CHUNK_V3\0")
+                    h.update(size.to_bytes(8, 'little'))
                     left = size
                     while left:
                         block = f.read(min(1024 * 1024, left))
@@ -211,9 +213,30 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                         left -= len(block)
                     if size & 1:
                         f.seek(1, os.SEEK_CUR)
-                else:
-                    # Other chunks may be metadata; padding remains in RIFF.
+                elif name.lower() == b"id3 ":
+                    # Mutagen updates the ID3 chunk when writing lyrics.
+                    # Its data is checked separately by the metadata gate.
                     f.seek(size + (size & 1), os.SEEK_CUR)
+                else:
+                    # All other RIFF chunks are non-authorized immutable
+                    # source content (fact sample counts, bext, cue, LIST,
+                    # smpl, iXML, and even unknown vendor chunks). Hash full
+                    # type, declared size and bytes, independent of offsets.
+                    h.update(b"WAV_PROTECTED_CHUNK_V3\0")
+                    h.update(name)
+                    h.update(size.to_bytes(8, 'little'))
+                    left = size
+                    while left:
+                        block = f.read(min(1024 * 1024, left))
+                        if not block:
+                            return unverified
+                        h.update(block)
+                        left -= len(block)
+                    if size & 1:
+                        pad = f.read(1)
+                        if len(pad) != 1:
+                            return unverified
+                        h.update(pad)
                 if f.tell() > riff_end:
                     return unverified
             if f.tell() != riff_end:
@@ -404,9 +427,18 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
                 info["_extra_ttml_raw"].append(item)
 
         info["has_cover"] = bool(audio.pictures)
-        info["cover_digest"] = hashlib.sha256(b"".join(
-            bytes(p.data) + p.mime.encode('utf-8') + int(p.type).to_bytes(4,'big')
-            for p in audio.pictures)).hexdigest() if audio.pictures else ""
+        # The serialized FLAC PICTURE structure includes image data AND
+        # description, dimensions, colour depth, palette size, MIME and type.
+        # Hashing image bytes alone allows silent metadata mutation.
+        if audio.pictures:
+            cover_hash = hashlib.sha256(b"FLAC_PICTURES_FULL_V1\0")
+            for picture in audio.pictures:
+                serialized = picture.write()
+                cover_hash.update(len(serialized).to_bytes(8, 'big'))
+                cover_hash.update(serialized)
+            info["cover_digest"] = cover_hash.hexdigest()
+        else:
+            info["cover_digest"] = ""
         for k in audio.keys():
             if k.lower().startswith("replaygain_"):
                 info["replaygain"][k.lower()] = audio.get(k)
@@ -498,8 +530,11 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
     if all_uslt:
         empty_desc_uslt = [item for item in all_uslt if not getattr(item[1], "desc", "")]
         if empty_desc_uslt:
+            # Only the canonical empty-description English USLT can be
+            # replaced. Other languages (including a lone USLT::chi) are
+            # protected secondary tracks, not fallback editable primaries.
             eng_empty = next((item for item in empty_desc_uslt if getattr(item[1], "lang", "").lower() == "eng"), None)
-            primary_k, primary_frame = eng_empty if eng_empty else empty_desc_uslt[0]
+            primary_k, primary_frame = eng_empty if eng_empty else (None, None)
         else:
             # Described-only USLT frames are translations/commentaries, not
             # evidence of an editable primary. Never promote the first one.

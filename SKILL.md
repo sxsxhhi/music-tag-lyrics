@@ -431,3 +431,11 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`，否则仅拒绝写入；不以文件名扩展名、ID3 缺失或 Mutagen 读取成功证明音频完全可解码。
 - 双 sidecar 回滚在操作系统拒绝还原时须保留 `.tmp_bak*`，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`；不能将这种补偿机制宣传为严格多文件 ACID/断电原子事务。
 - 所有新增回归采用本地合成无版权音频；交付候选不代表已通过完整 Git 仓库的 CI、私有指纹守卫或播放器实机验证，未经批准禁止推送 GitHub。
+
+
+### R13 多语言保真与容器语义最终复核（v1.8.4 发布候选）
+- 标准化 ID3 主轨选择仅允许明确的无描述 `USLT::eng`。不存在该帧时，其他语言的无描述 USLT 为受保护轨道；允许新建规范英文主轨或安全阻断，**不允许将第一条外语轨作为删除目标**。日常 `process_song` 规则不变。
+- MP4/M4A 的音频不变量包含 movie header `mvhd`（含 movie timescale/duration），以及已有音频轨道、采样表和压缩音频载荷检查；标签保存引起时间参数未经授权变化必须拒绝写回。
+- FLAC 图片采用完整序列化 PICTURE 结构摘要，保护说明文字、宽高、深度与颜色数等属性；WAV 将所有非 ID3 RIFF 块纳入摘要，既保护音频数据，也保护 `fact`、`LIST` 等扩展块。
+- 新增 `tests/test_v184_round13_safety.py`，须在 Windows/Linux CI 和原 12/17 项门禁之后独立运行；从最终发行 ZIP 重新解压执行全部测试，确认不是只验证工作树。
+- 此候选未在当前环境验证维护者真实私有指纹与完整 Git CI；严禁在尚未完成本机权威仓验收并获用户授权前推送 GitHub、合并或发布 Release。

@@ -169,8 +169,8 @@ def mp4_audio_digest(path: str) -> Tuple[str, str]:
     """Hash all mdat payloads and essential unchanging audio track descriptors.
 
     Chunk-offset tables are intentionally excluded because metadata edits move
-    the mdat box; track codec description (stsd), time scale and sample timing
-    remain protected. Unsupported or malformed MP4 layouts fail closed.
+    the mdat box; track codec description (stsd), movie and media time bases (mvhd/mdhd),
+    durations and sample timing remain protected. Unsupported or malformed MP4 layouts fail closed.
     """
     try:
         from mutagen.mp4 import MP4
@@ -195,10 +195,34 @@ def mp4_audio_digest(path: str) -> Tuple[str, str]:
                 if typ == b"ftyp":
                     saw_ftyp = True
                 elif typ == b"moov":
+                    if saw_moov:
+                        return UNVERIFIED
                     saw_moov = True
+                    # Movie-level timescale/duration also determine playback
+                    # duration, even when audio frames and mdhd are unchanged.
+                    # User metadata (udta/meta) and absolute chunk offsets are
+                    # intentionally excluded. Exactly one mvhd is mandatory.
+                    moov_atoms = list(_atoms(f, begin, end))
+                    movie_headers = [(b, e) for t, b, e, _ in moov_atoms if t == b"mvhd"]
+                    if len(movie_headers) != 1:
+                        return UNVERIFIED
+                    mvhd_start, mvhd_end = movie_headers[0]
+                    f.seek(mvhd_start)
+                    mvhd_bytes = f.read(mvhd_end - mvhd_start)
+                    if len(mvhd_bytes) < 20 or mvhd_bytes[0] not in (0, 1):
+                        return UNVERIFIED
+                    # Version 0 uses 32-bit timescale/duration; version 1
+                    # uses 64-bit dates and duration. Zero timescale invalid.
+                    timescale_offset = 12 if mvhd_bytes[0] == 0 else 20
+                    if len(mvhd_bytes) < timescale_offset + 8 or int.from_bytes(
+                            mvhd_bytes[timescale_offset:timescale_offset+4], 'big') == 0:
+                        return UNVERIFIED
+                    h.update(b"MOVIE_HEADER_FULL_V1\0")
+                    h.update(len(mvhd_bytes).to_bytes(8, 'big'))
+                    h.update(mvhd_bytes)
                     # Only protect track decode / playback tables. Exclude
                     # mutable user metadata and relocation-dependent offsets.
-                    for t, b, e, _ in _atoms(f, begin, end):
+                    for t, b, e, _ in moov_atoms:
                         if t != b"trak":
                             continue
                         track_atoms = list(_atoms(f, b, e))
