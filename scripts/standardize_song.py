@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.3)。
+"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.4)。
 
 满足《歌曲检测与修补标准》§2.4、§3、§4、§6 全部要求：
 1. 缺省 --mode audit 只读审计，绝无副作用；
@@ -182,15 +182,42 @@ def standardize_single_song(
     disk_ttml = sources['sidecar_ttml']
     active_elrc = next((sources[k] for k in elrc_keys if sources[k]), '')
     active_ttml = next((sources[k] for k in ttml_keys if sources[k]), '')
+    extra_inv = [
+        {
+            'container': item.get('container', ''),
+            'kind': item.get('kind', ''),
+            'key': item.get('key', ''),
+            'lang': item.get('lang', ''),
+            'desc': item.get('desc', ''),
+            'sha256': item.get('sha256', ''),
+            'bytes': item.get('bytes', 0),
+        }
+        for item in embedded.get('extra_lyrics', [])
+    ]
+    extra_ttml_inv = [
+        {
+            'container': item.get('container', ''),
+            'kind': item.get('kind', ''),
+            'key': item.get('key', ''),
+            'sha256': item.get('sha256', ''),
+            'bytes': item.get('bytes', 0),
+        }
+        for item in embedded.get('extra_ttml', [])
+    ]
     report={
         'version':__version__,'audio':audio_abs,'mode':mode,'status':'PASS',
         'has_embedded_elrc':bool(embedded.get('lyrics')),
         'has_embedded_ttml':bool(embedded.get('ttml')),
         'has_sidecar_elrc':bool(disk_elrc),'has_sidecar_ttml':bool(disk_ttml),
+        'secondary_lyrics_count': len(extra_inv) + len(extra_ttml_inv),
         'baseline_comparison':None,'format_audit':'NO_LYRICS',
         'issues':[],'prelude_plan':None,'actions_taken':[],
-        'source_inventory': {k: {'present': bool(v), 'sha256': hashlib.sha256(v.encode('utf-8')).hexdigest() if v else None}
-                             for k, v in sources.items()},
+        'source_inventory': {
+            **{k: {'present': bool(v), 'sha256': hashlib.sha256(v.encode('utf-8')).hexdigest() if v else None}
+               for k, v in sources.items()},
+            'embedded_secondary_lyrics': extra_inv,
+            'embedded_secondary_ttml': extra_ttml_inv,
+        },
         'source_audit': 'PENDING'}
     # Track precisely which paths this invocation created. A report failure
     # must not leave apparently successful outputs behind.
@@ -267,6 +294,20 @@ def standardize_single_song(
             for name in available[1:]:
                 if validated[name]!=validated[baseline_name]:
                     issue('SOURCE_LYRICS_CONFLICT', f'{baseline_name} differs from {name}')
+
+    seen_sec = {}
+    for item in extra_inv:
+        ident = (item['kind'], item['lang'], item['desc'])
+        if ident in seen_sec and seen_sec[ident] != item['sha256']:
+            issue('SECONDARY_LYRICS_CONFLICT', f"Conflicting secondary lyric with identifier {ident}")
+        seen_sec[ident] = item['sha256']
+        # If another USLT has empty desc, it is a competing main lyric track
+        if item['kind'] == 'USLT' and not item['desc']:
+            if sources.get('embedded_elrc') and hashlib.sha256(sources['embedded_elrc'].encode('utf-8')).hexdigest() != item['sha256']:
+                issue('SOURCE_LYRICS_CONFLICT', 'Multiple competing un-described embedded USLT tracks')
+    for item in extra_ttml_inv:
+        if sources.get('embedded_ttml') and hashlib.sha256(sources['embedded_ttml'].encode('utf-8')).hexdigest() != item['sha256']:
+            issue('SOURCE_LYRICS_CONFLICT', 'Multiple conflicting embedded TTML tracks')
     report['source_audit'] = 'CONFLICT_OR_INVALID' if report['status']!='PASS' else 'VALIDATED_PENDING_FORMAT'
     if report['status']!='PASS':
         report['format_audit']='SOURCE_CONFLICT_OR_INVALID'

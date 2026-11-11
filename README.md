@@ -83,7 +83,7 @@ python scripts/process_song.py "绝版老歌.flac" --force-gpu
 python scripts/process_song.py "绝版老歌.flac" --lyrics-file "我的歌词.txt"
 ```
 
-#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.3)
+#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.4)
 *适合场景：本地已有双格式歌词但对齐混乱、夹带长串制作名单、需要为发烧播放器生成标准 Apple TTML 与 ELRC 的严苛场景。*
 
 > **安全契约**：`--in-place` 已被显式禁用；标准化输出必须指定独立 `--output-dir`，已有同名文件绝不覆盖；`--mode audit` 为只读基线审计，不修改任何文件。
@@ -146,12 +146,13 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
    - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
    - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断。未知直接 XML 文本节点、无法处理的嵌套节点或译文标记，同样阻断，不允许静默忽略后返回一致性 PASS。
 
-### 🔎 逐来源歌词完整性审计（v1.8.3 独立整改）
+### 🔎 逐来源歌词完整性审计与多轨保真（v1.8.4）
 
 `standardize_song.py` 在选择输入之前，会分别登记并核验最多五个来源：**内嵌 ELRC、同名 `.lrc`、同名 `.spl`、内嵌 TTML、同名 `.ttml`**。同格式来源使用归一化后的唱词、字块时间、译文及结构信息对账；如果存在差异，报告 `SOURCE_LYRICS_CONFLICT` 并停止自动交付，绝不以「内嵌优先」静默覆盖其他来源。
 
 严格标准化入口增加以下保护：
 
+- **多轨多语言歌词零丢失保真**：标准化音频副本完整保留 FLAC 的多值 `lyrics`、MP3 与 WAV 的 secondary `USLT`（如带翻译或额外语言说明的帧）以及全部 `SYLT` 同步歌词帧；写回前在 `source_inventory` 记录哈希与数量（不泄露歌词明文），写回后对账二次歌词摘要，篡改或丢失即触发强制回滚；同标识冲突实行安全阻断。
 - **全文消费验证**：非法 LRC 元数据尾随文字、未闭合头、未知 ELRC `<...>` 行内片段以及不受支持的方括号词级时间标记，不会被跳过后宣称 `PASS`。常见文本中的字面 `<` 仍可作为歌词保留；语义无法确认时阻断并复核。
 - **有效时间轴**：`[offset]` 以整数毫秒同时作用于行级和逐字时间；重复、非法或导致负时间的偏移值被拒绝，避免「对账为 0ms 差异，实际输出却移动了时间」。无明确终点的最后一个逐字字块不再通过猜测 500ms 时长交付。
 - **双解析器一致性**：独立结构比较器与既有 LRC 解析器必须在歌词、时间及字块上给出相同结果；否则返回 `ELRC_PARSER_DIVERGENCE`，防止旧解析器暗中补时或漏字。
@@ -236,7 +237,6 @@ python -B tests/run_all.py
 
 # 2. 分发 ZIP：在新解压目录执行同一命令，套件数依分发清单而定
 python -B tests/run_all.py
-# v1.8.3 R9 独立修复候选：45 个分发套件、706 项用例；
 # 请以当前解释器的实际 PASS / SKIP / FAIL 统计为准。
 
 # 3. 快速运行指定模块测试
@@ -247,6 +247,13 @@ python -B tests/run_all.py -k canto
 ---
 
 ## 📜 版本更新历史 (Changelog)
+
+### v1.8.4 (2026-11-11) —— 多轨多语言歌词保真加固与工程治理
+- **多轨多语言歌词零丢失保真**：修复标准化写回时 FLAC 多值 `lyrics`、MP3/WAV 额外 `USLT` 帧与全部 `SYLT` 帧静默丢失的 P1 缺陷；主歌词替换为规范单帧 `USLT::eng`，其余语言与同步歌词轨道 100% 字节级无损保留；
+- **来源盘点与物理回读双重对账**：`source_inventory` 全面枚举并记录额外轨道类型、语言/描述、哈希与字节数（不暴露歌词明文）；容器写回后物理回读强制校验副轨摘要，若发生篡改或丢失立即抛出异常并原子回滚；
+- **多轨冲突 Fail-Closed 门禁**：对同标识冲突的副轨或相互竞争的未描述主歌词帧实行阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`），杜绝歧义交付；
+- **Windows CI 核心门禁补全**：将 R9 输入完整性回归与 v1.8.4 多轨保真回归永久纳入 Windows 核心阻塞门禁流水线；
+- **全量测试与架构图版本同步**：新增 `test_v184_multitrack_integrity.py` 专项套件（15/15 PASS），架构图与文档全局同步至 v1.8.4。
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
 - **R9 独立输入完整性加固**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试；
