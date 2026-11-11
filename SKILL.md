@@ -426,16 +426,8 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
   - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。WAV 严密校验 RIFF 尾部边界与 `fmt ` 基础参数（采样率、声道、块对齐、字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`，尾部残块与非法参数安全拒绝。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
 - 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。
 
-### R12 交付门禁与运行限制（v1.8.4）
-- 日常 ID3 写入仅覆盖 `USLT::eng` 空描述主帧，其他语言空描述与描述性帧以及所有 SYLT 必须保留；具有歧义的未知主帧不得删除。
-- 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`，否则仅拒绝写入；不以文件名扩展名、ID3 缺失或 Mutagen 读取成功证明音频完全可解码。
-- 双 sidecar 回滚在操作系统拒绝还原时须保留 `.tmp_bak*`，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`；不能将这种补偿机制宣传为严格多文件 ACID/断电原子事务。
-- 所有新增回归采用本地合成无版权音频；交付候选不代表已通过完整 Git 仓库的 CI、私有指纹守卫或播放器实机验证，未经批准禁止推送 GitHub。
-
-
-### R13 多语言保真与容器语义最终复核（v1.8.4 发布候选）
-- 标准化 ID3 主轨选择仅允许明确的无描述 `USLT::eng`。不存在该帧时，其他语言的无描述 USLT 为受保护轨道；允许新建规范英文主轨或安全阻断，**不允许将第一条外语轨作为删除目标**。日常 `process_song` 规则不变。
-- MP4/M4A 的音频不变量包含 movie header `mvhd`（含 movie timescale/duration），以及已有音频轨道、采样表和压缩音频载荷检查；标签保存引起时间参数未经授权变化必须拒绝写回。
-- FLAC 图片采用完整序列化 PICTURE 结构摘要，保护说明文字、宽高、深度与颜色数等属性；WAV 将所有非 ID3 RIFF 块纳入摘要，既保护音频数据，也保护 `fact`、`LIST` 等扩展块。
-- 新增 `tests/test_v184_round13_safety.py`，须在 Windows/Linux CI 和原 12/17 项门禁之后独立运行；从最终发行 ZIP 重新解压执行全部测试，确认不是只验证工作树。
-- 此候选未在当前环境验证维护者真实私有指纹与完整 Git CI；严禁在尚未完成本机权威仓验收并获用户授权前推送 GitHub、合并或发布 Release。
+### 多轨保真与容器语义门禁（v1.8.4）
+- 日常与标准化 ID3 写入仅覆盖 `USLT::eng` 无描述主帧，其他语言（如无描述 `USLT::chi`）、描述性帧以及所有 SYLT 必须作为副轨完整保留；具有歧义的未知主帧严禁删除。
+- 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`（含 MP4 `moov/mvhd` 电影级时间参数、FLAC 图片全结构、WAV 非 ID3 RIFF 扩展块等），否则拒绝写入。
+- 多文件协同落盘在操作系统拒绝原子还原时保留 `.tmp_bak*` 物理备份，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`。
+- 新增安全防回归测试套件（`test_v184_round12_safety.py` 与 `test_v184_round13_safety.py`），已纳入 Windows 核心阻塞门禁与离线全套件自动化发现。

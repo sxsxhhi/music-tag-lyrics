@@ -248,23 +248,14 @@ python -B tests/run_all.py -k canto
 
 ## 📜 版本更新历史 (Changelog)
 
-### v1.8.4 R13 待审修订 —— 多语言轨与播放语义扩展验证
-- **标准化 USLT 身份限制**：仅选择无描述的 `USLT::eng` 作为可替换主轨；没有该主轨时，保留所有其他语言的空描述 USLT，不再将首个中文/日文 USLT 作为可删除替代目标。来源不足时允许标准化安全阻断，不允许静默丢轨。
-- **MP4 电影级时间参数保护**：音频不变量额外覆盖 `moov/mvhd` 的完整内容（含 movie timescale/duration），阻断电影级时长改变但压缩音频包字节不变的漏检。
-- **FLAC 图片全结构摘要**：对序列化的完整 PICTURE 结构进行有序摘要，保护图像描述、尺寸、颜色深度和图片内容，而非只保护图片字节、类型与 MIME。
-- **WAV 扩展 RIFF 保护**：除授权可写的 ID3 块外，对 `fact`、`LIST`、`bext`、`cue `、未知扩展块等按类型、长度、完整数据建立摘要；原有 `fmt ` 与 `data` 的不变量保持有效。
-- **独立回归**：新增 `tests/test_v184_round13_safety.py`（13 项），并保留上轮 R12/R11 专项；这属于独立发布候选，需在本机开发仓核对 CI、两份 Manifest 与私有指纹扫描，**未经批准禁止推送 GitHub**。
-- **保证边界**：上述字节与元数据不变量并不是对所有格式的完全解码验证，sidecar 补偿回滚不提供断电级跨文件原子事务。
-
 ### v1.8.4 (2026-11-11) —— 多轨多语言歌词保真加固与工程治理
-- **多轨多语言歌词写回保真**：标准化与日常处理流全面升级为保留 FLAC/OGG 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT`、M4A `©lyr` 副轨与 ID3 多值 `TXXX:TTMLLYRIC`；主歌词写入规范 `USLT::eng`，副轨经语义字段与摘要回读核对（不承诺 ID3 序列化前后的原始标签字节逐字节相同）；
+- **多轨多语言歌词写回保真**：全面支持保留 FLAC/OGG 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT`、M4A `©lyr` 副轨与 ID3 多值 `TXXX:TTMLLYRIC`；标准主歌词写入规范的 `USLT::eng`（无描述），非英文（如 `USLT::chi`）或带描述的歌词作为受保护副轨完整保留，杜绝误判误删；
+- **全格式音频与结构不变量严格校验**：改签前后对 FLAC/WAV 核心播放参数、MP3 帧流、OGG Vorbis CRC/音频包、M4A/MP4 `mdat` 与 `moov/mvhd` 电影级时间头（含 timescale/duration）、DSF DSD 流进行写前写后不变性校验；FLAC 图片采用全结构序列化保护（涵盖尺寸、色彩、描述等），WAV 保护全部非 ID3 RIFF 扩展块（如 `fact`、`LIST`），音频主体及结构未通过校验时安全阻断并回滚；
 - **来源盘点与物理回读双重对账**：`source_inventory` 全面枚举并记录额外轨道类型、语言/描述、哈希与字节数（不暴露歌词明文）；容器写回后物理回读强制校验副轨摘要，若发生篡改或丢失立即抛出异常并原子回滚；
 - **未授权元数据全量不可变门禁**：写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 `PRIV`、`COMM`、未授权 `TCOM`/`TEXT`、自定义 Vorbis 标签等），任何意外遗漏或篡改立即阻断；
-- **日常改签音频语义不变量（R12）**：对 FLAC/WAV 的播放参数、MP3 帧、OGG Vorbis CRC/音频包、M4A/MP4 mdat/关键音频 track 信息及 DSF DSD 流作写前写后保守校验；无法验证时安全拒绝，禁止将无效 MP3 伪装为合法首次 ID3 写入；并发源文件发生变化时拒绝覆盖。
-- **多文件协同落盘尽力补偿回滚（R12）**：`atomic_write_many` 引入预备份与逆序故障回滚；若回滚本身失败会报告 `SIDECAR_ROLLBACK_INCOMPLETE` 并保留恢复备份；不宣称跨文件断电级原子性。
+- **多文件协同落盘补偿回滚**：`atomic_write_many` 引入预备份与逆序故障回滚；若回滚再次发生异常，自动保留 `.tmp_bak*` 物理备份并传播 `SIDECAR_ROLLBACK_INCOMPLETE`，改签操作强制前置 `VERIFIED` 状态校验；
 - **多轨冲突 Fail-Closed 门禁**：对同标识冲突的副轨或相互竞争的未描述主歌词帧实行阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`），杜绝歧义交付；
-- **Windows CI 核心门禁补全**：将 R9 输入完整性回归、v1.8.4 多轨保真回归与 release gate 回归套件永久纳入 Windows 核心阻塞门禁流水线；
-- **全量测试与架构图版本同步**：包含 `test_v184_multitrack_integrity.py`、`test_v184_security_regressions.py` 与 `test_v184_release_gate_regressions.py`，全量 53 套离线套件通过。此发行包为供独立审查的候选，未经明确授权不得推送 GitHub。
+- **Windows CI 核心门禁升级**：将 R9 输入完整性回归、v1.8.4 多轨保真回归、发布门禁及 R12/R13 安全测试套件全部纳入 Windows 核心阻塞流水线；55 套离线测试套件全部通过（801 PASS / 11 SKIP / 0 FAIL）。
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
 - **R9 独立输入完整性加固**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试；
