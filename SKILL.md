@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.3）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。写入歌词只留单帧 USLT。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.4）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。主歌词写入标准单帧 USLT::eng 并完整保留其余语言/同步副轨。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.3)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.4)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
@@ -373,10 +373,10 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、双格式标准化与全曲内容治理（v1.8.3）
+## 十一、双格式标准化与全曲内容治理（v1.8.4）
 
 > **独立、显式启用的新入口**：`scripts/standardize_song.py`。普通的
-> `scripts/process_song.py` 与旧版检索/声学/标签处理默认逻辑保持不变。
+> `scripts/process_song.py` 检索与声学逻辑保持不变，但日常音频标签写回增加严格保真门禁，无法验证的容器会拒绝改签。
 > 本安装包不代表已经通过可信维护者私有指纹扫描、完整 Git CI 或播放器实机兼容验证。
 
 ### 1. 固定处理顺序（不得交换）
@@ -415,12 +415,19 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - `--output-dir` 为标准化必填，不得等于音频源目录；已有同名目标一律拒绝，不自动覆盖。音频工作副本只支持 FLAC、MP3、WAV 的本轮标准化写回；M4A 标准化工作副本写回尚未纳入验证，保持只读/阻断；旧普通流程的其他容器能力不受此限制。
 - 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
 - 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。
+- **多轨歌词安全写回与元数据不可变性 (v1.8.4 补丁复审)**：标准化与日常处理流全面保留 FLAC/OGG 多值 lyrics / ttmllyric、MP3/WAV 描述性 USLT 与 SYLT、M4A ©lyr 额外轨、ID3 TXXX:TTMLLYRIC 多文本值；日常只替换规范 `USLT::eng`，其余语言（即使空描述）保持原样；标准化仅替换明确识别的主 USLT，其余轨道通过摘要及 SYLT 帧完整语义属性核验。FLAC 合法多值不因空语言描述误报冲突；无描述主轨竞争仍须阻断。写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 PRIV/COMM/未授权 TCOM/TEXT 及自定义标签），任何意外遗漏或篡改立即阻断。常规标签改签引入音频流完整性比对，音频帧受损时绝对拒绝替换；修复合法未加签 MP3 首次写入 ID3v2.4；`atomic_write_many` 补齐预备份与逆序故障回滚，回滚再失败时保留 `.tmp_bak*` 备份并抛出 `SIDECAR_ROLLBACK_INCOMPLETE`；不保证断电级多文件原子性。公开 JSON 审计报告仅存受限摘要，不携带 Mutagen 帧、原始副轨歌词或自由文本异常证据。错误、意外篡改或音频流变化均不得交付新副本。
 - **TTML 时间规范与结构化阻断 (v1.8.3)**：
   - 输出格式强制 W3C `HH:MM:SS.mmm`；输入兼容历史两段式 `MM:SS.mmm` 与秒级偏移 `12.345s`；
   - 单 `div` 缺省边界时推导子行范围并标记**非阻断** `DIV_BOUNDARY_INFERRED`，实际 audit/standardize 入口必须保留该审计提示而不得误标为 `INPUT_PARSE_FAILED`；若存在时序倒挂或冲突则阻断 `DIV_TIME_CONFLICT`；
   - 复杂 TTML 拓扑结构化阻断：对背景声部 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div`（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`）坚决阻断。**所有不受支持的 p/body/div 子元素、容器直接非空白文本节点（body.text/div.text/p.tail）与嵌套译文**一律报结构化阻断，`span.tail` 未对齐文本绝不伪造声学字轴时间；不能因两个格式共同漏字而得到错误 PASS。
-- **逐来源完整性与有效时间轴 (v1.8.3-R9 修复候选)**：标准化入口必须对内嵌 ELRC、`.lrc`、`.spl`、内嵌 TTML、`.ttml` 逐来源严格检查，**先确认各来源可安全解析，再选择被验证一致的内容**；任何同格式内容差异标记 `SOURCE_LYRICS_CONFLICT` 并阻断交付。`source_audit` 是来源检查，`format_audit` 是跨格式检查，二者不可混同。ELRC 元数据需完整行匹配；未知行内 `<...>`、畸形时间、非法偏移、可导致时间钳位的负时间、无明确末字终点及与旧解析器有歧义的词级轴均须 Fail-closed。无法无损保真的 TTML 显式角色、未授权 `P_` 标记同样必须阻断或人工复核。此严格规则只扩展 `standardize_song.py` 的输入契约，不得未经单独验收变更 `process_song.py` 的默认兼容链。
+- **逐来源完整性与有效时间轴 (v1.8.3)**：标准化入口必须对内嵌 ELRC、`.lrc`、`.spl`、内嵌 TTML、`.ttml` 逐来源严格检查，**先确认各来源可安全解析，再选择被验证一致的内容**；任何同格式内容差异标记 `SOURCE_LYRICS_CONFLICT` 并阻断交付。`source_audit` 是来源检查，`format_audit` 是跨格式检查，二者不可混同。ELRC 元数据需完整行匹配；未知行内 `<...>`、畸形时间、非法偏移、可导致时间钳位的负时间、无明确末字终点及与旧解析器有歧义的词级轴均须 Fail-closed。无法无损保真的 TTML 显式角色、未授权 `P_` 标记同样必须阻断或人工复核。此严格规则只扩展 `standardize_song.py` 的输入契约，不得未经单独验收变更 `process_song.py` 的默认兼容链。
 - **流式哈希与音频主体不可变验证 (v1.8.3)**：
   - 大音频文件哈希全面采用分块流式哈希（`sha256_file`），防止超大文件耗尽系统内存；
   - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。WAV 严密校验 RIFF 尾部边界与 `fmt ` 基础参数（采样率、声道、块对齐、字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`，尾部残块与非法参数安全拒绝。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
 - 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。
+
+### 多轨保真与容器语义门禁（v1.8.4）
+- 日常与标准化 ID3 写入仅覆盖 `USLT::eng` 无描述主帧，其他语言（如无描述 `USLT::chi`）、描述性帧以及所有 SYLT 必须作为副轨完整保留；具有歧义的未知主帧严禁删除。
+- 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`（含 MP4 `moov/mvhd` 电影级时间参数、FLAC 图片全结构、WAV 非 ID3 RIFF 扩展块等），否则拒绝写入。
+- 多文件协同落盘在操作系统拒绝原子还原时保留 `.tmp_bak*` 物理备份，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`。
+- 新增安全防回归测试套件（`test_v184_round12_safety.py` 与 `test_v184_round13_safety.py`），已纳入 Windows 核心阻塞门禁与离线全套件自动化发现。

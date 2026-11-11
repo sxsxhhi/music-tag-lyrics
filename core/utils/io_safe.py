@@ -70,14 +70,16 @@ def atomic_write_many(files: dict, encoding: str = "utf-8", newline: str = "\n")
     一次性原子写入多个文本文件（P1-9）。
 
     先把所有内容都写成临时文件并 fsync，全部成功后才逐个 ``os.replace``。
-    这样"第一个写成功、第二个失败"不会留下半对产物。
-
-    注意：``os.replace`` 阶段不是跨文件事务 —— 若替换到一半失败（例如目标被占用），
-    已替换的文件已经是新内容，只有尚未替换的保持原样。这是本函数能提供的最强保证。
+    若替换过程中发生异常，尝试按逆序恢复已替换文件。若 OS 再次拒绝
+    回滚，保留 .tmp_bak 恢复材料并抛出 SIDECAR_ROLLBACK_INCOMPLETE。
+    注意：多个 os.replace 不能保证断电/进程崩溃时跨文件原子性。
 
     :param files: {目标路径: 文本内容}
     """
     tmps = {}
+    backups = {}
+    replaced = []
+    failed_restore = set()
     try:
         for path, content in files.items():
             tmp = _tmp_path_for(path, prefix=".tmp_txt", keep_ext=False)
@@ -86,11 +88,46 @@ def atomic_write_many(files: dict, encoding: str = "utf-8", newline: str = "\n")
                 f.flush()
                 os.fsync(f.fileno())
             tmps[path] = tmp
-        for path, tmp in tmps.items():
-            os.replace(tmp, path)
+
+        # 替换前为已存在的文件保留临时副本以备异常回滚
+        for path in tmps.keys():
+            if os.path.exists(path):
+                bak = _tmp_path_for(path, prefix=".tmp_bak", keep_ext=True)
+                shutil.copy2(path, bak)
+                backups[path] = bak
+
+        try:
+            for path, tmp in tmps.items():
+                os.replace(tmp, path)
+                replaced.append(path)
+        except Exception:
+            for r_path in reversed(replaced):
+                try:
+                    if r_path in backups:
+                        if not os.path.isfile(backups[r_path]):
+                            raise OSError("ROLLBACK_BACKUP_MISSING: " + backups[r_path])
+                        os.replace(backups[r_path], r_path)
+                    elif os.path.lexists(r_path):
+                        # For a newly created target, deletion is the rollback.
+                        # Never ignore a failed unlink in this critical path.
+                        os.unlink(r_path)
+                except Exception as rb_exc:
+                    failed_restore.add(r_path)
+                    logger.error("atomic_write_many: rollback failed for %s; original backup retained at %s: %s",
+                                 r_path, backups.get(r_path), rb_exc)
+            if failed_restore:
+                # Preserve recoverable originals even when the operating system
+                # refuses both commit and compensation. Never hide this state.
+                raise OSError("SIDECAR_ROLLBACK_INCOMPLETE: recovery paths "
+                              + ", ".join(str(backups.get(p, p))
+                                          for p in sorted(failed_restore)))
+            raise
     finally:
         for tmp in tmps.values():
             _silent_remove(tmp)
+        for path, bak in backups.items():
+            if path not in failed_restore:
+                _silent_remove(bak)
 
 
 def atomic_write_bytes(filepath: str, data: bytes) -> bool:
@@ -114,13 +151,31 @@ def atomic_write_bytes(filepath: str, data: bytes) -> bool:
 
 def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) -> bool:
     """
-    在副本上执行标签写入，成功后才替换原文件。
+    在副本上执行标签写入，成功且音频流校验一致后才替换原文件。
 
     :param filepath: 原音频绝对/相对路径
     :param save_callback: 接收临时文件路径、返回 bool 的写入函数
     :return: True 表示已成功替换；False 表示失败且**原文件未被改动**
     """
     if not os.path.exists(filepath):
+        return False
+
+    orig_stream_st, orig_stream_hash = "AUDIO_STREAM_NOT_VERIFIED", ""
+    try:
+        from core.adapters.container_tag_adapter import compute_audio_stream_digest
+        orig_stream_st, orig_stream_hash = compute_audio_stream_digest(filepath)
+    except Exception:
+        pass
+    if orig_stream_st != "VERIFIED":
+        logger.warning("safe_save_audio_tags: 音频流无法可靠验证，拒绝改签: %s", filepath)
+        return False
+
+    # Guard against an external application changing the source while our
+    # private copy is being rewritten. This cannot replace an OS file lock,
+    # but prevents committing over an observed concurrent content change.
+    try:
+        original_file_hash = sha256_file(filepath)
+    except OSError:
         return False
 
     tmp_path = _tmp_path_for(filepath, prefix=".tmp_audio", keep_ext=True)
@@ -132,6 +187,20 @@ def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) ->
             return False
         if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
             logger.warning("safe_save_audio_tags: 临时文件缺失或为空，原文件未改动: %s", filepath)
+            return False
+
+        try:
+            from core.adapters.container_tag_adapter import compute_audio_stream_digest
+            tmp_stream_st, tmp_stream_hash = compute_audio_stream_digest(tmp_path)
+            if tmp_stream_st != "VERIFIED" or tmp_stream_hash != orig_stream_hash:
+                logger.warning("safe_save_audio_tags: 音频流被篡改或校验不通过，放弃落盘: %s", filepath)
+                return False
+        except Exception as stream_exc:
+            logger.warning("safe_save_audio_tags: 音频流校验异常: %s (%s)", filepath, stream_exc)
+            return False
+
+        if sha256_file(filepath) != original_file_hash:
+            logger.warning("safe_save_audio_tags: 原音频在写回期间被外部修改，拒绝覆盖: %s", filepath)
             return False
         os.replace(tmp_path, filepath)
         return True

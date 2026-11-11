@@ -266,7 +266,11 @@ def test_f01_real_container_read_write_roundtrip():
     with tempfile.TemporaryDirectory() as td:
         # 1. MP3
         mp3 = os.path.join(td, "track.mp3")
-        _create_minimal_mp3(mp3)
+        # F01 must use a real MPEG audio payload; an ID3-only file is not MP3.
+        frame = b"\xff\xfb\x90\x00" + b"\x00" * 413
+        with open(mp3, "wb") as audio_f:
+            audio_f.write(frame * 4)
+        ID3().save(mp3)
         assert update_audio_tags(mp3, title="Song 1", isrc="GBARL1401524") is True
         info = read_audio_tags(mp3)
         assert info["title"] == "Song 1"
@@ -274,7 +278,11 @@ def test_f01_real_container_read_write_roundtrip():
 
         # 2. FLAC
         flac = os.path.join(td, "track.flac")
-        _create_minimal_flac(flac)
+        # Use an actual FLAC frame region, not a tag-only synthetic header.
+        from _synthetic_flac import SYNTHETIC_FLAC_BYTES
+        with open(flac, "wb") as audio_f:
+            audio_f.write(SYNTHETIC_FLAC_BYTES)
+        FLAC(flac).save()
         assert update_audio_tags(flac, title="Song 2", isrc="USUM71413645") is True
         info = read_audio_tags(flac)
         assert info["title"] == "Song 2"

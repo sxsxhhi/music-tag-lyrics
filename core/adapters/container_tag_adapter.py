@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.3 R4-C)。
+"""容器标签读取、安全写入与磁盘回读门禁适配器 (v1.8.4 R13)。
 
 满足《歌曲检测与修补标准》§6 全部要求及方案铁律：
 1. FLAC 映射 lyrics (ELRC) + ttmllyric (TTML) + lyricist/composer；
@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import hashlib
+import json
 from typing import Any, Dict, Optional, Tuple
 
 import mutagen
@@ -23,6 +24,7 @@ from mutagen.flac import FLAC
 from mutagen.id3 import (
     ID3,
     ID3NoHeaderError,
+    SYLT,
     TCOM,
     TEXT,
     TXXX,
@@ -106,6 +108,8 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
                     streaminfo = f.read(34)
                     if len(streaminfo) != 34:
                         return unverified
+                    # STREAMINFO audio decode parameters and MD5 are immutable.
+                    h_streaminfo = hashlib.sha256(streaminfo).digest()
                     # STREAMINFO sample rate (20 bits), channels and bit depth.
                     params = int.from_bytes(streaminfo[10:18], "big")
                     sample_rate = (params >> 44) & 0xfffff
@@ -126,7 +130,8 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
             if sync[0] != 0xff or (sync[1] & 0xfe) != 0xf8:
                 return unverified
             f.seek(audio_start)
-            h = hashlib.sha256()
+            h = hashlib.sha256(b"FLAC_STREAMINFO_AND_AUDIO_V2\0")
+            h.update(h_streaminfo)
             for block in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(block)
             return "VERIFIED", h.hexdigest()
@@ -135,7 +140,7 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
 
 
 def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
-    """Hash nonempty PCM data within validated RIFF and chunk bounds."""
+    """Hash the PCM/float data, fmt parameters and all non-ID3 RIFF chunks."""
     unverified = ("AUDIO_STREAM_NOT_VERIFIED", "")
     try:
         with open(path, "rb") as f:
@@ -158,7 +163,12 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                 if name == b"fmt ":
                     if seen_fmt or size < 16:
                         return unverified
-                    fmt_bytes = f.read(16)
+                    fmt_bytes = f.read(size)
+                    h.update(b"WAV_FORMAT_V2\0")
+                    h.update(size.to_bytes(8, "little"))
+                    h.update(fmt_bytes)
+                    if len(fmt_bytes) != size:
+                        return unverified
                     audio_format = int.from_bytes(fmt_bytes[0:2], "little")
                     channels = int.from_bytes(fmt_bytes[2:4], "little")
                     sample_rate = int.from_bytes(fmt_bytes[4:8], "little")
@@ -177,13 +187,13 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                     if audio_format == 0xFFFE:
                         if size < 40:
                             return unverified
-                        ext_bytes = f.read(24)
+                        ext_bytes = fmt_bytes[16:40]
                         sub_format = int.from_bytes(ext_bytes[8:10], "little")
                         if sub_format not in (1, 3):
                             return unverified
-                        f.seek(size - 40, os.SEEK_CUR)
+                        pass  # the complete fmt chunk was already consumed
                     else:
-                        f.seek(size - 16, os.SEEK_CUR)
+                        pass  # the complete fmt chunk was already consumed
                     if size & 1:
                         f.seek(1, os.SEEK_CUR)
                     seen_fmt = True
@@ -192,6 +202,8 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                     if not seen_fmt or size == 0:
                         return unverified
                     data_chunks += 1
+                    h.update(b"WAV_DATA_CHUNK_V3\0")
+                    h.update(size.to_bytes(8, 'little'))
                     left = size
                     while left:
                         block = f.read(min(1024 * 1024, left))
@@ -201,9 +213,30 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                         left -= len(block)
                     if size & 1:
                         f.seek(1, os.SEEK_CUR)
-                else:
-                    # Other chunks may be metadata; padding remains in RIFF.
+                elif name.lower() == b"id3 ":
+                    # Mutagen updates the ID3 chunk when writing lyrics.
+                    # Its data is checked separately by the metadata gate.
                     f.seek(size + (size & 1), os.SEEK_CUR)
+                else:
+                    # All other RIFF chunks are non-authorized immutable
+                    # source content (fact sample counts, bext, cue, LIST,
+                    # smpl, iXML, and even unknown vendor chunks). Hash full
+                    # type, declared size and bytes, independent of offsets.
+                    h.update(b"WAV_PROTECTED_CHUNK_V3\0")
+                    h.update(name)
+                    h.update(size.to_bytes(8, 'little'))
+                    left = size
+                    while left:
+                        block = f.read(min(1024 * 1024, left))
+                        if not block:
+                            return unverified
+                        h.update(block)
+                        left -= len(block)
+                    if size & 1:
+                        pad = f.read(1)
+                        if len(pad) != 1:
+                            return unverified
+                        h.update(pad)
                 if f.tell() > riff_end:
                     return unverified
             if f.tell() != riff_end:
@@ -293,11 +326,18 @@ def compute_audio_stream_digest(filepath: str) -> Tuple[str, str]:
         return compute_wav_audio_stream_digest(filepath)
     if ext == ".mp3":
         return compute_mp3_audio_stream_digest(filepath)
+    from .audio_payload import ogg_vorbis_audio_digest, mp4_audio_digest, dsf_audio_digest
+    if ext == ".ogg":
+        return ogg_vorbis_audio_digest(filepath)
+    if ext in (".m4a", ".mp4"):
+        return mp4_audio_digest(filepath)
+    if ext == ".dsf":
+        return dsf_audio_digest(filepath)
     return "AUDIO_STREAM_NOT_VERIFIED", ""
 
 
 def read_container_tags(filepath: str) -> Dict[str, Any]:
-    """只读提取 FLAC / MP3 / WAV 的全量元数据与双格式歌词。"""
+    """只读提取 FLAC / MP3 / WAV 的全量元数据与双格式歌词（含副轨与同步轨完整盘点）。"""
     info: Dict[str, Any] = {
         "title": "",
         "artist": "",
@@ -316,6 +356,12 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         "cover_digest": "",
         "id3_version": "",
         "replaygain": {},
+        "extra_lyrics": [],
+        "extra_ttml": [],
+        "_extra_lyrics_raw": [],
+        "_extra_ttml_raw": [],
+        "_primary_uslt_key": None,
+        "_primary_ttml_key": None,
     }
 
     if not os.path.exists(filepath):
@@ -349,12 +395,50 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         info["albumartist"] = "/".join(audio.get("albumartist", [""]))
         info["genre"] = audio.get("genre", [""])[0]
         info["isrc"] = (audio.get("isrc") or audio.get("ISRC") or [""])[0]
-        info["lyrics"] = audio.get("lyrics", [""])[0]
-        info["ttml"] = (audio.get("ttmllyric") or audio.get("TTMLLYRIC") or [""])[0]
+
+        flac_lyrics = audio.get("lyrics", [])
+        if flac_lyrics:
+            info["lyrics"] = flac_lyrics[0]
+            for idx, item in enumerate(flac_lyrics[1:], start=1):
+                item_bytes = item.encode("utf-8")
+                info["extra_lyrics"].append({
+                    "container": "FLAC",
+                    "kind": "lyrics",
+                    "key": f"lyrics[{idx}]",
+                    "lang": "",
+                    "desc": "",
+                    "sha256": hashlib.sha256(item_bytes).hexdigest(),
+                    "bytes": len(item_bytes),
+                })
+                info["_extra_lyrics_raw"].append(item)
+
+        flac_ttml = audio.get("ttmllyric") or audio.get("TTMLLYRIC") or []
+        if flac_ttml:
+            info["ttml"] = flac_ttml[0]
+            for idx, item in enumerate(flac_ttml[1:], start=1):
+                item_bytes = item.encode("utf-8")
+                info["extra_ttml"].append({
+                    "container": "FLAC",
+                    "kind": "ttmllyric",
+                    "key": f"ttmllyric[{idx}]",
+                    "sha256": hashlib.sha256(item_bytes).hexdigest(),
+                    "bytes": len(item_bytes),
+                })
+                info["_extra_ttml_raw"].append(item)
+
         info["has_cover"] = bool(audio.pictures)
-        info["cover_digest"] = hashlib.sha256(b"".join(
-            bytes(p.data) + p.mime.encode('utf-8') + int(p.type).to_bytes(4,'big')
-            for p in audio.pictures)).hexdigest() if audio.pictures else ""
+        # The serialized FLAC PICTURE structure includes image data AND
+        # description, dimensions, colour depth, palette size, MIME and type.
+        # Hashing image bytes alone allows silent metadata mutation.
+        if audio.pictures:
+            cover_hash = hashlib.sha256(b"FLAC_PICTURES_FULL_V1\0")
+            for picture in audio.pictures:
+                serialized = picture.write()
+                cover_hash.update(len(serialized).to_bytes(8, 'big'))
+                cover_hash.update(serialized)
+            info["cover_digest"] = cover_hash.hexdigest()
+        else:
+            info["cover_digest"] = ""
         for k in audio.keys():
             if k.lower().startswith("replaygain_"):
                 info["replaygain"][k.lower()] = audio.get(k)
@@ -384,7 +468,7 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
 
 
 def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
-    """从 ID3 结构中提取完整字段（含 TXXX:TTMLLYRIC 与 ReplayGain）。"""
+    """从 ID3 结构中提取完整字段（含 TXXX:TTMLLYRIC、USLT、SYLT 与 ReplayGain）。"""
     def _get(key: str) -> str:
         try:
             return str(id3.get(key, ""))
@@ -403,12 +487,30 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
     info["genre"] = _get("TCON")
     info["isrc"] = _get("TSRC")
 
-    # 兼容读取 TXXX:LYRICIST 与 TXXX:COMPOSER
+    # Keep *every* value of the selected TXXX:TTMLLYRIC frame. Mutagen
+    # stores a multi-value TXXX in one frame; replacing the frame wholesale
+    # otherwise silently destroys all trailing values.
     for k, frame in id3.items():
         if isinstance(frame, TXXX):
             desc = (frame.desc or "").upper()
             if desc == "TTMLLYRIC":
-                info["ttml"] = frame.text[0] if frame.text else ""
+                values = list(frame.text or [])
+                if info["_primary_ttml_key"] is None:
+                    info["_primary_ttml_key"] = str(k)
+                    info["ttml"] = values[0] if values else ""
+                    secondary = enumerate(values[1:], start=1)
+                else:
+                    secondary = enumerate(values, start=0)
+                for idx, ttml_val in secondary:
+                    value_bytes = ttml_val.encode("utf-8")
+                    info["extra_ttml"].append({
+                        "container": "ID3",
+                        "kind": "TXXX:TTMLLYRIC",
+                        "key": f"{k}[{idx}]",
+                        "sha256": hashlib.sha256(value_bytes).hexdigest(),
+                        "bytes": len(value_bytes),
+                    })
+                    info["_extra_ttml_raw"].append(ttml_val)
             elif desc == "LYRICIST" and not info["lyricist"]:
                 info["lyricist"] = frame.text[0] if frame.text else ""
             elif desc == "COMPOSER" and not info["composer"]:
@@ -416,11 +518,70 @@ def _extract_id3_all(id3: Any, info: Dict[str, Any]) -> None:
             elif desc.startswith("REPLAYGAIN_"):
                 info["replaygain"][desc] = frame.text[0] if frame.text else ""
 
-    # USLT 主歌词
+    # USLT 与 SYLT 完整提取与主副轨判定
+    all_uslt = []
+    all_sylt = []
     for k, frame in id3.items():
         if isinstance(frame, USLT):
-            info["lyrics"] = frame.text
-            break
+            all_uslt.append((str(k), frame))
+        elif isinstance(frame, SYLT):
+            all_sylt.append((str(k), frame))
+
+    if all_uslt:
+        empty_desc_uslt = [item for item in all_uslt if not getattr(item[1], "desc", "")]
+        if empty_desc_uslt:
+            # Only the canonical empty-description English USLT can be
+            # replaced. Other languages (including a lone USLT::chi) are
+            # protected secondary tracks, not fallback editable primaries.
+            eng_empty = next((item for item in empty_desc_uslt if getattr(item[1], "lang", "").lower() == "eng"), None)
+            primary_k, primary_frame = eng_empty if eng_empty else (None, None)
+        else:
+            # Described-only USLT frames are translations/commentaries, not
+            # evidence of an editable primary. Never promote the first one.
+            primary_k, primary_frame = None, None
+
+        if primary_frame is not None:
+            info["lyrics"] = primary_frame.text or ""
+            info["_primary_uslt_key"] = primary_k
+
+        for k, frame in all_uslt:
+            if primary_k is not None and k == primary_k:
+                continue
+            text_bytes = (frame.text or "").encode("utf-8")
+            info["extra_lyrics"].append({
+                "container": "ID3",
+                "kind": "USLT",
+                "key": k,
+                "lang": getattr(frame, "lang", "") or "",
+                "desc": getattr(frame, "desc", "") or "",
+                "sha256": hashlib.sha256(text_bytes).hexdigest(),
+                "bytes": len(text_bytes),
+            })
+            info["_extra_lyrics_raw"].append((k, frame))
+
+    for k, frame in all_sylt:
+        # Include the complete semantically relevant frame envelope, not just
+        # timestamped text; type/format/encoding alterations must fail closed.
+        sylt_payload = {
+            "lang": str(getattr(frame, "lang", "")),
+            "desc": str(getattr(frame, "desc", "")),
+            "encoding": int(getattr(frame, "encoding", -1)),
+            "format": int(getattr(frame, "format", -1)),
+            "type": int(getattr(frame, "type", -1)),
+            "text": [[str(t), int(ms)] for t, ms in getattr(frame, "text", [])],
+        }
+        sylt_bytes = json.dumps(sylt_payload, ensure_ascii=False,
+                                sort_keys=True, separators=(",", ":")).encode("utf-8")
+        info["extra_lyrics"].append({
+            "container": "ID3",
+            "kind": "SYLT",
+            "key": k,
+            "lang": getattr(frame, "lang", "") or "",
+            "desc": getattr(frame, "desc", "") or "",
+            "sha256": hashlib.sha256(sylt_bytes).hexdigest(),
+            "bytes": len(sylt_bytes),
+        })
+        info["_extra_lyrics_raw"].append((k, frame))
 
 
 def write_verified_standardized_container(
@@ -436,7 +597,7 @@ def write_verified_standardized_container(
 
     Unlike os.replace, os.link prevents overwrite on a concurrent target
     creation; failure cleanup affects exclusively our own temporary path.
-    In-place overwrite is intentionally unsupported in v1.8.3.
+    In-place overwrite is intentionally unsupported in v1.8.4.
     """
     source = os.path.realpath(source_audio_path)
     target = os.path.realpath(target_work_path)
@@ -447,7 +608,7 @@ def write_verified_standardized_container(
     if os.path.lexists(target_work_path):
         raise FileExistsError("TARGET_EXISTS: destination is already occupied")
     if os.path.splitext(target)[1].lower() not in ('.flac','.mp3','.wav'):
-        raise ValueError("Unsupported v1.8.3 output container")
+        raise ValueError("Unsupported v1.8.4 output container")
 
     # Check generated pair BEFORE making any copy.
     comp=compare_elrc_ttml(elrc_text,ttml_text)
@@ -459,23 +620,47 @@ def write_verified_standardized_container(
             raise ValueError("REVIEW_REQUIRED_CREDIT_CONFLICT:"+field)
     if lyricist and orig.get('lyricist'): lyricist=None
     if composer and orig.get('composer'): composer=None
+
+    ext = os.path.splitext(target)[1].lower()
+
+    # 快照原始全部标签帧与元数据键值，用于最严苛的未授权元数据不可变性校验
+    orig_vorbis_tags = None
+    orig_id3_frames = None
+    try:
+        source_audio = mutagen.File(source)
+    except Exception:
+        source_audio = None
+
+    if isinstance(source_audio, FLAC):
+        orig_vorbis_tags = {k.lower(): list(source_audio.get(k, [])) for k in source_audio.keys()}
+    elif isinstance(source_audio, WAVE) and getattr(source_audio, "tags", None):
+        orig_id3_frames = dict(source_audio.tags.items())
+    elif ext == '.mp3' or (source_audio is not None and getattr(source_audio, "tags", None) and isinstance(source_audio.tags, ID3)):
+        try:
+            source_id3 = ID3(source)
+            orig_id3_frames = dict(source_id3.items())
+        except Exception:
+            orig_id3_frames = None
+
     orig_stream_st, orig_stream_hash = compute_audio_stream_digest(source)
     original_hash = _sha_file(source)
     os.makedirs(os.path.dirname(target),exist_ok=True)
-    ext = os.path.splitext(target)[1]
     fd,tmp=tempfile.mkstemp(prefix='.mtl182-stage-',suffix=ext,dir=os.path.dirname(target))
     os.close(fd)
     try:
         shutil.copy2(source,tmp)
         audio=mutagen.File(tmp)
         if isinstance(audio,FLAC):
-            audio['lyrics']=[elrc_text];audio['ttmllyric']=[ttml_text]
+            audio['lyrics'] = [elrc_text] + orig.get('_extra_lyrics_raw', [])
+            audio['ttmllyric'] = [ttml_text] + orig.get('_extra_ttml_raw', [])
             if lyricist:audio['lyricist']=[lyricist.strip()]
             if composer:audio['composer']=[composer.strip()]
             audio.save()
         elif isinstance(audio,WAVE):
             if audio.tags is None: audio.add_tags()
-            _apply_id3_standard_lyrics(audio.tags,elrc_text,ttml_text,lyricist,composer)
+            _apply_id3_standard_lyrics(audio.tags, elrc_text, ttml_text, lyricist, composer,
+                                       primary_uslt_key=orig.get('_primary_uslt_key'),
+                                       primary_ttml_key=orig.get('_primary_ttml_key'))
             audio.save()
         elif ext=='.mp3':
             try:
@@ -485,7 +670,9 @@ def write_verified_standardized_container(
                 # Malformed/unreadable existing tags must abort, not be erased.
                 id3 = ID3()
             old_v2 = getattr(id3, 'version', (2,4,0))[1]
-            _apply_id3_standard_lyrics(id3,elrc_text,ttml_text,lyricist,composer)
+            _apply_id3_standard_lyrics(id3, elrc_text, ttml_text, lyricist, composer,
+                                       primary_uslt_key=orig.get('_primary_uslt_key'),
+                                       primary_ttml_key=orig.get('_primary_ttml_key'))
             id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
         else:
             raise ValueError('Unrecognized or unsupported audio container')
@@ -493,15 +680,61 @@ def write_verified_standardized_container(
         if rb.get('lyrics')!=elrc_text or rb.get('ttml')!=ttml_text:
             raise RuntimeError('READBACK_LYRICS_MISMATCH')
         for field in ('title','artist','album','year','tracknumber','discnumber',
-                      'genre','albumartist','isrc','has_cover','cover_digest','replaygain'):
+                      'genre','albumartist','isrc','has_cover','cover_digest','replaygain',
+                      'extra_lyrics','extra_ttml'):
             if orig.get(field)!=rb.get(field):
                 raise RuntimeError('PROTECTED_METADATA_CHANGED:'+field)
         if orig.get('id3_version') and rb.get('id3_version') != orig.get('id3_version'):
             raise RuntimeError('ID3_VERSION_CHANGED')
         if lyricist and rb.get('lyricist')!=lyricist.strip():
             raise RuntimeError('CREDIT_READBACK_FAILED:lyricist')
+        if not lyricist and orig.get('lyricist') != rb.get('lyricist'):
+            raise RuntimeError('PROTECTED_METADATA_CHANGED:lyricist')
         if composer and rb.get('composer')!=composer.strip():
             raise RuntimeError('CREDIT_READBACK_FAILED:composer')
+        if not composer and orig.get('composer') != rb.get('composer'):
+            raise RuntimeError('PROTECTED_METADATA_CHANGED:composer')
+
+        # 全量 Vorbis 注释不可变性回读门禁
+        if orig_vorbis_tags is not None:
+            rb_flac = FLAC(tmp)
+            rb_vorbis = {k.lower(): list(rb_flac.get(k, [])) for k in rb_flac.keys()}
+            authorized_vorbis = {'lyrics', 'ttmllyric'}
+            if lyricist:
+                authorized_vorbis.add('lyricist')
+            if composer:
+                authorized_vorbis.add('composer')
+            for k, v in orig_vorbis_tags.items():
+                if k not in authorized_vorbis:
+                    if k not in rb_vorbis or rb_vorbis[k] != v:
+                        raise RuntimeError(f'PROTECTED_METADATA_CHANGED:vorbis_{k}')
+            for k in rb_vorbis:
+                if k not in orig_vorbis_tags and k not in authorized_vorbis:
+                    raise RuntimeError(f'PROTECTED_METADATA_CHANGED:unexpected_vorbis_{k}')
+
+        # 全量 ID3 帧不可变性回读门禁（含 PRIV / COMM / 自定义 TXXX 等）
+        if orig_id3_frames is not None:
+            rb_id3_container = mutagen.File(tmp)
+            rb_id3 = rb_id3_container.tags if isinstance(rb_id3_container, WAVE) else ID3(tmp)
+            authorized_id3 = set()
+            if orig.get('_primary_uslt_key'):
+                authorized_id3.add(orig['_primary_uslt_key'])
+            authorized_id3.add('USLT::eng')
+            if orig.get('_primary_ttml_key'):
+                authorized_id3.add(orig['_primary_ttml_key'])
+            authorized_id3.add('TXXX:TTMLLYRIC')
+            if lyricist:
+                authorized_id3.add('TEXT')
+            if composer:
+                authorized_id3.add('TCOM')
+            for k, frame in orig_id3_frames.items():
+                if k not in authorized_id3:
+                    if k not in rb_id3 or rb_id3[k] != frame:
+                        raise RuntimeError(f'PROTECTED_METADATA_CHANGED:id3_{k}')
+            for k in rb_id3.keys():
+                if k not in orig_id3_frames and k not in authorized_id3:
+                    raise RuntimeError(f'PROTECTED_METADATA_CHANGED:unexpected_id3_{k}')
+
         r1=compare_elrc_ttml(rb['lyrics'],rb['ttml'])
         if not r1.passed:
             raise RuntimeError('READBACK_FORMAT_MISMATCH')
@@ -518,8 +751,21 @@ def write_verified_standardized_container(
         # Link is an atomic, non-clobbering commit to an absent target.
         # Never unlink an existing target, including in an exception handler.
         os.link(tmp,target_work_path)
+        # Public result is a deliberately small, serializable verification DTO.
+        # rb contains raw lyrics, raw secondary tracks and Mutagen Frame objects;
+        # none of them may cross into a JSON report or caller-facing result.
+        public_readback = {
+            'has_cover': bool(rb['has_cover']),
+            'cover_digest': rb['cover_digest'],
+            'id3_version': rb['id3_version'],
+            'secondary_lyrics_count': len(rb['extra_lyrics']),
+            'secondary_ttml_count': len(rb['extra_ttml']),
+            'primary_elrc_sha256': hashlib.sha256(rb['lyrics'].encode('utf-8')).hexdigest(),
+            'primary_ttml_sha256': hashlib.sha256(rb['ttml'].encode('utf-8')).hexdigest(),
+            'protected_metadata_verified': True,
+        }
         return {'status':'PASS','target_path':target_work_path,
-                'readback_tags':rb,'r1_max_delta_ms':r1.max_time_delta_ms,
+                'readback_tags':public_readback,'r1_max_delta_ms':r1.max_time_delta_ms,
                 'audio_stream_digest': rb_stream_hash,
                 'audio_stream_status': 'VERIFIED'}
     finally:
@@ -532,23 +778,36 @@ def _apply_id3_standard_lyrics(
     ttml_text: str,
     lyricist: Optional[str] = None,
     composer: Optional[str] = None,
+    primary_uslt_key: Optional[str] = None,
+    primary_ttml_key: Optional[str] = None,
 ) -> None:
-    """安全向 ID3 帧集合写入标准歌词与词曲。"""
-    # 清除旧的 USLT / SYLT 避免多重主歌词
+    """安全向 ID3 帧集合写入标准歌词与词曲，完整保留其余语言与同步歌词轨。"""
+    # Only an explicitly identified main USLT may be replaced. Described
+    # translation tracks and other empty-desc language tracks remain intact.
     for k in list(id3.keys()):
-        if str(k).startswith("USLT") or str(k).startswith("SYLT"):
-            del id3[k]
+        if primary_uslt_key is not None and str(k) == primary_uslt_key:
+            if isinstance(id3.get(k), USLT):
+                del id3[k]
 
-    # 写入单帧 USLT::eng
+    # The target slot must never hide another unprotected frame.
+    eng_slot = id3.get("USLT::eng")
+    if eng_slot is not None:
+        raise ValueError('AMBIGUOUS_PRIMARY_USLT: canonical slot occupied')
     id3["USLT::eng"] = USLT(encoding=3, lang="eng", desc="", text=elrc_text)
 
-    # 清除旧的 TXXX:TTMLLYRIC
-    for k in list(id3.keys()):
-        if str(k).startswith("TXXX") and getattr(id3[k], "desc", "").upper() == "TTMLLYRIC":
-            del id3[k]
-
-    # 写入 TXXX:TTMLLYRIC
-    id3["TXXX:TTMLLYRIC"] = TXXX(encoding=3, desc="TTMLLYRIC", text=[ttml_text])
+    # Replace only the selected TTML frame, retaining *all trailing values*.
+    # Other case-variant TTMLLYRIC frames, if present, are untouched.
+    ttml_extra_values = []
+    if primary_ttml_key is not None:
+        selected = id3.get(primary_ttml_key)
+        if not isinstance(selected, TXXX) or not selected.text:
+            raise ValueError('AMBIGUOUS_PRIMARY_TTML: selected frame unavailable')
+        ttml_extra_values = list(selected.text[1:])
+        del id3[primary_ttml_key]
+    if id3.get('TXXX:TTMLLYRIC') is not None:
+        raise ValueError('AMBIGUOUS_PRIMARY_TTML: canonical slot occupied')
+    id3['TXXX:TTMLLYRIC'] = TXXX(encoding=3, desc='TTMLLYRIC',
+                                 text=[ttml_text] + ttml_extra_values)
 
     # 词曲
     if lyricist:

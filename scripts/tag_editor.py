@@ -8,7 +8,22 @@ from typing import Dict, Any, Optional, Tuple
 
 import mutagen
 from mutagen.flac import FLAC, Picture as FlacPicture
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCOM, TEXT, USLT, SYLT, APIC, TSRC
+from mutagen.id3 import (
+    ID3,
+    ID3NoHeaderError,
+    TIT2,
+    TPE1,
+    TPE2,
+    TALB,
+    TDRC,
+    TRCK,
+    TCOM,
+    TEXT,
+    USLT,
+    SYLT,
+    APIC,
+    TSRC,
+)
 from mutagen.wave import WAVE
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
@@ -310,9 +325,12 @@ def _apply_id3_tags(id3: Any, tags: TagSet) -> None:
         else:
             id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(tags.albumartist)])
     if tags.lyrics is not None:
-        # 写入 Enhanced LRC 时清掉全部 USLT / SYLT，避免逐行旧帧与逐字新帧并存。
+        # Only the unique canonical English undescribed slot is replaceable.
+        # An undescribed Chinese/Japanese/unknown-language USLT is NOT evidence
+        # that it is the same primary track. All such tracks are protected.
         for key in list(id3.keys()):
-            if key.startswith("USLT") or key.startswith("SYLT"):
+            frame = id3[key]
+            if isinstance(frame, USLT) and frame.desc == "" and frame.lang == "eng":
                 del id3[key]
         id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=tags.lyrics)
 
@@ -327,7 +345,9 @@ def _apply_vorbis_tags(audio: Any, tags: TagSet) -> None:
         else:
             audio["albumartist"] = [normalize_artist_string(tags.albumartist)]
     if tags.lyrics is not None:
-        audio["lyrics"] = [tags.lyrics]
+        existing = audio.get("lyrics", [])
+        secondary = existing[1:] if len(existing) > 1 else []
+        audio["lyrics"] = [tags.lyrics] + list(secondary)
     if tags.isrc is not None:
         audio["isrc"] = [tags.isrc.strip()]
 
@@ -502,15 +522,18 @@ def update_audio_tags(
         return True
 
     def _write_mp3(tmp: str) -> bool:
-        # P0-4: 解析失败时**绝不**新建空 ID3() 再保存 —— 那会把 APIC/TXXX/USLT 等原有帧
-        # 全部抹掉，随后 os.replace 覆盖原文件，等于静默销毁用户的标签。
-        # 这里故意不加 try：让 safe_save_audio_tags 捕获异常后放弃写入，原文件保持不变。
-        id3 = ID3(tmp)
-        orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
+        # P0-4: 解析异常时**绝不**盲目新建空 ID3() 再保存 —— 那会把原有标签帧静默销毁。
+        # 仅当文件本身是合法 MP3 音频流但无 ID3 标签头（ID3NoHeaderError）时，允许新建标准 ID3v2.4。
+        try:
+            id3 = ID3(tmp)
+            orig_v2 = getattr(id3, "version", (2, 4, 0))[1]
+        except ID3NoHeaderError:
+            id3 = ID3()
+            orig_v2 = 4
         _apply_id3_tags(id3, tags)
         _attach_id3_cover(id3)
         # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
-        id3.save(tmp, v2_version=orig_v2)
+        id3.save(tmp, v2_version=orig_v2 if orig_v2 in (3, 4) else 4)
         return True
 
     def _write_id3_container(tmp: str, factory) -> bool:
@@ -555,7 +578,9 @@ def update_audio_tags(
         if tags.lyricist is not None:
             audio["----:com.apple.iTunes:LYRICIST"] = [MP4FreeForm(tags.lyricist.strip().encode("utf-8"))]
         if tags.lyrics is not None:
-            audio["\xa9lyr"] = [tags.lyrics]
+            existing = audio.get("\xa9lyr", [])
+            secondary = existing[1:] if len(existing) > 1 else []
+            audio["\xa9lyr"] = [tags.lyrics] + list(secondary)
         if tags.isrc is not None:
             audio["----:com.apple.iTunes:ISRC"] = [MP4FreeForm(tags.isrc.strip().encode("utf-8"))]
         if cover_data:

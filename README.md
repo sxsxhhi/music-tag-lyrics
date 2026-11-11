@@ -38,7 +38,7 @@
 - **歌曲标签与封面乱七八糟**：歌手名连成一串、年份写成当天、封面模糊成马赛克甚至一片漆黑。
   👉 **克制而规范的洗标**：合唱歌手统一用 `/` 规范分隔，自动抓取 `1000×1000` 高清大图；**已有封面 100% 绝对保护**，绝不自作主张覆盖用户原本的心头好。
 - **最怕整理工具改坏文件**：一键整理后，发现源文件被莫名其妙重命名、截断或者音质损坏。
-  👉 **苛刻的安全底线**：原地只读分析；日常修补经安全临时副本原子替换并读回校验；标准化仅输出到独立隔离目录且已有同名文件拒绝覆盖；一旦出错自动回滚，绝不伤及母带分毫。
+  👉 **安全边界**：日常改签首先验证音频流与关键格式参数，未验证时拒绝写入；仅在私有临时副本写回并比对通过后替换源文件。标准化输出隔离新文件且不得覆盖已有目标。多 sidecar 异常时执行补偿回滚；若操作系统同时拒绝回滚，会保留恢复备份并明确失败，不能保证断电级跨文件原子性。
 
 ---
 
@@ -83,7 +83,7 @@ python scripts/process_song.py "绝版老歌.flac" --force-gpu
 python scripts/process_song.py "绝版老歌.flac" --lyrics-file "我的歌词.txt"
 ```
 
-#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.3)
+#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.4)
 *适合场景：本地已有双格式歌词但对齐混乱、夹带长串制作名单、需要为发烧播放器生成标准 Apple TTML 与 ELRC 的严苛场景。*
 
 > **安全契约**：`--in-place` 已被显式禁用；标准化输出必须指定独立 `--output-dir`，已有同名文件绝不覆盖；`--mode audit` 为只读基线审计，不修改任何文件。
@@ -146,12 +146,13 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
    - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
    - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断。未知直接 XML 文本节点、无法处理的嵌套节点或译文标记，同样阻断，不允许静默忽略后返回一致性 PASS。
 
-### 🔎 逐来源歌词完整性审计（v1.8.3 独立整改）
+### 🔎 逐来源歌词完整性审计与多轨保真（v1.8.4）
 
 `standardize_song.py` 在选择输入之前，会分别登记并核验最多五个来源：**内嵌 ELRC、同名 `.lrc`、同名 `.spl`、内嵌 TTML、同名 `.ttml`**。同格式来源使用归一化后的唱词、字块时间、译文及结构信息对账；如果存在差异，报告 `SOURCE_LYRICS_CONFLICT` 并停止自动交付，绝不以「内嵌优先」静默覆盖其他来源。
 
 严格标准化入口增加以下保护：
 
+- **多轨多语言歌词保真**：标准化音频副本逐值保留 FLAC 的多值 `lyrics`、MP3/WAV 的描述性 `USLT` 与 `SYLT`，以及 ID3 `TXXX:TTMLLYRIC` 中的额外文本值；对副轨摘要、SYLT 帧语义属性和音频流哈希进行写回校验，校验失败拒绝交付。`source_inventory` 仅输出轨道数量、哈希及脱敏标识，不输出副轨原文或可含私人文字的 ID3 描述字段。FLAC 多值副轨允许不同内容；无法唯一确认主轨时，不将描述性 USLT 当作可替换主轨。
 - **全文消费验证**：非法 LRC 元数据尾随文字、未闭合头、未知 ELRC `<...>` 行内片段以及不受支持的方括号词级时间标记，不会被跳过后宣称 `PASS`。常见文本中的字面 `<` 仍可作为歌词保留；语义无法确认时阻断并复核。
 - **有效时间轴**：`[offset]` 以整数毫秒同时作用于行级和逐字时间；重复、非法或导致负时间的偏移值被拒绝，避免「对账为 0ms 差异，实际输出却移动了时间」。无明确终点的最后一个逐字字块不再通过猜测 500ms 时长交付。
 - **双解析器一致性**：独立结构比较器与既有 LRC 解析器必须在歌词、时间及字块上给出相同结果；否则返回 `ELRC_PARSER_DIVERGENCE`，防止旧解析器暗中补时或漏字。
@@ -195,8 +196,8 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 > 1. **双入口安全契约明确分离**：
 >    - `process_song.py`：默认允许在安全临时副本中更新内嵌标签，校验成功后原子替换；`--no-tags` 纯歌词模式绝不碰音频内嵌标签；`--lyrics-only` 仅更新歌词帧，保护已有人工元数据。
 >    - `standardize_song.py`：`--in-place` 原地改写已被显式禁用；必须通过 `--output-dir` 指定独立输出目录，且**绝对拒绝覆盖任何已存在的同名文件**；未验证容器（如 M4A）不执行标准化写回。
-> 2. **音频主体流不可变校验 (v1.8.3)**：FLAC、MP3、WAV 写入前后自动计算容器音频帧/PCM 数据流哈希，一旦检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；空音轨、元数据长度越界、无法辨认的帧边界等情形会安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。`VERIFIED` 仅表示**已确认音频字节区间且写前写后摘要一致**，并非完整音频解码、CRC 或播放器兼容性认证。当前 MP3 边界验证主要支持常规 MPEG Layer III 帧链；不支持的罕见编码采用安全拒绝策略。
-> 3. **事务失败自动干净回滚**：写回或报告输出过程中如果遇到任何错误（例如磁盘写满或权限不足），程序会自动将本次创建的文件干净删除回滚，绝不留下半成品垃圾，更不损坏源文件。
+> 2. **音频主体与播放语义不变量 (v1.8.4 R12)**：标准化 FLAC/MP3/WAV，以及日常改签 FLAC/MP3/WAV/OGG Vorbis/M4A-MP4 音频/DSF 均需先取得 `VERIFIED` 摘要，否则拒绝覆盖原文件。FLAC 摘要包含 STREAMINFO 与音频帧字节；WAV 包含完整 `fmt ` 与 PCM 数据长度/内容；MP3 验证 MPEG Layer III 帧边界与内容；OGG 校验页 CRC、Vorbis 非评论包及音频 granule；MP4 校验 mdat、音频 track/sample 表与重定位归一化的 chunk offset；DSF 校验 fmt 与 DSD 数据。音频内容或关键播放参数变化一律拒绝提交。`VERIFIED` 代表受支持结构的保守**字节级不变量**，不代表完成音频解码、每帧音频 CRC/完整合法性或播放器实机兼容测试；不受支持的特殊结构安全拒绝。
+> 3. **回滚与恢复边界**：常规改签在独立副本上完成，音频摘要与并发源文件哈希复核通过后才替换；标准化输出拒绝覆盖已有目标。多 sidecar 顺序写入如中途失败则尽力逆序还原；若同时发生回滚失败，明确抛出 `SIDECAR_ROLLBACK_INCOMPLETE` 并保留 `.tmp_bak*` 原始备份供手动恢复。多个 `os.replace` 并非断电或进程崩溃安全的真正多文件原子事务。
 
 ---
 
@@ -236,7 +237,6 @@ python -B tests/run_all.py
 
 # 2. 分发 ZIP：在新解压目录执行同一命令，套件数依分发清单而定
 python -B tests/run_all.py
-# v1.8.3 R9 独立修复候选：45 个分发套件、706 项用例；
 # 请以当前解释器的实际 PASS / SKIP / FAIL 统计为准。
 
 # 3. 快速运行指定模块测试
@@ -247,6 +247,15 @@ python -B tests/run_all.py -k canto
 ---
 
 ## 📜 版本更新历史 (Changelog)
+
+### v1.8.4 (2026-11-11) —— 多轨多语言歌词保真加固与工程治理
+- **多轨多语言歌词写回保真**：全面支持保留 FLAC/OGG 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT`、M4A `©lyr` 副轨与 ID3 多值 `TXXX:TTMLLYRIC`；标准主歌词写入规范的 `USLT::eng`（无描述），非英文（如 `USLT::chi`）或带描述的歌词作为受保护副轨完整保留，杜绝误判误删；
+- **全格式音频与结构不变量严格校验**：改签前后对 FLAC/WAV 核心播放参数、MP3 帧流、OGG Vorbis CRC/音频包、M4A/MP4 `mdat` 与 `moov/mvhd` 电影级时间头（含 timescale/duration）、DSF DSD 流进行写前写后不变性校验；FLAC 图片采用全结构序列化保护（涵盖尺寸、色彩、描述等），WAV 保护全部非 ID3 RIFF 扩展块（如 `fact`、`LIST`），音频主体及结构未通过校验时安全阻断并回滚；
+- **来源盘点与物理回读双重对账**：`source_inventory` 全面枚举并记录额外轨道类型、语言/描述、哈希与字节数（不暴露歌词明文）；容器写回后物理回读强制校验副轨摘要，若发生篡改或丢失立即抛出异常并原子回滚；
+- **未授权元数据全量不可变门禁**：写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 `PRIV`、`COMM`、未授权 `TCOM`/`TEXT`、自定义 Vorbis 标签等），任何意外遗漏或篡改立即阻断；
+- **多文件协同落盘补偿回滚**：`atomic_write_many` 引入预备份与逆序故障回滚；若回滚再次发生异常，自动保留 `.tmp_bak*` 物理备份并传播 `SIDECAR_ROLLBACK_INCOMPLETE`，改签操作强制前置 `VERIFIED` 状态校验；
+- **多轨冲突 Fail-Closed 门禁**：对同标识冲突的副轨或相互竞争的未描述主歌词帧实行阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`），杜绝歧义交付；
+- **Windows CI 核心门禁升级**：将 R9 输入完整性回归、v1.8.4 多轨保真回归、发布门禁及 R12/R13 安全测试套件全部纳入 Windows 核心阻塞流水线；55 套离线测试套件全部通过（801 PASS / 11 SKIP / 0 FAIL）。
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
 - **R9 独立输入完整性加固**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试；
@@ -312,3 +321,9 @@ python -B tests/run_all.py -k canto
 ## 📄 开源许可证
 
 本项目基于 [MIT License](LICENSE) 许可证开源发布，代码与歌词处理逻辑完全透明、自由开放。
+
+### v1.8.4 R12 第二轮独立整改（正式发布前候选，尚未完成远端 CI）
+- 仅替换 ID3 `USLT::eng` 无描述主轨；保留所有其他语言的无描述 `USLT`、描述性 USLT 与 SYLT。
+- 音频摘要扩充至 FLAC STREAMINFO、WAV 完整 fmt、OGG Vorbis CRC/关键包、MP4 音频采样表与载荷、DSF 格式与数据；不可验证即禁止改签。
+- source SHA-256 复核防范已观察到的外部并发改写；sidecar 回滚再次失败时保留可恢复的 `.tmp_bak*`。
+- 新增 R12 独立回归及合成 OGG/M4A/DSF 样本，修订两项以无音频的 ID3-only 伪 MP3 为前提的历史测试。以上不代替 Windows/Linux CI、维护者私有指纹扫描或 Git 构建 Manifest 验证。

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.3)。
+"""music-tag-lyrics 音频歌词标准化治理与双向审计工具 (v1.8.4)。
 
 满足《歌曲检测与修补标准》§2.4、§3、§4、§6 全部要求：
 1. 缺省 --mode audit 只读审计，绝无副作用；
@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -89,6 +90,39 @@ def _stage_sidecar(directory: str, name: str, content: str) -> str:
         if os.path.exists(path):os.unlink(path)
         raise
     return path
+
+
+def _public_inventory_item(item: Dict[str, Any], index: int) -> Dict[str, Any]:
+    """No ID3 description/hash key, potentially user-authored text, is public."""
+    desc = str(item.get('desc', ''))
+    key = str(item.get('key', ''))
+    lang = str(item.get('lang', ''))
+    return {
+        'container': item.get('container', ''),
+        'kind': item.get('kind', ''),
+        'key': f"track[{index}]",
+        'key_sha256': hashlib.sha256(key.encode('utf-8')).hexdigest(),
+        'lang': lang if re.fullmatch(r'[a-zA-Z]{3}', lang) else '',
+        'desc': '',
+        'desc_sha256': hashlib.sha256(desc.encode('utf-8')).hexdigest(),
+        'sha256': item.get('sha256', ''),
+        'bytes': item.get('bytes', 0),
+    }
+
+
+def _public_canonical_issue(event: Any) -> Dict[str, Any]:
+    """Strict DTO: evidence and free-form action/line-id may contain lyrics."""
+    result = event.to_dict()
+    return {
+        'code': result['code'],
+        'severity': result['severity'],
+        'line_id': None,
+        'source_index': result['source_index'],
+        'evidence': '',
+        'action': (result['action'] if re.fullmatch(r'[A-Z0-9_]+', result['action'] or '')
+                   else ''),
+        'blocking': result['blocking'],
+    }
 
 
 def standardize_single_song(
@@ -182,21 +216,32 @@ def standardize_single_song(
     disk_ttml = sources['sidecar_ttml']
     active_elrc = next((sources[k] for k in elrc_keys if sources[k]), '')
     active_ttml = next((sources[k] for k in ttml_keys if sources[k]), '')
+    extra_inv = [_public_inventory_item(item, idx)
+                 for idx,item in enumerate(embedded.get('extra_lyrics', []))]
+    extra_ttml_inv = [_public_inventory_item(item, idx)
+                      for idx,item in enumerate(embedded.get('extra_ttml', []))]
     report={
-        'version':__version__,'audio':audio_abs,'mode':mode,'status':'PASS',
+        'version':__version__,'audio':Path(audio_abs).name,'mode':mode,'status':'PASS',
         'has_embedded_elrc':bool(embedded.get('lyrics')),
         'has_embedded_ttml':bool(embedded.get('ttml')),
         'has_sidecar_elrc':bool(disk_elrc),'has_sidecar_ttml':bool(disk_ttml),
+        'secondary_lyrics_count': len(extra_inv) + len(extra_ttml_inv),
         'baseline_comparison':None,'format_audit':'NO_LYRICS',
         'issues':[],'prelude_plan':None,'actions_taken':[],
-        'source_inventory': {k: {'present': bool(v), 'sha256': hashlib.sha256(v.encode('utf-8')).hexdigest() if v else None}
-                             for k, v in sources.items()},
+        'source_inventory': {
+            **{k: {'present': bool(v), 'sha256': hashlib.sha256(v.encode('utf-8')).hexdigest() if v else None}
+               for k, v in sources.items()},
+            'embedded_secondary_lyrics': extra_inv,
+            'embedded_secondary_ttml': extra_ttml_inv,
+        },
         'source_audit': 'PENDING'}
     # Track precisely which paths this invocation created. A report failure
     # must not leave apparently successful outputs behind.
     committed_outputs = []
     def issue(code,description='',blocking=True):
-        report['issues'].append({'code':code,'message':description,'blocking':blocking})
+        # Errors can contain arbitrary rejected lyric lines or tag descriptions.
+        # Keep the machine-readable code; never serialize exception evidence.
+        report['issues'].append({'code':code,'message':code,'blocking':blocking})
         if blocking and report['status'] not in ('BLOCKED',):report['status']='REVIEW_REQUIRED'
     def finish():
         if report_path:
@@ -267,6 +312,24 @@ def standardize_single_song(
             for name in available[1:]:
                 if validated[name]!=validated[baseline_name]:
                     issue('SOURCE_LYRICS_CONFLICT', f'{baseline_name} differs from {name}')
+
+    seen_sec = {}
+    for item in extra_inv:
+        # FLAC Vorbis multi-value entries are positional opaque tracks. They
+        # may contain different languages with no language/description tags.
+        # ID3 USLT identifiers are semantic; same-id conflicting values block.
+        if item['container'] == 'ID3':
+            ident = (item['kind'], item['lang'], item['desc_sha256'])
+            if ident in seen_sec and seen_sec[ident] != item['sha256']:
+                issue('SECONDARY_LYRICS_CONFLICT', 'Secondary identifier conflict')
+            seen_sec[ident] = item['sha256']
+        # If another USLT has empty desc, it is a competing main lyric track
+        if item['kind'] == 'USLT' and item['desc_sha256'] == hashlib.sha256(b'').hexdigest():
+            if sources.get('embedded_elrc') and hashlib.sha256(sources['embedded_elrc'].encode('utf-8')).hexdigest() != item['sha256']:
+                issue('SOURCE_LYRICS_CONFLICT', 'Multiple competing un-described embedded USLT tracks')
+    for item in extra_ttml_inv:
+        if sources.get('embedded_ttml') and hashlib.sha256(sources['embedded_ttml'].encode('utf-8')).hexdigest() != item['sha256']:
+            issue('SOURCE_LYRICS_CONFLICT', 'Multiple conflicting embedded TTML tracks')
     report['source_audit'] = 'CONFLICT_OR_INVALID' if report['status']!='PASS' else 'VALIDATED_PENDING_FORMAT'
     if report['status']!='PASS':
         report['format_audit']='SOURCE_CONFLICT_OR_INVALID'
@@ -373,7 +436,7 @@ def standardize_single_song(
         'display_title':plan.display_title,'display_lyricist':plan.display_lyricist,
         'display_composer':plan.display_composer}
     # Merge issues after *all* planning steps. No permission flag bypasses them.
-    report['issues'].extend(i.to_dict() for i in canonical.issues)
+    report['issues'].extend(_public_canonical_issue(i) for i in canonical.issues)
     if any(i.blocking or i.severity.value=='REVIEW_REQUIRED' for i in canonical.issues):
         report['status']='REVIEW_REQUIRED'
     if mode=='audit':
@@ -423,7 +486,10 @@ def standardize_single_song(
             cr=write_verified_standardized_container(audio_abs,str(target_audio),elrc,ttml,
                   lyricist=canonical.song.get('extracted_lyricist'),
                   composer=canonical.song.get('extracted_composer'))
-            report['container_verification']=cr
+            # Paths identify the caller's local machine; the public report
+            # carries only non-sensitive verification fields.
+            report['container_verification']={k:v for k,v in cr.items()
+                                              if k != 'target_path'}
             committed.append(target_audio)
         if sha256_file(audio_abs) != original_audio_hash:
             raise RuntimeError('SOURCE_MODIFIED_DURING_STANDARDIZATION')
