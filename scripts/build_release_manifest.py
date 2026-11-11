@@ -122,6 +122,80 @@ def tracked_dirty_report() -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# 成员字节来源（v1.8.5 / H-D1）
+#
+# 历史缺陷：ZIP 内容取自 `(REPO_ROOT / rel).read_bytes()`，即**磁盘字节**。
+# 配合 `core.autocrlf=true` 且仓库没有 .gitattributes，同一 commit 在不同检出
+# 状态/不同平台上会产生不同字节 → 官方 ZIP 内部换行混用，第三方克隆重建得到的
+# SHA-256 与发布清单不一致，"确定性构建"退化为"同机幂等"。
+#
+# 现在正式包一律从 **git 索引 blob** 取内容：换行、编辑器、文件系统、操作系统
+# 全部不参与，产物只由 commit 决定。开发包仍取磁盘字节（它要反映未提交改动），
+# 并在 manifest 里以 dirty=true 显式标记。
+# --------------------------------------------------------------------------- #
+TEXT_SUFFIXES = frozenset(
+    {
+        "", ".py", ".md", ".txt", ".json", ".jsonl", ".yml", ".yaml",
+        ".toml", ".cfg", ".ini", ".hex", ".gitignore", ".sh",
+    }
+)
+
+
+def _read_git_blobs(members: list[str]) -> dict[str, bytes]:
+    """用单次 ``git cat-file --batch`` 读取索引 blob 内容（键为 posix 相对路径）。"""
+    if not members:
+        return {}
+    payload = b"".join((":" + rel + "\n").encode("utf-8") for rel in members)
+    proc = subprocess.Popen(
+        ["git", "cat-file", "--batch"],
+        cwd=str(REPO_ROOT),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out, err = proc.communicate(payload)
+    if proc.returncode != 0:
+        raise BuildError(
+            "GIT_CAT_FILE_FAILED: " + err.decode("utf-8", "replace").strip()[:200]
+        )
+    contents: dict[str, bytes] = {}
+    pos = 0
+    for rel in members:
+        newline = out.find(b"\n", pos)
+        if newline < 0:
+            raise BuildError(f"GIT_BATCH_TRUNCATED: 读取 {rel} 时输出提前结束")
+        header = out[pos:newline].decode("utf-8", "replace")
+        pos = newline + 1
+        fields = header.split()
+        if len(fields) != 3 or fields[1] != "blob":
+            raise BuildError(f"GIT_BLOB_UNAVAILABLE: {rel} -> {header.strip()}")
+        size = int(fields[2])
+        data = out[pos:pos + size]
+        if len(data) != size:
+            raise BuildError(f"GIT_BLOB_TRUNCATED: {rel} 期望 {size} 字节，实际 {len(data)}")
+        pos += size + 1  # 记录尾部换行
+        contents[rel] = data
+    return contents
+
+
+def load_member_bytes(members: list[str], *, from_git: bool) -> dict[str, bytes]:
+    """按模式装载成员字节：正式包取 git blob，开发包取磁盘。"""
+    if from_git:
+        contents = _read_git_blobs(members)
+    else:
+        contents = {rel: (REPO_ROOT / rel).read_bytes() for rel in members}
+    for rel, data in contents.items():
+        suffix = os.path.splitext(rel)[1].lower()
+        # 该不变量只约束正式包：开发包本来就允许未提交/未规范化的磁盘字节。
+        if from_git and suffix in TEXT_SUFFIXES and b"\r\n" in data:
+            raise BuildError(
+                f"CRLF_IN_MEMBER: {rel} 含 CRLF，发布产物必须使用 LF "
+                f"（检查 .gitattributes 与构建字节来源）"
+            )
+    return contents
+
+
+# --------------------------------------------------------------------------- #
 # 成员选择与安全过滤
 # --------------------------------------------------------------------------- #
 def _risky_rule_for(name: str) -> str | None:
@@ -190,8 +264,8 @@ def _member_attr(posix_rel: str) -> int:
     return EXEC_FILE_ATTR if posix_rel in EXECUTABLE_RELPATHS else REGULAR_FILE_ATTR
 
 
-def _member_digests(members: list[str]) -> dict[str, str]:
-    return {rel: sha256_file(REPO_ROOT / rel) for rel in members}
+def _member_digests(contents: dict[str, bytes]) -> dict[str, str]:
+    return {rel: hashlib.sha256(data).hexdigest() for rel, data in contents.items()}
 
 
 def _zip_member_digests(zip_path: Path) -> tuple[dict[str, str], list[str]]:
@@ -216,13 +290,13 @@ def _zip_member_digests(zip_path: Path) -> tuple[dict[str, str], list[str]]:
     return digests, problems
 
 
-def build_zip_at(target: Path, members: list[str]) -> None:
+def build_zip_at(target: Path, contents: dict[str, bytes]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
         target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
     ) as zf:
-        for rel in members:
-            data = (REPO_ROOT / rel).read_bytes()
+        for rel in sorted(contents):
+            data = contents[rel]
             info = zipfile.ZipInfo(filename=rel, date_time=FIXED_DATE_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = FIXED_CREATE_SYSTEM
@@ -232,15 +306,27 @@ def build_zip_at(target: Path, members: list[str]) -> None:
             zf.writestr(info, data)
 
 
-def verify_zip_members(zip_path: Path, expected: list[str]) -> None:
+def verify_zip_members(zip_path: Path, contents: dict[str, bytes]) -> None:
+    """校验 ZIP 成员列表与每个成员的字节内容都和输入一致。
+
+    不再与磁盘 ``stat().st_size`` 比较：正式包的字节来源是 git blob，
+    与工作树的换行形态无关，拿磁盘大小比对会把正确产物判成错误。
+    """
+    expected = sorted(contents)
     with zipfile.ZipFile(zip_path) as zf:
         actual = [info.filename for info in zf.infolist()]
         for info in zf.infolist():
             name = info.filename
             if name.startswith("/") or ".." in name.split("/"):
                 raise BuildError(f"ZIP_PATH_TRAVERSAL: {name}")
-            if info.file_size != (REPO_ROOT / name).stat().st_size:
-                raise BuildError(f"ZIP_SIZE_MISMATCH: {name}")
+            if name not in contents:
+                continue
+            if info.file_size != len(contents[name]):
+                raise BuildError(
+                    f"ZIP_SIZE_MISMATCH: {name} 归档 {info.file_size} != 期望 {len(contents[name])}"
+                )
+            if hashlib.sha256(zf.read(name)).hexdigest() != hashlib.sha256(contents[name]).hexdigest():
+                raise BuildError(f"ZIP_CONTENT_MISMATCH: {name}")
     if actual != expected:
         missing = [p for p in expected if p not in actual]
         extra = [p for p in actual if p not in expected]
@@ -377,8 +463,9 @@ def build_release(*, dev: bool) -> int:
     if dev:
         STAGING_DIR.mkdir(parents=True, exist_ok=True)
         staging_zip = STAGING_DIR / ZIP_NAME
-        build_zip_at(staging_zip, members)
-        verify_zip_members(staging_zip, members)
+        dev_contents = load_member_bytes(members, from_git=False)
+        build_zip_at(staging_zip, dev_contents)
+        verify_zip_members(staging_zip, dev_contents)
         zip_size = staging_zip.stat().st_size
         zip_sha = sha256_file(staging_zip)
 
@@ -409,8 +496,10 @@ def build_release(*, dev: bool) -> int:
 
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
     staging_zip = STAGING_DIR / ZIP_NAME
-    build_zip_at(staging_zip, members)
-    verify_zip_members(staging_zip, members)
+    # v1.8.5 / H-D1：正式包只从 git blob 取字节，产物与检出状态/平台解耦。
+    contents = load_member_bytes(members, from_git=True)
+    build_zip_at(staging_zip, contents)
+    verify_zip_members(staging_zip, contents)
 
     zip_size = staging_zip.stat().st_size
     zip_sha = sha256_file(staging_zip)
@@ -425,7 +514,7 @@ def build_release(*, dev: bool) -> int:
         zip_size=zip_size,
         zip_sha=zip_sha,
         file_count=file_count,
-        member_digests=_member_digests(members),
+        member_digests=_member_digests(contents),
     )
     if consistent and existing is not None:
         reuse_commit = existing.get("git_commit")
@@ -453,7 +542,7 @@ def build_release(*, dev: bool) -> int:
             },
             # H14：成员级哈希仅供构建者/维护者核验，避免另建第二套发布元数据格式。
             # 注意：单独一个 ZIP 不自带可信 Manifest，普通使用者只能校验整体 SHA-256。
-            "members": _member_digests(members),
+            "members": _member_digests(contents),
             "platforms_verified": [
                 "Windows 11 (Python 3.13)",
                 "Ubuntu 24.04 (GitHub Actions CI, Python 3.13)",
@@ -462,10 +551,10 @@ def build_release(*, dev: bool) -> int:
             "container_support_matrix": {
                 "FLAC (.flac)": "Verified in public CI (FLAC fixture)",
                 "MP3 (.mp3)": "Verified in public CI (real ID3v2.3/2.4 USLT fixture)",
-                "M4A / AAC (.m4a)": "Verified locally only (maintainer QuickTime fixtures); NOT_VERIFIED in public CI",
+                "M4A / AAC (.m4a)": "Verified in public CI (fixture.m4a: mvhd/mdhd corruption + normal write digest stability)",
                 "WAV (.wav)": "Verified in public CI (real RIFF ID3 chunk fixture)",
-                "DSF (.dsf)": "Not verified (no physical fixture)",
-                "OGG (.ogg)": "Not verified (no physical fixture)",
+                "DSF (.dsf)": "Not verified (no physical fixture; digest excludes trailing ID3)",
+                "OGG (.ogg)": "Fixture present (fixture.ogg) but no test asserts OGG tag write; NOT_VERIFIED",
             },
             "quality_and_safety_guarantees": {
                 "mother_disk_protection": "LOCAL_POLICY (mother library zero-touch; enforced by maintainer workflow, not independently audited in public CI)",

@@ -8,6 +8,8 @@ import shutil
 import uuid
 from typing import Callable, Optional
 
+from .id3v1 import id3v1_sha256
+
 logger = logging.getLogger(__name__)
 
 TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "gbk", "gb18030")
@@ -161,14 +163,25 @@ def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) ->
         return False
 
     orig_stream_st, orig_stream_hash = "AUDIO_STREAM_NOT_VERIFIED", ""
+    orig_flac_blocks: Optional[dict] = None
     try:
-        from core.adapters.container_tag_adapter import compute_audio_stream_digest
+        from core.adapters.container_tag_adapter import (
+            compute_audio_stream_digest,
+            flac_metadata_fingerprint,
+        )
         orig_stream_st, orig_stream_hash = compute_audio_stream_digest(filepath)
+        if os.path.splitext(filepath)[1].lower() == ".flac":
+            # v1.8.5 / H-A2：APPLICATION/SEEKTABLE/CUESHEET 不受音频流摘要保护。
+            orig_flac_blocks = flac_metadata_fingerprint(filepath)
     except Exception:
         pass
     if orig_stream_st != "VERIFIED":
         logger.warning("safe_save_audio_tags: 音频流无法可靠验证，拒绝改签: %s", filepath)
         return False
+
+    # v1.8.5 / H-A1：音频流摘要刻意排除 ID3v1，这里补第三道闸。
+    # 即使将来有调用方绕过 core.utils.id3v1.preserve_id3v1，也不会把 legacy 标签改坏。
+    orig_id3v1 = id3v1_sha256(filepath)
 
     # Guard against an external application changing the source while our
     # private copy is being rewritten. This cannot replace an OS file lock,
@@ -202,6 +215,16 @@ def safe_save_audio_tags(filepath: str, save_callback: Callable[[str], bool]) ->
         if sha256_file(filepath) != original_file_hash:
             logger.warning("safe_save_audio_tags: 原音频在写回期间被外部修改，拒绝覆盖: %s", filepath)
             return False
+        if id3v1_sha256(tmp_path) != orig_id3v1:
+            logger.warning("safe_save_audio_tags: ID3v1 尾块被改写，放弃落盘: %s", filepath)
+            return False
+        if orig_flac_blocks is not None:
+            from core.adapters.container_tag_adapter import flac_metadata_fingerprint
+            if flac_metadata_fingerprint(tmp_path) != orig_flac_blocks:
+                logger.warning(
+                    "safe_save_audio_tags: FLAC 扩展元数据块被改写，放弃落盘: %s", filepath
+                )
+                return False
         os.replace(tmp_path, filepath)
         return True
     except Exception as exc:  # noqa: BLE001 - 任何异常都不能让原文件承担风险

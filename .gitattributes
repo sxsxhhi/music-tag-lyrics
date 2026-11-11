@@ -1,0 +1,24 @@
+# v1.8.5 / H-D1：统一换行，保证发布产物可跨平台复现。
+#
+# 背景：仓库此前没有 .gitattributes，配合 Windows 的 core.autocrlf=true，
+# 同一 commit 在不同检出状态下会得到不同字节，导致官方 ZIP 内部换行混用、
+# 第三方克隆重建得到的 SHA-256 与发布清单不一致。
+#
+# 约定：
+#   * 所有文本文件在索引与工作树中一律 LF；
+#   * 音视频/图片/归档一律按二进制处理，禁止任何转换。
+* text=auto eol=lf
+
+*.flac binary
+*.mp3 binary
+*.m4a binary
+*.mp4 binary
+*.ogg binary
+*.wav binary
+*.dsf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary

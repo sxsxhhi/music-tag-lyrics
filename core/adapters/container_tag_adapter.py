@@ -34,6 +34,7 @@ from mutagen.wave import WAVE
 
 from ..auditors.elrc_ttml_comparator import compare_elrc_ttml
 from ..utils.io_safe import sha256_file
+from ..utils.id3v1 import id3v1_sha256, preserve_id3v1, read_id3v1_tail
 
 
 def _id3_cover_digest(id3) -> str:
@@ -137,6 +138,64 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
             return "VERIFIED", h.hexdigest()
     except (OSError, ValueError, OverflowError, IndexError):
         return unverified
+
+
+_FLAC_STREAMINFO = 0
+_FLAC_PADDING = 1
+_FLAC_VORBIS_COMMENT = 4
+_FLAC_PICTURE = 6
+# 这些块由各自的专用闸门核验，指纹层不重复；其余块（APPLICATION/SEEKTABLE/
+# CUESHEET/未知类型）在本仓库没有任何其他校验路径，必须由指纹兜住。
+_FLAC_FINGERPRINT_SKIP = frozenset(
+    {_FLAC_STREAMINFO, _FLAC_PADDING, _FLAC_VORBIS_COMMENT, _FLAC_PICTURE}
+)
+
+
+def flac_metadata_fingerprint(path: str) -> Optional[dict]:
+    """返回非受管 FLAC 元数据块的多重集 ``{(type_code, payload_sha256): count}``。
+
+    设计约束（v1.8.5 / H-A2）：
+
+    * **允许块顺序变化** —— 用多重集而非有序列表，避免写入库重排即误报；
+    * **允许 PADDING 大小/数量变化** —— 写入库合并空闲空间是正常行为；
+    * **禁止载荷与数量变化** —— APPLICATION / SEEKTABLE / CUESHEET 以及任何
+      未知块类型的字节改动都必须被判为未授权修改；
+    * STREAMINFO / VORBIS_COMMENT / PICTURE 分别由音频流摘要、Vorbis 键值闸门、
+      封面摘要负责，此层跳过，避免同一事实三处判决。
+
+    文件结构不可解析时返回 ``None``（调用方据此放弃比对，而不是当作"没问题"）。
+    """
+    try:
+        with open(path, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size < 8 or handle.read(4) != b"fLaC":
+                return None
+            fingerprint: dict = {}
+            index = 0
+            while True:
+                header = handle.read(4)
+                if len(header) != 4:
+                    return None
+                last = bool(header[0] & 0x80)
+                kind = header[0] & 0x7F
+                length = int.from_bytes(header[1:], "big")
+                if kind == 127 or length > size - handle.tell():
+                    return None
+                if index == 0 and (kind != _FLAC_STREAMINFO or length != 34):
+                    return None
+                if kind in _FLAC_FINGERPRINT_SKIP:
+                    handle.seek(length, os.SEEK_CUR)
+                else:
+                    payload = handle.read(length)
+                    if len(payload) != length:
+                        return None
+                    digest = hashlib.sha256(payload).hexdigest()
+                    fingerprint[(kind, digest)] = fingerprint.get((kind, digest), 0) + 1
+                index += 1
+                if last:
+                    return fingerprint
+    except (OSError, ValueError, OverflowError):
+        return None
 
 
 def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
@@ -355,6 +414,8 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
         "has_cover": False,
         "cover_digest": "",
         "id3_version": "",
+        "id3v1_present": False,
+        "id3v1_sha256": "",
         "replaygain": {},
         "extra_lyrics": [],
         "extra_ttml": [],
@@ -366,6 +427,12 @@ def read_container_tags(filepath: str) -> Dict[str, Any]:
 
     if not os.path.exists(filepath):
         return info
+
+    # v1.8.5 / H-A1：ID3v1 尾块与 ID3v2 帧体系完全独立，必须单独盘点。
+    # mutagen 看不到它，音频流摘要也刻意排除它，只有这里能给出可核验的事实。
+    v1_tail = read_id3v1_tail(filepath)
+    info["id3v1_present"] = v1_tail is not None
+    info["id3v1_sha256"] = id3v1_sha256(filepath)
 
     try:
         audio = mutagen.File(filepath)
@@ -626,6 +693,7 @@ def write_verified_standardized_container(
     # 快照原始全部标签帧与元数据键值，用于最严苛的未授权元数据不可变性校验
     orig_vorbis_tags = None
     orig_id3_frames = None
+    orig_flac_blocks = None
     try:
         source_audio = mutagen.File(source)
     except Exception:
@@ -633,6 +701,9 @@ def write_verified_standardized_container(
 
     if isinstance(source_audio, FLAC):
         orig_vorbis_tags = {k.lower(): list(source_audio.get(k, [])) for k in source_audio.keys()}
+        # v1.8.5 / H-A2：APPLICATION/SEEKTABLE/CUESHEET 等块不在音频流摘要、
+        # 也不在 Vorbis 键值闸门内，必须单独取多重集快照。
+        orig_flac_blocks = flac_metadata_fingerprint(source)
     elif isinstance(source_audio, WAVE) and getattr(source_audio, "tags", None):
         orig_id3_frames = dict(source_audio.tags.items())
     elif ext == '.mp3' or (source_audio is not None and getattr(source_audio, "tags", None) and isinstance(source_audio.tags, ID3)):
@@ -673,7 +744,10 @@ def write_verified_standardized_container(
             _apply_id3_standard_lyrics(id3, elrc_text, ttml_text, lyricist, composer,
                                        primary_uslt_key=orig.get('_primary_uslt_key'),
                                        primary_ttml_key=orig.get('_primary_ttml_key'))
-            id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
+            # v1.8.5 / H-A1：ID3.save 的 v1 参数没有「保持不变」语义，必须把既有
+            # ID3v1 尾块剥离后写入、完成后再原样附加，否则会静默改写 legacy 标签。
+            with preserve_id3v1(tmp):
+                id3.save(tmp,v2_version=old_v2 if old_v2 in (3,4) else 4)
         else:
             raise ValueError('Unrecognized or unsupported audio container')
         rb=read_container_tags(tmp)
@@ -686,6 +760,9 @@ def write_verified_standardized_container(
                 raise RuntimeError('PROTECTED_METADATA_CHANGED:'+field)
         if orig.get('id3_version') and rb.get('id3_version') != orig.get('id3_version'):
             raise RuntimeError('ID3_VERSION_CHANGED')
+        # v1.8.5 / H-A1：ID3v1 不在 ID3v2 帧快照与音频流摘要之内，必须单独比对。
+        if orig.get('id3v1_sha256') != rb.get('id3v1_sha256'):
+            raise RuntimeError('ID3V1_CHANGED')
         if lyricist and rb.get('lyricist')!=lyricist.strip():
             raise RuntimeError('CREDIT_READBACK_FAILED:lyricist')
         if not lyricist and orig.get('lyricist') != rb.get('lyricist'):
@@ -694,6 +771,19 @@ def write_verified_standardized_container(
             raise RuntimeError('CREDIT_READBACK_FAILED:composer')
         if not composer and orig.get('composer') != rb.get('composer'):
             raise RuntimeError('PROTECTED_METADATA_CHANGED:composer')
+
+        # v1.8.5 / H-A2：非受管 FLAC 元数据块（APPLICATION/SEEKTABLE/CUESHEET/未知）
+        # 多重集比对。允许块顺序与 PADDING 变化，禁止载荷与数量变化。
+        if orig_flac_blocks is not None:
+            rb_blocks = flac_metadata_fingerprint(tmp)
+            if rb_blocks is None:
+                raise RuntimeError('AUDIO_STREAM_NOT_VERIFIED:flac_metadata_unreadable')
+            if rb_blocks != orig_flac_blocks:
+                changed = sorted(
+                    {kind for kind, _ in set(orig_flac_blocks) ^ set(rb_blocks)}
+                )
+                detail = ','.join(str(kind) for kind in changed) or 'count'
+                raise RuntimeError(f'PROTECTED_METADATA_CHANGED:flac_block_{detail}')
 
         # 全量 Vorbis 注释不可变性回读门禁
         if orig_vorbis_tags is not None:
@@ -763,6 +853,7 @@ def write_verified_standardized_container(
             'primary_elrc_sha256': hashlib.sha256(rb['lyrics'].encode('utf-8')).hexdigest(),
             'primary_ttml_sha256': hashlib.sha256(rb['ttml'].encode('utf-8')).hexdigest(),
             'protected_metadata_verified': True,
+            'id3v1_preserved': True,
         }
         return {'status':'PASS','target_path':target_work_path,
                 'readback_tags':public_readback,'r1_max_delta_ms':r1.max_time_delta_ms,

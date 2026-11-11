@@ -90,7 +90,7 @@ def test_a1_gbcl_200_direct_success():
     """A1: gbcl 200 直接返回成功，不再发后续请求。"""
     calls = []
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         calls.append(url)
         return HttpResult(status=200, text='<tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="0" end="1000"><span>test</span></p></body></tt>', bytes_len=100, elapsed_ms=10, error="")
 
@@ -107,7 +107,7 @@ def test_a2_gbcl_404_testingcf_200_ok():
     """A2: gbcl 404 + testingcf 200 -> OK。"""
     calls = []
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         calls.append(url)
         if "gbclstudio" in url:
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
@@ -126,7 +126,7 @@ def test_a3_gbcl_404_testingcf_404_not_found():
     """A3: gbcl 404 + testingcf 404 -> 达到 2 个不同 origin -> NOT_FOUND。"""
     calls = []
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         calls.append(url)
         return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
 
@@ -139,7 +139,7 @@ def test_a3_gbcl_404_testingcf_404_not_found():
 
 def test_a4_gbcl_404_dimeta_404_suspect_missing():
     """A4: gbcl 404 + dimeta 404 (其余超时) -> dimeta 0 票，仅 1 origin -> SUSPECT_MISSING。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         if "gbclstudio" in url:
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
         if "dimeta" in url:
@@ -154,7 +154,7 @@ def test_a4_gbcl_404_dimeta_404_suspect_missing():
 
 def test_a5_three_jsdelivr_404_counts_as_one_origin():
     """A5: testingcf/gcore/fastly 全 404（gbcl 超时）-> 3 镜像同属 jsdelivr，仅算 1 票 -> SUSPECT_MISSING。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         if "jsdelivr" in url:
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
@@ -167,7 +167,7 @@ def test_a5_three_jsdelivr_404_counts_as_one_origin():
 
 def test_a6_all_403_unreachable():
     """A6: 镜像全部返回 403 -> 0 个 404 -> UNREACHABLE。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=403, text="Forbidden", bytes_len=9, elapsed_ms=10, error="")
 
     with _http_stub(fake_http):
@@ -178,7 +178,7 @@ def test_a6_all_403_unreachable():
 
 def test_a7_three_html_shells_unreachable():
     """A7: ≥3 次 200 但非 TTML 内容（HTML 壳）-> 判 UNREACHABLE。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=200, text="<!DOCTYPE html><html><body>Error 404 CDN</body></html>", bytes_len=50, elapsed_ms=10, error="")
 
     with _http_stub(fake_http):
@@ -191,7 +191,7 @@ def test_a8_deadline_timeout_caps_to_suspect():
     """A8: 6.0s 硬顶生效 -> 停止请求并转 SUSPECT_MISSING。"""
     fake_clock = [0.0]
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         fake_clock[0] += 3.5
         if "gbclstudio" in url:
             return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=3500, error="")
@@ -295,7 +295,7 @@ def test_b8_multi_artist_token_intersection():
 
 def test_b9_index_download_timeout_degrades():
     """B9: 索引下载超时降级为 iTunes-only，不抛出异常。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=12000, error="timeout")
 
     with _http_stub(fake_http):
@@ -309,7 +309,7 @@ def test_b10_shrink_097_protection():
     fake_lines = ['{"appleMusicId":["1"]}'] * 2424
     fake_lines[-1] = '{"appleMusicId":["1"]}'
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=200, text="\n".join(fake_lines), bytes_len=50000, elapsed_ms=100, error="")
 
     with _http_stub(fake_http):
@@ -1219,7 +1219,7 @@ def test_g1_cli_not_found_exit_1_two_requests():
     """G1/R3: 不存在的 ID -> 双 origin 攒票即停（2 次请求）且退出码 1。"""
     calls = []
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         calls.append(url)
         return HttpResult(status=404, text="Not Found", bytes_len=9, elapsed_ms=10, error="")
 
@@ -1231,7 +1231,7 @@ def test_g1_cli_not_found_exit_1_two_requests():
 
 def test_g2_cli_unreachable_exit_3():
     """G2/R3: 全镜像超时 -> UNREACHABLE -> 退出码 3（与未收录严格区分）。"""
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=0, text="", bytes_len=0, elapsed_ms=10, error="timeout")
 
     with _http_stub(fake_http):
@@ -1243,7 +1243,7 @@ def test_g3_index_min_lines_2000_accepts_2400():
     """G3/R6: 2400 行合法索引可通过校验（上游合法缩减不再被 2600 卡死）。"""
     fake_lines = ['{"appleMusicId":["1"],"id":"1","rawLyricFile":"am-lyrics/1.ttml"}'] * 2400
 
-    def fake_http(url, headers=None, timeout=3.0, user_agent=""):
+    def fake_http(url, headers=None, timeout=3.0, user_agent="", **kwargs):
         return HttpResult(status=200, text="\n".join(fake_lines), bytes_len=50000, elapsed_ms=100, error="")
 
     with _http_stub(fake_http):

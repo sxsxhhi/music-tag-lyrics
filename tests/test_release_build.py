@@ -57,14 +57,24 @@ def _git(repo: Path, *args: str) -> str:
     )
 
 
+def _copy_as_lf(src: Path, dst: Path) -> None:
+    """按 LF 复制夹具文件。
+
+    v1.8.5 / H-D1 起正式包从 git blob 取字节，并要求文本成员一律 LF；
+    夹具仓库若直接把 Windows 工作树的 CRLF 文件 copy2 进去并 autocrlf=false
+    提交，得到的 blob 就是 CRLF，构建会按契约拒绝。
+    """
+    dst.write_bytes(src.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def _make_repo(files: dict[str, str] | None = None) -> Path:
     """建一个带 .git 的迷你仓库，初始提交干净。"""
     root = Path(tempfile.mkdtemp(prefix="mtl_relbuild_"))
     (root / "core").mkdir()
     (root / "scripts").mkdir()
-    shutil.copy2(VERSION_PY, root / "core" / "version.py")
-    shutil.copy2(DIST_VIEW, root / "scripts" / "_dist_view.py")
-    shutil.copy2(BUILDER, root / "scripts" / "build_release_manifest.py")
+    _copy_as_lf(VERSION_PY, root / "core" / "version.py")
+    _copy_as_lf(DIST_VIEW, root / "scripts" / "_dist_view.py")
+    _copy_as_lf(BUILDER, root / "scripts" / "build_release_manifest.py")
     (root / "README.md").write_text("# sample\n", encoding="utf-8", newline="\n")
     payload = files or {}
     for rel, body in payload.items():

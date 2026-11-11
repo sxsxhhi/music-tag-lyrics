@@ -26,6 +26,8 @@ INDEX_MIN_LINES = 2000
 INDEX_SHRINK_RATIO = 0.97
 INDEX_TTL_DAYS = 7
 INDEX_DOWNLOAD_TIMEOUT = 12.0
+# 全量索引的响应体上限（当前实测约 4 MiB，留 8 倍余量给曲库增长）。
+INDEX_MAX_BYTES = 32 * 1024 * 1024
 
 MIRROR_HOSTS = {
     "gbclstudio": "https://amll-ttml-db.gbclstudio.cn",
@@ -336,7 +338,9 @@ class AmllIndex:
             if not base:
                 continue
             url = f"{base}{INDEX_PATH}"
-            res = http.http_get_text_ex(url, timeout=rem)
+            # v1.8.5 / H-C1：索引是整套歌词库的全量清单（当前约 4 MiB，会持续增长），
+            # 给它一个宽松但有界的天花板，避免异常响应把内存吃满。
+            res = http.http_get_text_ex(url, timeout=rem, max_bytes=INDEX_MAX_BYTES)
             if res.status != 200 or not res.text:
                 continue
 

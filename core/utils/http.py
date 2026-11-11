@@ -5,30 +5,55 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import json
+import logging
 import time
 import socket
 from typing import Optional, Dict, Any, Union, NamedTuple
 
 from ..version import __version__
 
+logger = logging.getLogger(__name__)
+
+# v1.8.5 / H-C1：歌词类 API 的正常响应都在几十 KB 量级，2 MiB 已远超实际需要。
+# 未显式指定上限的调用点用这个保守默认值，避免异常/恶意响应导致无界内存占用。
+DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+
 UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 UA_KUGOU = "KuGouMusic"
 UA_DEFAULT = f"music-tag-lyrics/{__version__}"
+
+def _read_bounded(resp, max_bytes: int) -> Optional[bytes]:
+    """读取响应体并在超过上限时放弃（绝不先整体读入再判断）。
+
+    ``max_bytes <= 0`` 表示沿用旧的无界行为，仅用于显式选择退出的调用方。
+    """
+    if max_bytes <= 0:
+        return resp.read()
+    raw = resp.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        logger.warning("HTTP 响应超过上限 %d 字节，已放弃", max_bytes)
+        return None
+    return raw
+
 
 def http_get_text(
     url: str,
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 6,
-    user_agent: str = UA_DEFAULT
+    user_agent: str = UA_DEFAULT,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> Optional[str]:
-    """Performs HTTP GET and returns decoded text."""
+    """Performs HTTP GET and returns decoded text（超限返回 None）。"""
     req_headers = {"User-Agent": user_agent}
     if headers:
         req_headers.update(headers)
     req = urllib.request.Request(url, headers=req_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8", errors="ignore")
+            raw = _read_bounded(resp, max_bytes)
+            if raw is None:
+                return None
+            return raw.decode("utf-8", errors="ignore")
     except Exception:
         return None
 
@@ -36,10 +61,13 @@ def http_get_json(
     url: str,
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 6,
-    user_agent: str = UA_DEFAULT
+    user_agent: str = UA_DEFAULT,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> Optional[Union[Dict[str, Any], list]]:
     """Performs HTTP GET and returns parsed JSON data."""
-    text = http_get_text(url, headers=headers, timeout=timeout, user_agent=user_agent)
+    text = http_get_text(
+        url, headers=headers, timeout=timeout, user_agent=user_agent, max_bytes=max_bytes
+    )
     if not text:
         return None
     try:
@@ -52,7 +80,8 @@ def http_post_json(
     data: Optional[Dict[str, Any]] = None,
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 6,
-    user_agent: str = UA_DESKTOP
+    user_agent: str = UA_DESKTOP,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> Optional[Union[Dict[str, Any], list]]:
     """Performs HTTP POST (form-encoded) and returns parsed JSON data."""
     req_headers = {"User-Agent": user_agent}
@@ -63,8 +92,10 @@ def http_post_json(
     req = urllib.request.Request(url, data=post_bytes, headers=req_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw_text = resp.read().decode("utf-8", errors="ignore")
-            return json.loads(raw_text)
+            raw = _read_bounded(resp, max_bytes)
+            if raw is None:
+                return None
+            return json.loads(raw.decode("utf-8", errors="ignore"))
     except Exception:
         return None
 
@@ -74,7 +105,8 @@ def http_post_json_body(
     payload: Any = None,
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 8,
-    user_agent: str = UA_DESKTOP
+    user_agent: str = UA_DESKTOP,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> Optional[Union[Dict[str, Any], list]]:
     """Performs HTTP POST with a **JSON request body** and returns parsed JSON.
 
@@ -98,8 +130,10 @@ def http_post_json_body(
     req = urllib.request.Request(url, data=body, headers=req_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw_text = resp.read().decode("utf-8", errors="ignore")
-            return json.loads(raw_text)
+            raw = _read_bounded(resp, max_bytes)
+            if raw is None:
+                return None
+            return json.loads(raw.decode("utf-8", errors="ignore"))
     except Exception:
         return None
 

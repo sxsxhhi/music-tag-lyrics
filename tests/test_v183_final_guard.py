@@ -179,7 +179,14 @@ def test_f15_one_frame_bad_middle_and_trailing_mp3_rejected():
         assert compute_audio_stream_digest(str(path))[0] != 'VERIFIED'
 
 
-def test_f16_valid_mp3_plus_id3v1_remains_verified():
+def test_f16_id3v1_outside_stream_digest():
+    """音频流摘要必须排除 ID3v1 尾块（只证明"不参与摘要"，**不证明**"受保护"）。
+
+    命名与注释在 v1.8.5 修正：旧名 ``..._remains_verified`` 极易被读成
+    「ID3v1 是安全的」，实际上它恰好把这个盲区写进了回归基线——ID3v1 既不在
+    摘要里，也不在 ID3v2 帧快照里，写入时会被 mutagen 静默改写。
+    真正的保护契约见 ``tests/test_v185_id3v1_fidelity.py``。
+    """
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / 's.mp3'; _make_mp3(path)
         status, digest = compute_audio_stream_digest(str(path))

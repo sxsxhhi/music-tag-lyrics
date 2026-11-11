@@ -20,7 +20,6 @@ from mutagen.id3 import (
     TCOM,
     TEXT,
     USLT,
-    SYLT,
     APIC,
     TSRC,
 )
@@ -34,10 +33,12 @@ except ImportError:
 
 try:
     from core.utils.io_safe import safe_save_audio_tags
+    from core.utils.id3v1 import preserve_id3v1
 except ImportError:  # 允许以脚本方式直接运行本文件
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from core.utils.io_safe import safe_save_audio_tags
+    from core.utils.id3v1 import preserve_id3v1
 
 # Whitelist of bands, groups, and brand names that contain '&' or other separators but must NOT be split
 BAND_WHITELIST = {
@@ -532,8 +533,12 @@ def update_audio_tags(
             orig_v2 = 4
         _apply_id3_tags(id3, tags)
         _attach_id3_cover(id3)
-        # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
-        id3.save(tmp, v2_version=orig_v2 if orig_v2 in (3, 4) else 4)
+        # v1.8.5 / H-A1：ID3.save 的 v1 参数没有「保持不变」语义（0=删、1=更新、2=创建），
+        # 因此把既有 ID3v1 尾块剥离后写入、完成后再原样附加，确保 128 字节逐字节不变。
+        # 违反契约时 preserve_id3v1 抛 Id3v1IntegrityError → 上层捕获后放弃落盘。
+        with preserve_id3v1(tmp):
+            # 保留原 ID3 版本，避免 v2.3 被静默升级成 v2.4
+            id3.save(tmp, v2_version=orig_v2 if orig_v2 in (3, 4) else 4)
         return True
 
     def _write_id3_container(tmp: str, factory) -> bool:

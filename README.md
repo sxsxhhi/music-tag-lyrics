@@ -153,6 +153,7 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 严格标准化入口增加以下保护：
 
 - **多轨多语言歌词保真**：标准化音频副本逐值保留 FLAC 的多值 `lyrics`、MP3/WAV 的描述性 `USLT` 与 `SYLT`，以及 ID3 `TXXX:TTMLLYRIC` 中的额外文本值；对副轨摘要、SYLT 帧语义属性和音频流哈希进行写回校验，校验失败拒绝交付。`source_inventory` 仅输出轨道数量、哈希及脱敏标识，不输出副轨原文或可含私人文字的 ID3 描述字段。FLAC 多值副轨允许不同内容；无法唯一确认主轨时，不将描述性 USLT 当作可替换主轨。
+- **保护边界（v1.8.5 补正）**：上述「全帧快照」只覆盖 ID3v2 帧，**不包含 MP3 的 ID3v1 尾块**；FLAC 的 APPLICATION / SEEKTABLE / CUESHEET 也不在 Vorbis 键值快照内。v1.8.5 起分别由 ID3v1 保护层与结构块指纹覆盖，详见更新历史。
 - **全文消费验证**：非法 LRC 元数据尾随文字、未闭合头、未知 ELRC `<...>` 行内片段以及不受支持的方括号词级时间标记，不会被跳过后宣称 `PASS`。常见文本中的字面 `<` 仍可作为歌词保留；语义无法确认时阻断并复核。
 - **有效时间轴**：`[offset]` 以整数毫秒同时作用于行级和逐字时间；重复、非法或导致负时间的偏移值被拒绝，避免「对账为 0ms 差异，实际输出却移动了时间」。无明确终点的最后一个逐字字块不再通过猜测 500ms 时长交付。
 - **双解析器一致性**：独立结构比较器与既有 LRC 解析器必须在歌词、时间及字块上给出相同结果；否则返回 `ELRC_PARSER_DIVERGENCE`，防止旧解析器暗中补时或漏字。
@@ -247,6 +248,16 @@ python -B tests/run_all.py -k canto
 ---
 
 ## 📜 版本更新历史 (Changelog)
+
+### v1.8.5 (2026-11-11) —— 元数据保真收口、校验契约补强与发布可复现
+
+- **MP3 ID3v1 逐字节保真（安全修复）**：`mutagen` 的 `ID3.save(v1=…)` 没有「保持不变」语义（`0`=删除、`1`=更新、`2`=创建），默认 `v1=1` 会在仅改歌词时把既有 ID3v1 的 title/artist/album/year 从 ID3v2 重写、**无条件清空 comment**，非 Latin-1 文本还会降级成 `???`；而音频流摘要刻意排除 ID3v1，改动完全不可见。v1.8.5 改为「剥离 → 保存 → 原样附加」：写入前切下末尾 128 字节 `TAG` 块、保存后原封附回，日常与标准化两条路径 + `safe_save_audio_tags` 第三道闸共同保证字节不变；凭空创建/重复写入/摘要不符分别以 `ID3V1_CREATED` / `ID3V1_DUPLICATED` / `ID3V1_CHANGED` 阻断；
+- **ID3v1 可核验**：`read_container_tags` 新增 `id3v1_present` 与 `id3v1_sha256`，标准化报告 `readback_tags` 新增 `id3v1_preserved`，保留与否可被外部复算；
+- **FLAC 扩展元数据块指纹**：对 APPLICATION / SEEKTABLE / CUESHEET / 未知块建立 `(type, sha256(payload))` 多重集快照；允许块顺序与 PADDING 变化，禁止载荷与数量变化。这类块此前既不在音频流摘要内、也不在 Vorbis 键值闸门内；
+- **回滚不完整必须可见**：标准化在报告写入失败后逐项验收清理结果，残留产物写入 `residual_outputs` 并返回 `SIDECAR_ROLLBACK_INCOMPLETE`，不再以 `BLOCKED` + 空 `actions_taken` 掩盖残留；
+- **抓取层响应上限**：`http_get_text` / `http_get_json` / `http_post_json` / `http_post_json_body` 统一引入 `max_bytes`（默认 2 MiB，超限返回 `None`），实现为 `read(max_bytes + 1)`；AMLL 全量索引单独放宽到 32 MiB；
+- **发布可复现**：正式包成员字节改从 **git 索引 blob** 读取，新增 `.gitattributes`（`* text=auto eol=lf`），同一 commit 在不同平台/检出状态产出同一个 ZIP；CI 新增 `release-repro` job 校验「重建结果 == 已提交 manifest」；
+- **依赖与文档**：`mutagen>=1.47.0,<2`；容器矩阵按实测修正（M4A 已在公开 CI 覆盖、OGG 有夹具但无测试）；`SKILL.md` 移除硬编码套件数，改以 `run_all.py` 实际输出为准；`test_f16` 更名并标明「摘要排除 ID3v1 ≠ ID3v1 受保护」。
 
 ### v1.8.4 (2026-11-11) —— 多轨多语言歌词保真加固与工程治理
 - **多轨多语言歌词写回保真**：全面支持保留 FLAC/OGG 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT`、M4A `©lyr` 副轨与 ID3 多值 `TXXX:TTMLLYRIC`；标准主歌词写入规范的 `USLT::eng`（无描述），非英文（如 `USLT::chi`）或带描述的歌词作为受保护副轨完整保留，杜绝误判误删；

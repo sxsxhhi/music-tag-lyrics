@@ -37,7 +37,6 @@ from core.auditors.elrc_ttml_comparator import (
 from core.cleaners.content_classifier import classify_and_clean_all_lines
 from core.models.canonical_lyrics import IssueSeverity
 from core.parsers.lrc_parser import parse_lrc
-from core.parsers.ttml_parser import parse_ttml
 from core.renderers.standard_elrc_renderer import render_elrc_v182
 from core.renderers.standard_ttml_renderer import render_ttml_v182
 from core.schedulers.prelude_scheduler import plan_prelude_ab
@@ -248,13 +247,24 @@ def standardize_single_song(
             try:
                 _write_json_report(report_path, report)
             except Exception as exc:
+                # v1.8.5 / H-B1：逐项验收清理结果。清理再失败时不能把「仍有产物」
+                # 伪装成「完全回滚」——必须留下结构化证据（残留路径）与专用错误码，
+                # 与 core.utils.io_safe.atomic_write_many 的 SIDECAR_ROLLBACK_INCOMPLETE 对齐。
+                residual = []
                 for target in reversed(committed_outputs):
-                    try: os.unlink(target)
-                    except OSError: pass
+                    try:
+                        os.unlink(target)
+                    except OSError as unlink_exc:
+                        residual.append(f"{os.path.basename(target)}:{type(unlink_exc).__name__}")
                 committed_outputs.clear()
                 report['actions_taken'] = []
                 report['status'] = 'BLOCKED'
-                issue('REPORT_WRITE_FAILED', f"{type(exc).__name__}: {str(exc)}")
+                issue('REPORT_WRITE_FAILED', type(exc).__name__)
+                if residual:
+                    report['residual_outputs'] = sorted(
+                        item.split(':', 1)[0] for item in residual
+                    )
+                    issue('SIDECAR_ROLLBACK_INCOMPLETE', ','.join(sorted(residual)))
         return report
 
     # Strictly validate *all* available sources, including those that will

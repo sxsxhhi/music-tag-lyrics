@@ -22,3 +22,34 @@ jobs:
         run: python -B tests/run_all.py -v
       - name: Leak guard check (public rules)
         run: python -B scripts/check_no_leaks.py
+
+  # ---------------------------------------------------------------------------
+  # v1.8.5 / H-D2：发布产物可复现性门禁。
+  #
+  # 历史缺陷：构建器读磁盘字节，配合 core.autocrlf 与缺失的 .gitattributes，
+  # 同一 commit 在不同检出状态/平台会产出不同 SHA-256，"确定性构建"退化为
+  # "同机幂等"，第三方无法复算发布资产。
+  #
+  # 本 job 断言：克隆仓库 → 重建 → 必须与已提交的 release-manifest.json
+  # 完全一致（manifest 不变 + 整包 SHA 校验通过）。任何回归都会让 PR 变红。
+  # ---------------------------------------------------------------------------
+  release-repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # manifest 记录的是「构建时的 commit」，通常不是 HEAD 本身，
+          # 浅克隆会让 _manifest_compatible 的可解析性检查失败。
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Rebuild release package from git blobs
+        run: python -B scripts/build_release_manifest.py --release
+      - name: Manifest and manifest mirror must be byte-identical
+        run: git diff --exit-code -- release-manifest.json docs/release-manifest.json
+      - name: Verify release asset against manifest
+        run: python -B scripts/build_release_manifest.py --verify-release
+
