@@ -249,12 +249,14 @@ python -B tests/run_all.py -k canto
 ## 📜 版本更新历史 (Changelog)
 
 ### v1.8.4 (2026-11-11) —— 多轨多语言歌词保真加固与工程治理
-- **多轨多语言歌词写回保真**：标准化输出改为逐值保留 FLAC 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT` 与 ID3 多值 `TXXX:TTMLLYRIC`；主歌词写入规范 `USLT::eng`，副轨经语义字段与摘要回读核对（不承诺 ID3 序列化前后的原始标签字节逐字节相同）；
+- **多轨多语言歌词写回保真**：标准化与日常处理流全面升级为保留 FLAC/OGG 多值 `lyrics`、MP3/WAV 额外 `USLT`/`SYLT`、M4A `©lyr` 副轨与 ID3 多值 `TXXX:TTMLLYRIC`；主歌词写入规范 `USLT::eng`，副轨经语义字段与摘要回读核对（不承诺 ID3 序列化前后的原始标签字节逐字节相同）；
 - **来源盘点与物理回读双重对账**：`source_inventory` 全面枚举并记录额外轨道类型、语言/描述、哈希与字节数（不暴露歌词明文）；容器写回后物理回读强制校验副轨摘要，若发生篡改或丢失立即抛出异常并原子回滚；
+- **未授权元数据全量不可变门禁**：写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 `PRIV`、`COMM`、未授权 `TCOM`/`TEXT`、自定义 Vorbis 标签等），任何意外遗漏或篡改立即阻断；
+- **常规音频流不可变验证与无标签 MP3 兼容**：常规标签改签引入音频流完整性比对，音频帧受损时绝对拒绝替换；修复合法未加签 MP3 无法首次写入 ID3 标签的问题；
+- **多文件协同落盘事务性回滚**：`atomic_write_many` 引入预备份与逆序故障回滚，确保双 sidecar 歌词落盘的全有或全无；
 - **多轨冲突 Fail-Closed 门禁**：对同标识冲突的副轨或相互竞争的未描述主歌词帧实行阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`），杜绝歧义交付；
-- **Windows CI 核心门禁补全**：将 R9 输入完整性回归与 v1.8.4 多轨保真回归永久纳入 Windows 核心阻塞门禁流水线；
-- **全量测试与架构图版本同步**：新增 `test_v184_multitrack_integrity.py` 专项套件（15/15 PASS），架构图与文档全局同步至 v1.8.4。
-- **独立复审后补丁加固（仍为 v1.8.4 候选）**：修复 `--report` 中的私有歌词原文与 Mutagen Frame 对象泄漏、SYLT 属性漏检、描述性 USLT 错当主轨、FLAC 合法多值误报冲突；增加 `test_v184_security_regressions.py` 11 项独立回归。此发行 ZIP 为供工作模型复审的候选，不等同于 GitHub 正式 Release。
+- **Windows CI 核心门禁补全**：将 R9 输入完整性回归、v1.8.4 多轨保真回归与 release gate 回归套件永久纳入 Windows 核心阻塞门禁流水线；
+- **全量测试与架构图版本同步**：包含 `test_v184_multitrack_integrity.py`、`test_v184_security_regressions.py` 与 `test_v184_release_gate_regressions.py`，全量 53 套离线套件通过。此发行包为供独立审查的候选，未经明确授权不得推送 GitHub。
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
 - **R9 独立输入完整性加固**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试；

@@ -570,10 +570,31 @@ def write_verified_standardized_container(
             raise ValueError("REVIEW_REQUIRED_CREDIT_CONFLICT:"+field)
     if lyricist and orig.get('lyricist'): lyricist=None
     if composer and orig.get('composer'): composer=None
+
+    ext = os.path.splitext(target)[1].lower()
+
+    # 快照原始全部标签帧与元数据键值，用于最严苛的未授权元数据不可变性校验
+    orig_vorbis_tags = None
+    orig_id3_frames = None
+    try:
+        source_audio = mutagen.File(source)
+    except Exception:
+        source_audio = None
+
+    if isinstance(source_audio, FLAC):
+        orig_vorbis_tags = {k.lower(): list(source_audio.get(k, [])) for k in source_audio.keys()}
+    elif isinstance(source_audio, WAVE) and getattr(source_audio, "tags", None):
+        orig_id3_frames = dict(source_audio.tags.items())
+    elif ext == '.mp3' or (source_audio is not None and getattr(source_audio, "tags", None) and isinstance(source_audio.tags, ID3)):
+        try:
+            source_id3 = ID3(source)
+            orig_id3_frames = dict(source_id3.items())
+        except Exception:
+            orig_id3_frames = None
+
     orig_stream_st, orig_stream_hash = compute_audio_stream_digest(source)
     original_hash = _sha_file(source)
     os.makedirs(os.path.dirname(target),exist_ok=True)
-    ext = os.path.splitext(target)[1]
     fd,tmp=tempfile.mkstemp(prefix='.mtl182-stage-',suffix=ext,dir=os.path.dirname(target))
     os.close(fd)
     try:
@@ -617,8 +638,53 @@ def write_verified_standardized_container(
             raise RuntimeError('ID3_VERSION_CHANGED')
         if lyricist and rb.get('lyricist')!=lyricist.strip():
             raise RuntimeError('CREDIT_READBACK_FAILED:lyricist')
+        if not lyricist and orig.get('lyricist') != rb.get('lyricist'):
+            raise RuntimeError('PROTECTED_METADATA_CHANGED:lyricist')
         if composer and rb.get('composer')!=composer.strip():
             raise RuntimeError('CREDIT_READBACK_FAILED:composer')
+        if not composer and orig.get('composer') != rb.get('composer'):
+            raise RuntimeError('PROTECTED_METADATA_CHANGED:composer')
+
+        # 全量 Vorbis 注释不可变性回读门禁
+        if orig_vorbis_tags is not None:
+            rb_flac = FLAC(tmp)
+            rb_vorbis = {k.lower(): list(rb_flac.get(k, [])) for k in rb_flac.keys()}
+            authorized_vorbis = {'lyrics', 'ttmllyric'}
+            if lyricist:
+                authorized_vorbis.add('lyricist')
+            if composer:
+                authorized_vorbis.add('composer')
+            for k, v in orig_vorbis_tags.items():
+                if k not in authorized_vorbis:
+                    if k not in rb_vorbis or rb_vorbis[k] != v:
+                        raise RuntimeError(f'PROTECTED_METADATA_CHANGED:vorbis_{k}')
+            for k in rb_vorbis:
+                if k not in orig_vorbis_tags and k not in authorized_vorbis:
+                    raise RuntimeError(f'PROTECTED_METADATA_CHANGED:unexpected_vorbis_{k}')
+
+        # 全量 ID3 帧不可变性回读门禁（含 PRIV / COMM / 自定义 TXXX 等）
+        if orig_id3_frames is not None:
+            rb_id3_container = mutagen.File(tmp)
+            rb_id3 = rb_id3_container.tags if isinstance(rb_id3_container, WAVE) else ID3(tmp)
+            authorized_id3 = set()
+            if orig.get('_primary_uslt_key'):
+                authorized_id3.add(orig['_primary_uslt_key'])
+            authorized_id3.add('USLT::eng')
+            if orig.get('_primary_ttml_key'):
+                authorized_id3.add(orig['_primary_ttml_key'])
+            authorized_id3.add('TXXX:TTMLLYRIC')
+            if lyricist:
+                authorized_id3.add('TEXT')
+            if composer:
+                authorized_id3.add('TCOM')
+            for k, frame in orig_id3_frames.items():
+                if k not in authorized_id3:
+                    if k not in rb_id3 or rb_id3[k] != frame:
+                        raise RuntimeError(f'PROTECTED_METADATA_CHANGED:id3_{k}')
+            for k in rb_id3.keys():
+                if k not in orig_id3_frames and k not in authorized_id3:
+                    raise RuntimeError(f'PROTECTED_METADATA_CHANGED:unexpected_id3_{k}')
+
         r1=compare_elrc_ttml(rb['lyrics'],rb['ttml'])
         if not r1.passed:
             raise RuntimeError('READBACK_FORMAT_MISMATCH')
