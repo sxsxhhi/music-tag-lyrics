@@ -43,3 +43,5 @@ tests/fixtures/golden_*.lrc
 !tests/fixtures/golden_timeline_sample.lrc
 _baseline_runs/
 
+# Local tool state written by CLIs (e.g. gh device-id) into CWD
+.local/

@@ -676,7 +676,7 @@ def write_verified_standardized_container(
     if os.path.lexists(target_work_path):
         raise FileExistsError("TARGET_EXISTS: destination is already occupied")
     if os.path.splitext(target)[1].lower() not in ('.flac','.mp3','.wav'):
-        raise ValueError("Unsupported v1.8.4 output container")
+        raise ValueError("Unsupported output container (supported: .flac/.mp3/.wav)")
 
     # Check generated pair BEFORE making any copy.
     comp=compare_elrc_ttml(elrc_text,ttml_text)

@@ -1,9 +1,9 @@
 ---
 name: music-tag-lyrics
-description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.4）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。主歌词写入标准单帧 USLT::eng 并完整保留其余语言/同步副轨。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
+description: 本地音频标签清洗、多源歌词修补、专辑封面补全与双引擎声学打轴（v1.8.5）。调度：Apple TTML (am-lyrics + lrc.red 全球 ISRC 双引擎) → 网易（YRC 逐字）→ QQ（QRC 逐字）→ 酷狗 → AMLL(ncm) → LRCSHARE → LRCLIB → Demucs GPU（国语 Whisper / 粤语 Wav2Vec2 CTC）。有行无字先征求 GPU（拒绝才 numpy）；无主词 GitHub 优先全球搜文本再打轴。缺标题/歌手按文件名「歌名-歌手」补全；空作词作曲从歌词署名行提取。空/当年占位年份从专辑名或网易补。Live/录音室互斥覆盖七源与全球搜词。主歌词写入标准单帧 USLT::eng 并完整保留其余语言/同步副轨。缺封面时网络三级梯级补全（已有封面绝不覆盖）。生成 Enhanced LRC / ELRC 双语。支持 --lang auto/zh/yue 语种控制。环境红线：默认不主动向系统盘写入缓存；缓存目录按五级回退（不可写时告警），严格限定单一目录须显式启用 MTL_STRICT_STORAGE=1；HF 权重默认固化于配置的非系统盘路径。触发：歌词、标签、封面、Album Cover、Apple Music、TTML、am-lyrics、lrc.red、ISRC、酷狗、AMLL、LRCSHARE、网易、YRC、QQ音乐、QRC、LRCLIB、ELRC、Demucs、粤语、Cantonese、Live、铁律、Enhanced LRC。
 ---
 
-# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.4)
+# music-tag-lyrics: 音乐标签与逐字歌词原生聚合引擎 (v1.8.5)
 
 纯 Python 技能：原地洗标签、多源抓词、同目录写出 `.spl` / `.lrc`。缺标题/歌手按文件名「歌名-歌手」补全；作词/作曲仅在空时从歌词署名行提取。Python 侧需 `mutagen`；`numpy` 仅在拒绝 GPU / 非交互时用于行级合成；Demucs GPU 为精度优先的可选兜底。抓词失败仍可只写清洗后的元数据。
 
