@@ -376,7 +376,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 ## 十一、双格式标准化与全曲内容治理（v1.8.4）
 
 > **独立、显式启用的新入口**：`scripts/standardize_song.py`。普通的
-> `scripts/process_song.py` 与旧版检索/声学/标签处理默认逻辑保持不变。
+> `scripts/process_song.py` 检索与声学逻辑保持不变，但日常音频标签写回增加严格保真门禁，无法验证的容器会拒绝改签。
 > 本安装包不代表已经通过可信维护者私有指纹扫描、完整 Git CI 或播放器实机兼容验证。
 
 ### 1. 固定处理顺序（不得交换）
@@ -415,7 +415,7 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 - `--output-dir` 为标准化必填，不得等于音频源目录；已有同名目标一律拒绝，不自动覆盖。音频工作副本只支持 FLAC、MP3、WAV 的本轮标准化写回；M4A 标准化工作副本写回尚未纳入验证，保持只读/阻断；旧普通流程的其他容器能力不受此限制。
 - 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
 - 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。
-- **多轨歌词安全写回与元数据不可变性 (v1.8.4 补丁复审)**：标准化与日常处理流全面保留 FLAC/OGG 多值 lyrics / ttmllyric、MP3/WAV 描述性 USLT 与 SYLT、M4A ©lyr 额外轨、ID3 TXXX:TTMLLYRIC 多文本值；仅替换已明确识别的主 USLT（无描述主帧），其余轨道通过摘要及 SYLT 帧完整语义属性核验。FLAC 合法多值不因空语言描述误报冲突；无描述主轨竞争仍须阻断。写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 PRIV/COMM/未授权 TCOM/TEXT 及自定义标签），任何意外遗漏或篡改立即阻断。常规标签改签引入音频流完整性比对，音频帧受损时绝对拒绝替换；修复合法未加签 MP3 首次写入 ID3v2.4；`atomic_write_many` 补齐预备份与逆序故障回滚。公开 JSON 审计报告仅存受限摘要，不携带 Mutagen 帧、原始副轨歌词或自由文本异常证据。错误、意外篡改或音频流变化均不得交付新副本。
+- **多轨歌词安全写回与元数据不可变性 (v1.8.4 补丁复审)**：标准化与日常处理流全面保留 FLAC/OGG 多值 lyrics / ttmllyric、MP3/WAV 描述性 USLT 与 SYLT、M4A ©lyr 额外轨、ID3 TXXX:TTMLLYRIC 多文本值；日常只替换规范 `USLT::eng`，其余语言（即使空描述）保持原样；标准化仅替换明确识别的主 USLT，其余轨道通过摘要及 SYLT 帧完整语义属性核验。FLAC 合法多值不因空语言描述误报冲突；无描述主轨竞争仍须阻断。写回前后对 FLAC Vorbis 注释全键值与 MP3/WAV ID3 全帧快照，严格保护非歌词元数据（含 PRIV/COMM/未授权 TCOM/TEXT 及自定义标签），任何意外遗漏或篡改立即阻断。常规标签改签引入音频流完整性比对，音频帧受损时绝对拒绝替换；修复合法未加签 MP3 首次写入 ID3v2.4；`atomic_write_many` 补齐预备份与逆序故障回滚，回滚再失败时保留 `.tmp_bak*` 备份并抛出 `SIDECAR_ROLLBACK_INCOMPLETE`；不保证断电级多文件原子性。公开 JSON 审计报告仅存受限摘要，不携带 Mutagen 帧、原始副轨歌词或自由文本异常证据。错误、意外篡改或音频流变化均不得交付新副本。
 - **TTML 时间规范与结构化阻断 (v1.8.3)**：
   - 输出格式强制 W3C `HH:MM:SS.mmm`；输入兼容历史两段式 `MM:SS.mmm` 与秒级偏移 `12.345s`；
   - 单 `div` 缺省边界时推导子行范围并标记**非阻断** `DIV_BOUNDARY_INFERRED`，实际 audit/standardize 入口必须保留该审计提示而不得误标为 `INPUT_PARSE_FAILED`；若存在时序倒挂或冲突则阻断 `DIV_TIME_CONFLICT`；
@@ -425,3 +425,9 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
   - 大音频文件哈希全面采用分块流式哈希（`sha256_file`），防止超大文件耗尽系统内存；
   - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。WAV 严密校验 RIFF 尾部边界与 `fmt ` 基础参数（采样率、声道、块对齐、字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`，尾部残块与非法参数安全拒绝。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
 - 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。
+
+### R12 交付门禁与运行限制（v1.8.4）
+- 日常 ID3 写入仅覆盖 `USLT::eng` 空描述主帧，其他语言空描述与描述性帧以及所有 SYLT 必须保留；具有歧义的未知主帧不得删除。
+- 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`，否则仅拒绝写入；不以文件名扩展名、ID3 缺失或 Mutagen 读取成功证明音频完全可解码。
+- 双 sidecar 回滚在操作系统拒绝还原时须保留 `.tmp_bak*`，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`；不能将这种补偿机制宣传为严格多文件 ACID/断电原子事务。
+- 所有新增回归采用本地合成无版权音频；交付候选不代表已通过完整 Git 仓库的 CI、私有指纹守卫或播放器实机验证，未经批准禁止推送 GitHub。

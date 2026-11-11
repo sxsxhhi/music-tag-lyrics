@@ -325,14 +325,13 @@ def _apply_id3_tags(id3: Any, tags: TagSet) -> None:
         else:
             id3["TPE2"] = TPE2(encoding=3, text=[normalize_artist_string(tags.albumartist)])
     if tags.lyrics is not None:
-        # 清除所有无描述的主歌词旧帧（desc 为空，含 eng/chi 等不同语言主帧）
-        # 严格保留所有翻译轨/多轨歌词（非空 desc，如 desc='Translation'）以及 SYLT 同步歌词帧
-        for k in list(id3.keys()):
-            if k.startswith("USLT"):
-                frame = id3[k]
-                if not getattr(frame, "desc", ""):
-                    del id3[k]
-
+        # Only the unique canonical English undescribed slot is replaceable.
+        # An undescribed Chinese/Japanese/unknown-language USLT is NOT evidence
+        # that it is the same primary track. All such tracks are protected.
+        for key in list(id3.keys()):
+            frame = id3[key]
+            if isinstance(frame, USLT) and frame.desc == "" and frame.lang == "eng":
+                del id3[key]
         id3["USLT::eng"] = USLT(encoding=3, lang='eng', desc='', text=tags.lyrics)
 
 

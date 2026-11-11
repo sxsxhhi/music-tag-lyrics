@@ -108,6 +108,8 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
                     streaminfo = f.read(34)
                     if len(streaminfo) != 34:
                         return unverified
+                    # STREAMINFO audio decode parameters and MD5 are immutable.
+                    h_streaminfo = hashlib.sha256(streaminfo).digest()
                     # STREAMINFO sample rate (20 bits), channels and bit depth.
                     params = int.from_bytes(streaminfo[10:18], "big")
                     sample_rate = (params >> 44) & 0xfffff
@@ -128,7 +130,8 @@ def compute_flac_audio_stream_digest(path: str) -> Tuple[str, str]:
             if sync[0] != 0xff or (sync[1] & 0xfe) != 0xf8:
                 return unverified
             f.seek(audio_start)
-            h = hashlib.sha256()
+            h = hashlib.sha256(b"FLAC_STREAMINFO_AND_AUDIO_V2\0")
+            h.update(h_streaminfo)
             for block in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(block)
             return "VERIFIED", h.hexdigest()
@@ -160,7 +163,12 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                 if name == b"fmt ":
                     if seen_fmt or size < 16:
                         return unverified
-                    fmt_bytes = f.read(16)
+                    fmt_bytes = f.read(size)
+                    h.update(b"WAV_FORMAT_V2\0")
+                    h.update(size.to_bytes(8, "little"))
+                    h.update(fmt_bytes)
+                    if len(fmt_bytes) != size:
+                        return unverified
                     audio_format = int.from_bytes(fmt_bytes[0:2], "little")
                     channels = int.from_bytes(fmt_bytes[2:4], "little")
                     sample_rate = int.from_bytes(fmt_bytes[4:8], "little")
@@ -179,13 +187,13 @@ def compute_wav_audio_stream_digest(path: str) -> Tuple[str, str]:
                     if audio_format == 0xFFFE:
                         if size < 40:
                             return unverified
-                        ext_bytes = f.read(24)
+                        ext_bytes = fmt_bytes[16:40]
                         sub_format = int.from_bytes(ext_bytes[8:10], "little")
                         if sub_format not in (1, 3):
                             return unverified
-                        f.seek(size - 40, os.SEEK_CUR)
+                        pass  # the complete fmt chunk was already consumed
                     else:
-                        f.seek(size - 16, os.SEEK_CUR)
+                        pass  # the complete fmt chunk was already consumed
                     if size & 1:
                         f.seek(1, os.SEEK_CUR)
                     seen_fmt = True
@@ -295,6 +303,13 @@ def compute_audio_stream_digest(filepath: str) -> Tuple[str, str]:
         return compute_wav_audio_stream_digest(filepath)
     if ext == ".mp3":
         return compute_mp3_audio_stream_digest(filepath)
+    from .audio_payload import ogg_vorbis_audio_digest, mp4_audio_digest, dsf_audio_digest
+    if ext == ".ogg":
+        return ogg_vorbis_audio_digest(filepath)
+    if ext in (".m4a", ".mp4"):
+        return mp4_audio_digest(filepath)
+    if ext == ".dsf":
+        return dsf_audio_digest(filepath)
     return "AUDIO_STREAM_NOT_VERIFIED", ""
 
 

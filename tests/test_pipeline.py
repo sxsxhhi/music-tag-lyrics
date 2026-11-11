@@ -180,22 +180,28 @@ def test_broken_id3_never_overwrites():
         shutil.rmtree(work, ignore_errors=True)
 
 
-def test_id3_write_replaces_all_lyric_frames():
-    """写入逐字时清掉旧 USLT（含其它语言）与 SYLT，只留一帧 Enhanced LRC。"""
+def test_id3_write_preserves_other_language_tracks():
+    """写入规范主轨时，仅替换 USLT::eng，保留其他语言和同步副轨。"""
     work = tempfile.mkdtemp(prefix="mtl_pipe_")
     try:
         p = os.path.join(work, "tagged.mp3")
-        tag = ID3()
+        from mutagen.id3 import SYLT
+        frame = b"\xff\xfb\x90\x00" + b"\x00" * 413
+        with open(p, "wb") as audio_f:
+            audio_f.write(frame * 4)
+        ID3().save(p)
+        tag = ID3(p)
         tag.add(USLT(encoding=3, lang="eng", desc="", text="OLD"))
         tag.add(USLT(encoding=3, lang="chi", desc="", text="中文逐行"))
+        tag.add(SYLT(encoding=3, lang="eng", desc="Sync", format=2, type=1,
+                     text=[("SYNTHETIC", 100)]))
         tag.save(p)
 
         assert update_audio_tags(p, lyrics="<00:01.00>新歌词") is True
         t = ID3(p)
-        frames = {k: str(t[k].text) for k in t.keys() if k.startswith("USLT")}
-        assert list(frames) == ["USLT::eng"], frames
-        assert frames["USLT::eng"] == "<00:01.00>新歌词", frames
-        assert not any(k.startswith("SYLT") for k in t.keys())
+        assert t["USLT::eng"].text == "<00:01.00>新歌词"
+        assert t["USLT::chi"].text == "中文逐行"
+        assert len(t.getall("SYLT")) == 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

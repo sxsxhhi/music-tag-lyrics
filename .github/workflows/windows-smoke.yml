@@ -92,6 +92,11 @@ jobs:
         shell: pwsh
         run: python -B tests/test_v184_release_gate_regressions.py *>&1 | Tee-Object -FilePath release_gate_regressions.log
 
+      - name: v1.8.4 R12 safety regression (Windows)
+        id: r12_safety_regressions
+        shell: pwsh
+        run: python -B tests/test_v184_round12_safety.py *>&1 | Tee-Object -FilePath r12_safety.log
+
       - name: Summarise Windows core gate
         if: always()
         shell: pwsh
@@ -112,7 +117,8 @@ jobs:
             "r9_integrity.log",
             "multitrack_integrity.log",
             "security_regressions.log",
-            "release_gate_regressions.log"
+            "release_gate_regressions.log",
+            "r12_safety.log"
           )
           $out = @()
           $out += "## Windows Core Blocking Gate Results"
