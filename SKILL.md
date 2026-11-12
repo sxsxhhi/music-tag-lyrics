@@ -16,7 +16,7 @@ description: 本地音频标签清洗、多源歌词修补、专辑封面补全�
 ```mermaid
 flowchart TD
   Start[传入音频] --> Read[读标签与时长]
-  Read --> Ladder["1 Apple TTML(am-lyrics) → 2 网易(YRC) → 3 QQ(QRC) → 4 酷狗 → 5 AMLL(ncm) → 6 LRCSHARE → 7 LRCLIB"]
+  Read --> Ladder["1 Apple TTML(am-lyrics + lrc.red) → 2 网易(YRC) → 3 QQ(QRC) → 4 酷狗 → 5 AMLL(ncm) → 6 LRCSHARE → 7 LRCLIB"]
   Ladder --> HasLines{有 timed lines?}
   HasLines -->|有| Words{已有逐字?}
   Words -->|有| Valid[校验后写盘]
@@ -35,7 +35,7 @@ flowchart TD
 - **Apple TTML 升为第 1 档（v1.3.0）**：所有曲目优先通过本地索引（`am-lyrics/index.jsonl`，2,745 行折叠聚合为 1,773 组）与 iTunes 实时检索（search 四区 hk/tw/us/jp；lookup 华语 us→cn、外语 us→jp）发现 Apple ID；多镜像按 origin 攒票回退拉取 TTML；iTunes 令牌桶 24 容量 / 1.6 每秒，耗尽时打印可见降级日志。
 - **华语 Strict 门禁防串歌（D4）**：华语曲目必须严格通过标题严格相等、艺人交集、版本互斥、时长证据（E1 iTunes trackTimeMillis 对齐或 E2 专辑+E3b 吻合），才允许作为 strict 候选覆盖酷狗；任何 loose 华语一律返回空平滑落入酷狗。
 - **外语单调等级替换（D5 / D6）**：原文与译文必须同一源、同一版。后序源必须具备严格更高等级（`_rank`：逐字+译文(3) > 行级+译文(2) > 逐字无译文(1) > 行级无译文(0)）才能整包替换前置源；外语缺译文的 Apple 逐字允许被后续带官方译文的网易/LRCSHARE 整包替换。
-- Demucs **不是第七个抓词 API**。有行无字：精度优先问 GPU（`line_timing_hints`）；拒绝/非交互才 numpy。无 `lines`：先全球搜权威文本（GitHub/raw 优先），再问 GPU；拒绝不能 numpy。
+- Demucs **位于七档网络源之后，不是抓词 API**，而是精度优先的声学打轴兜底引擎。有行无字：精度优先问 GPU（`line_timing_hints`）；拒绝/非交互才 numpy。无 `lines`：先全球搜权威文本（GitHub/raw 优先），再问 GPU；拒绝不能 numpy。
 - `--non-interactive`：有行轴则直接 numpy；无行轴则跳过 GPU，本首失败。
 - **专辑封面补全（v1.3.2）**：默认写标签路径生效；已有内嵌封面 100% 物理跳过绝不覆盖；详见第三节封面规范。
 - 回滚与开关：支持 `--no-apple-ttml`、`--no-cover` 与环境变量 `MTL_APPLE_TIER=off`。
@@ -176,7 +176,7 @@ flowchart TD
 **阻断（搜不到权威文本）：**
 
 ```text
-🛑 [Demucs v4 绝对红线阻断 (v1.5.0)]
+🛑 [Demucs v4 绝对红线阻断]
 未能从商业曲库、全球检索与本地文件得到权威歌词文本。
 ⚠️ 核心铁律：【绝不语音听写】！可放置同目录 txt 或使用 --lyrics-file。
 ```
@@ -191,8 +191,9 @@ flowchart TD
 
 ## 五、模块入口
 
-- CLI：`scripts/process_song.py`、`scripts/ttml2lyrics.py`（单曲诊断转换器）
-- 标签：`scripts/tag_editor.py`
+- CLI：`scripts/process_song.py`（日常音频治理）、`scripts/standardize_song.py`（双格式标准化治理）、`scripts/ttml2lyrics.py`（单曲诊断转换器）
+- 校验：`scripts/lyric_validator.py`（歌词格式与声学自然度校验）
+- 标签：`scripts/tag_editor.py`（音频内嵌元数据清洗回写）
 - 调度：`core/aggregator.py`（Apple TTML → 网易 → QQ → 酷狗 → AMLL → LRCSHARE → LRCLIB）
 - 抓取：`core/fetchers/`（`apple_ttml.py`、`netease.py`、`qq.py`、`kugou.py`、`amll.py`、`lrcshare.py`、`lrclib.py`、`itunes_client.py`、`cover_art.py`）
 - 声学对齐（双引擎）：`core/acoustic_aligner.py`（调度与普通话 Whisper 双引擎流水线）、`core/acoustic_canto.py`（粤语 CTC 对齐引擎）
@@ -373,11 +374,10 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 ---
 
-## 十一、双格式标准化与全曲内容治理（v1.8.4）
+## 十一、双格式标准化与容器元数据保真（v1.8.4–v1.8.5）
 
 > **独立、显式启用的新入口**：`scripts/standardize_song.py`。普通的
 > `scripts/process_song.py` 检索与声学逻辑保持不变，但日常音频标签写回增加严格保真门禁，无法验证的容器会拒绝改签。
-> 本安装包不代表已经通过可信维护者私有指纹扫描、完整 Git CI 或播放器实机兼容验证。
 
 ### 1. 固定处理顺序（不得交换）
 
@@ -395,7 +395,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 只有一项可信署名时：A 套该项使用 `12000–20000ms`；B 套使用 `floor(0.6T)–T`。无可信署名则只展示标题；前奏极短且无法给每项分配正时长时，合并展示行，不允许产生零长度 span；`T=0` 时报告无前奏空间。
 
-### 2. 真正支持的入口
+### 2. 真正支持的入口与参数
 
 ```bash
 # 默认只读，仅输出审计状态；--report 显式指定时写本地 JSON 报告
@@ -426,23 +426,23 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
   - 标准化工作副本写回前后执行容器级音频数据流提取与哈希对比（FLAC 音频帧流、WAV PCM 数据块、MP3 MPEG Layer III 帧流）；若检测到音频流变异立即抛出 `AUDIO_STREAM_CORRUPTED` 并自动回滚；若文件无有效音频主体、元数据越界、帧同步失败或音频边界无法确定则安全阻断（`AUDIO_STREAM_NOT_VERIFIED`）。WAV 严密校验 RIFF 尾部边界与 `fmt ` 基础参数（采样率、声道、块对齐、字节率），支持标准 PCM 与 `WAVE_FORMAT_EXTENSIBLE`，尾部残块与非法参数安全拒绝。`VERIFIED` 只证明区间初步有效且字节一致，**不等于全曲解码/CRC 或第三方播放器兼容性验证**。
 - 多个输出文件的最终提交虽然采用私有暂存和非覆盖提交、失败回滚本次文件（报告写入失败也应回滚本轮交付），但**不是跨多个文件系统对象的严格 ACID 事务**，不应把它宣传成断电级全局原子提交。
 
-### 多轨保真与容器语义门禁（v1.8.4）
+### 3. 多轨保真与容器语义门禁（v1.8.4）
 - 日常与标准化 ID3 写入仅覆盖 `USLT::eng` 无描述主帧，其他语言（如无描述 `USLT::chi`）、描述性帧以及所有 SYLT 必须作为副轨完整保留；具有歧义的未知主帧严禁删除。
 - 对所有允许改签的容器要求受支持的音频不变量校验状态为 `VERIFIED`（含 MP4 `moov/mvhd` 电影级时间参数、FLAC 图片全结构、WAV 非 ID3 RIFF 扩展块等），否则拒绝写入。
 - 多文件协同落盘在操作系统拒绝原子还原时保留 `.tmp_bak*` 物理备份，并传播 `SIDECAR_ROLLBACK_INCOMPLETE`。
 - 新增安全防回归测试套件（`test_v184_round12_safety.py` 与 `test_v184_round13_safety.py`），已纳入 Windows 核心阻塞门禁与离线全套件自动化发现。
 
-### v1.8.5 独立复核 R2：错误状态必须 Fail-Closed
+### 4. 网络边界与底层错误 Fail-Closed 硬门禁（v1.8.5）
 - `http_get_text_ex` 默认 `max_bytes=2 MiB`，HTTP 2xx 和 429/4xx/5xx 均只读取 `max_bytes+1` 字节；超限必须返回 `error='oversized'`，不得将截断的正文当作完整响应。正常小型 429 仍保留状态码与退避机制；`max_bytes=0` 仅为调用方**显式**退出上限。`http_get_bytes` 默认限制 16 MiB，封面调用方继续使用更严格的显式上限。
 - ID3v1 尾块读取的 `None` **只能表示可靠确认不存在**；`stat/open/seek/read` 异常或不完整读取必须抛出完整性错误。`safe_save_audio_tags` 的 ID3v1 原始快照也属于失败保护范围，异常时必须返回 `False` 且不触碰原件；最终尾块摘要由独立读取逻辑核验。
 - FLAC APPLICATION/SEEKTABLE/CUESHEET 指纹预检读取失败（`None` 或异常）即拒绝日常及标准化写回；合法空字典 `{}` 代表无扩展块、不得误判成不可验证。
-- `tests/test_v185_r2_failclosed.py` 与 v1.8.5 其余四个安全套件已纳入 Windows 阻塞门禁；Linux `run_all.py` 自动发现。对正式发布的承诺仍需经过完整 Git 索引构建、双 Manifest、私有词表扫描以及云端 CI 验证。
+- `test_v185_r2_failclosed.py` 与其余安全套件均已纳入 Windows 阻塞门禁与全套件自动化发现，确保错误状态绝对 fail-closed。
 
-### ID3v1 保真、元数据块指纹与发布可复现（v1.8.5）
+### 5. ID3v1 逐字节保真、元数据块指纹与发布可复现（v1.8.5）
 - **MP3 ID3v1 逐字节保持**：mutagen 的 `ID3.save(v1=…)` 没有「保持不变」语义（`0`=删除、`1`=更新、`2`=创建），默认 `v1=1` 会把既有 ID3v1 的 title/artist/album/year 从 ID3v2 重写，并**无条件清空 comment**；非 Latin-1 文本（中文等）还会降级成 `???`。v1.8.5 起统一走「剥离 → 保存 → 原样附加」：写入前把末尾 128 字节 `TAG` 块切下、保存后原封附回，使 mutagen 完全看不到 ID3v1。日常 `update_audio_tags`、标准化 `write_verified_standardized_container` 与 `safe_save_audio_tags` 第三道闸共同保证逐字节不变；凭空创建、重复写入或摘要不符分别按 `ID3V1_CREATED` / `ID3V1_DUPLICATED` / `ID3V1_CHANGED` 阻断，绝不静默放行。
 - **ID3v1 可核验性**：`read_container_tags` 输出 `id3v1_present` 与 `id3v1_sha256`，标准化报告的 `readback_tags` 增加 `id3v1_preserved`，让「保留」可被外部复算而不是只靠声明。
 - **FLAC 扩展元数据块指纹**：STREAMINFO / VORBIS_COMMENT / PICTURE 之外的块（APPLICATION、SEEKTABLE、CUESHEET、未知类型）以 `(type, sha256(payload))` **多重集**快照比对；**允许**块顺序与 PADDING 变化，**禁止**载荷与数量变化。这些块此前既不在音频流摘要里、也不在 Vorbis 键值闸门内，属于「声称已保护、实际未核验」。SEEKTABLE 载荷长度必须是 18 的整数倍，非法块会被写入库整块丢弃并因此被判为篡改——这是刻意保守。
 - **回滚失败必须可见**：标准化在「报告写入失败」后**逐项验收**清理结果；只要有产物无法删除，就必须返回 `SIDECAR_ROLLBACK_INCOMPLETE` 并把残留文件名写入 `residual_outputs`，不得以 `status=BLOCKED` + 空 `actions_taken` 伪装成完全回滚。
 - **网络响应上限**：`http_get_text` / `http_get_json` / `http_post_json` / `http_post_json_body` 统一引入 `max_bytes`（默认 2 MiB，超限返回 `None`，保持「取不到」契约）；实现必须是 `read(max_bytes + 1)`，**不是**先整体读入再判断。AMLL 全量索引单独放宽到 32 MiB。
 - **发布可复现**：正式包成员字节改为从 **git 索引 blob** 读取（不再读磁盘），配合新增 `.gitattributes`（`* text=auto eol=lf`），同一 commit 在 Windows / Linux / 任意检出状态下产出同一个 ZIP。CI 新增 `release-repro` job：重建后 `release-manifest.json` 必须零差异且 `--verify-release` 通过。**开发包仍读磁盘**（它需要反映未提交改动），并在 manifest 中标记 `dirty=true`。
-- 新增测试套件：`test_v185_postrelease_audit.py`（独立审计 5 条反例）、`test_v185_id3v1_fidelity.py`、`test_v185_metadata_fingerprint.py`、`test_v185_http_limits.py`。
+- 新增测试套件：`test_v185_id3v1_fidelity.py`、`test_v185_metadata_fingerprint.py`、`test_v185_http_limits.py`、`test_v185_postrelease_audit.py`、`test_v185_r2_failclosed.py`。
