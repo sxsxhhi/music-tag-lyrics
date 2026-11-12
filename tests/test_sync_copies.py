@@ -474,6 +474,57 @@ def test_prune_survives_path_spelling_mismatch():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def test_predictable_tmp_symlink_cannot_redirect_write():
+    """固定名临时文件被预先布置成符号链接时，不得把内容写到链接外。"""
+    import shutil
+
+    base = _tmp()
+    mirror = base / "mirror"
+    mirror.mkdir()
+    outside = base / "external-private.txt"
+    outside.write_bytes(b"KEEP_PRIVATE")
+    try:
+        try:
+            (mirror / "SKILL.md.mtl-tmp").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            _testkit.skip("当前环境不支持创建符号链接")
+
+        sync_mod._write_member(mirror, mirror / "SKILL.md", b"NEW_RELEASE_BYTES")
+        assert outside.read_bytes() == b"KEEP_PRIVATE", "临时文件符号链接把内容写到了镜像之外"
+        assert (mirror / "SKILL.md").read_bytes() == b"NEW_RELEASE_BYTES"
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_manifest_symlink_is_rejected_and_not_written_through():
+    """受管清单路径是符号链接时必须 fail-closed，且不得修改链接外内容。"""
+    import shutil
+
+    base = _tmp()
+    mirror = base / "mirror"
+    mirror.mkdir()
+    outside = base / "external-private.txt"
+    outside.write_text("KEEP_PRIVATE\n", encoding="utf-8")
+    saved = sync_mod.collect_members
+    sync_mod.collect_members = lambda: {"SKILL.md": b"NEW_RELEASE_BYTES"}
+    try:
+        try:
+            (mirror / sync_mod.MANIFEST_NAME).symlink_to(outside)
+        except (OSError, NotImplementedError):
+            _testkit.skip("当前环境不支持创建符号链接")
+
+        try:
+            sync_mod.sync_to(mirror, no_prune=True)
+        except sync_mod.SyncError as exc:
+            assert "受管清单" in str(exc), str(exc)
+        else:
+            raise AssertionError("受管清单符号链接未被拒绝")
+        assert outside.read_text(encoding="utf-8") == "KEEP_PRIVATE\n", "清单写入穿到了镜像之外"
+    finally:
+        sync_mod.collect_members = saved
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

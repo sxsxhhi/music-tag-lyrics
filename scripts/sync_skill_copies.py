@@ -26,6 +26,7 @@ import os
 import shutil
 import stat as stat_mod
 import sys
+import tempfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -196,15 +197,28 @@ def _assert_no_link_in_path(root: Path, dest: Path) -> None:
 
 
 def _write_member(target_root: Path, dest: Path, data: bytes) -> None:
-    """把成员字节原子写入目标路径，写入前后各校验一次路径安全性。"""
+    """把成员字节原子写入目标路径，写入前后各校验一次路径安全性。
+
+    临时文件必须**不可预测且原子独占创建**：固定名 ``*.mtl-tmp`` 可被预先布置成
+    符号链接，``write_bytes()`` 会顺着链接把内容写到镜像之外；随后的
+    ``os.replace`` 还可能把该链接移成最终目标。因此改用
+    ``tempfile.mkstemp``（随机名 + ``O_EXCL``），并通过返回的 fd 写入，
+    不再按路径二次打开。
+    """
     _assert_no_link_in_path(target_root, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     # mkdir 之后再查一次：父目录可能是本次创建前刚被替换成链接
     _assert_no_link_in_path(target_root, dest)
 
-    tmp = dest.with_name(dest.name + ".mtl-tmp")
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(dest.parent), prefix=dest.name + ".", suffix=".mtl-tmp"
+    )
+    tmp = Path(tmp_name)
     try:
-        tmp.write_bytes(data)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        # mkstemp 创建的文件是 0600，恢复为与常规写入一致的可读权限
+        os.chmod(tmp, 0o644)
         os.replace(tmp, dest)
     finally:
         if tmp.exists():
@@ -216,6 +230,10 @@ def _write_member(target_root: Path, dest: Path, data: bytes) -> None:
 
 def _read_manifest(target: Path) -> set[str] | None:
     path = target / MANIFEST_NAME
+    # 受管清单自身也必须是普通文件：若是符号链接/junction，读到的是链接外的内容，
+    # 会据此决定删除范围，属于不可信输入（fail-closed）。
+    if _is_link_like(path):
+        raise SyncError(f"受管清单路径是符号链接/junction，拒绝读取: {path}")
     if not path.is_file():
         return None
     try:
@@ -260,9 +278,11 @@ def sync_to(
     if not dry_run:
         # 落盘前先对全部目标路径做一次链接预检：任何一个目标路径上已有
         # 符号链接/junction 就在**写入任何文件之前**失败，避免留下半更新镜像。
+        # 受管清单与成员同等对待——它同样会写入目标目录。
         # 此检查不要求目标已存在，全新目标上是无操作。
         for rel_str in sorted(members):
             _assert_no_link_in_path(target, target / rel_str)
+        _assert_no_link_in_path(target, target / MANIFEST_NAME)
         target.mkdir(parents=True, exist_ok=True)
 
     for rel_str, data in sorted(members.items()):
@@ -326,11 +346,10 @@ def sync_to(
             "generated_by": "scripts/sync_skill_copies.py",
             "managed": sorted(members),
         }
-        (target / MANIFEST_NAME).write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        payload = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        # 清单与成员走同一套受保护写入：临时文件随机名 + 路径链接校验 + 原子替换，
+        # 不再直接 write_text()（那会跟随清单路径上的符号链接写到镜像之外）。
+        _write_member(target, target / MANIFEST_NAME, payload)
         stats["manifest_written"] = True
 
     return stats
