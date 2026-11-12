@@ -441,6 +441,39 @@ def test_ds_store_is_excluded_by_exact_name():
     assert dv.is_file_excluded("core/.DS_Store") is True
 
 
+def test_prune_survives_path_spelling_mismatch():
+    """清理越界校验必须两侧同口径。
+
+    Windows runner 上 ``tempfile.mkdtemp()`` 会返回 8.3 短路径
+    （``<user-home>\\RUNNER~1\\...``），而 ``Path.resolve()`` 返回长路径
+    （``<user-home>\\runneradmin\\...``）；若只对 victim 做 resolve、拿原始 target
+    去 ``relative_to``，比较必然失败，结果是**所有陈旧文件都被跳过、清理静默失效**。
+    这里用「符号链接父目录」在任何平台复现同一类路径拼写不一致。
+    """
+    import shutil
+
+    base = _tmp()
+    real = base / "real"
+    real.mkdir()
+    link = base / "link"
+    try:
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            _testkit.skip("当前环境不支持创建目录符号链接")
+
+        target = link / "mirror"          # 经过链接访问，拼写与 resolve 结果不同
+        target.mkdir()
+        stale = target / "old_report.md"
+        stale.write_text("stale\n", encoding="utf-8")
+
+        stats = sync_mod.sync_to(target, adopt_existing=True)
+        assert stats["pruned"] >= 1, stats
+        assert not stale.exists(), "陈旧文件未被清理（越界校验把合法路径误判为越界）"
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     """统一三态 runner。"""
     return _testkit.run(globals())

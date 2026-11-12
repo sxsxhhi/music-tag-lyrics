@@ -277,9 +277,13 @@ def sync_to(
             victim = target / rel_str
             if not victim.is_file():
                 continue
-            # 只删清单登记过、且仍位于目标内的文件
+            # 只删清单登记过、且仍位于目标内的文件。
+            # 两侧都必须 resolve()：Windows 上 mkdtemp 可能返回 8.3 短路径
+            # （如 <user-home>\RUNNER~1\...），而 resolve() 得到长路径
+            # （<user-home>\runneradmin\...），直接 relative_to 会抛 ValueError，
+            # 导致清理被静默跳过（CI 实测：Windows runner 上 pruned 恒为 0）。
             try:
-                victim.resolve().relative_to(target)
+                victim.resolve().relative_to(target.resolve())
             except ValueError:
                 continue
             if not dry_run:
