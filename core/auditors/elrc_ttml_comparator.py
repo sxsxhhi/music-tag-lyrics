@@ -567,12 +567,23 @@ def verify_canonical_exports(canonical,elrc_text:str,ttml_text:str)->ComparisonR
     from ..utils.text_utils import format_display_title
     _p = getattr(canonical, "prelude", None)
     if _p and getattr(_p, "mode", "") in ("A", "B") and getattr(_p, "display_title", ""):
-        _song = getattr(canonical, "song", {}) or {}
-        _t = str(_song.get("title") or "").strip()
-        _a = str(_song.get("artist") or "").strip()
-        if _t and _a and _p.display_title != format_display_title(_t, _a):
-            out.add_error('TITLE_DISPLAY_CONTRACT', 'Prelude title must be "歌名 - 歌手"')
-            return out
+        # 取值依据优先用 plan 记录的 basis：force_title 覆盖歌名时，
+        # canonical.song["title"] 仍是原值，直接回读会误判为违约。
+        _basis = getattr(_p, "title_basis", None)
+        if not (isinstance(_basis, (tuple, list)) and len(_basis) == 2):
+            _song = getattr(canonical, "song", {}) or {}
+            _basis = (str(_song.get("title") or ""), str(_song.get("artist") or ""))
+        _t = str(_basis[0] or "").strip()
+        _a = str(_basis[1] or "").strip()
+        if _t and _a:
+            _expected = format_display_title(_t, _a)
+            # 合并展示（PRELUDE_SLOTS_MERGED）允许在契约标题后追加署名段，
+            # 但首段必须仍是「歌名 - 歌手」，不得退回纯歌名。用 startswith 而非
+            # split，避免曲名本身含 " | " 时被截断误判。
+            if (_p.display_title != _expected
+                    and not _p.display_title.startswith(_expected + " | ")):
+                out.add_error('TITLE_DISPLAY_CONTRACT', 'Prelude title must be "歌名 - 歌手"')
+                return out
 
     # Verify self-generated TTML strictly complies with W3C_CLOCK profile
     try:
@@ -598,10 +609,22 @@ def verify_canonical_exports(canonical,elrc_text:str,ttml_text:str)->ComparisonR
     expected=[]
     p=canonical.prelude
     if p and p.mode in ('A','B'):
+        # 前奏显示行（标题/词曲）为字符级逐字平均分配，expected 必须逐字核验：
+        # 两个格式共同丢字/丢时间片同样必须失败，不得因是显示投影而豁免 R1。
+        from ..utils.text_utils import make_char_words
+        from ..models.canonical_lyrics import CanonicalWord
         for key,w,txt in (('P_TITLE',p.title_window,p.display_title),
                           ('P_LYRICIST',p.lyricist_window,p.display_lyricist),
                           ('P_COMPOSER',p.composer_window,p.display_composer)):
-            if w and txt and w[1]>w[0]:expected.append((key,w[0],w[1],txt,[],None))
+            if w and txt and w[1]>w[0]:
+                # 与渲染器同判定：窗口不足每字 1ms 时渲染端退回单词块，
+                # expected 也必须退回空字块，否则会凭空要求 0ms 伪逐字。
+                if len(txt) <= (w[1]-w[0]):
+                    cws=make_char_words(txt,w[0],w[1])
+                    wlist=[CanonicalWord(text=c["text"],start_ms=c["start"],end_ms=c["end"]) for c in cws]
+                else:
+                    wlist=[]
+                expected.append((key,w[0],w[1],txt,wlist,None))
     for line in canonical.lines:
         if line.role.value in ('TITLE','LYRICIST','COMPOSER','PRODUCTION_CREDIT','PLACEHOLDER','TRANSLATION'):
             continue

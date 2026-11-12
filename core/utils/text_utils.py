@@ -208,7 +208,7 @@ def _norm_title_key(text: str) -> str:
 
 
 def _artist_keys(text: str) -> set:
-    """提取艺人名证据集合：按 / & 、 拆分，括号内的别名也算独立证据。"""
+    """提取艺人名证据集合：按 / & 、 与 feat./ft. 拆分，括号内的别名也算独立证据。"""
     import unicodedata
     s = unicodedata.normalize("NFKC", text or "")
     keys = set()
@@ -217,20 +217,25 @@ def _artist_keys(text: str) -> set:
         if k:
             keys.add(k)
     base = re.sub(r"[\(（][^\)）]*[\)）]", "", s)
-    for part in re.split(r"[/&;,&、|]", base):
+    for part in re.split(r"[/&;,&、|]|\s*\bfeat\.?\s+|\s*\bft\.?\s+", base, flags=re.I):
         k = _norm_title_key(part)
         if k:
             keys.add(k)
     return keys
 
 
+_CTRL_WS_RE = re.compile(r"[\r\n\t\v\f]+")
+
+
 def format_display_title(title: str, artist: str) -> str:
     """歌词内前奏标题行的唯一格式：「歌名 - 歌手」；无歌手时退回纯歌名。
 
     两个输出入口（日常 to_spl 与标准化 P_TITLE）必须共用本函数，
-    避免同一首歌在不同入口得到不同标题行。
+    避免同一首歌在不同入口得到不同标题行。换行/制表符等控制空白折叠为
+    单个空格：标题行是单行结构，内嵌换行会同时破坏 ELRC 与 TTML。
     """
-    t, a = (title or "").strip(), (artist or "").strip()
+    t = _CTRL_WS_RE.sub(" ", title or "").strip()
+    a = _CTRL_WS_RE.sub(" ", artist or "").strip()
     return f"{t} - {a}" if (t and a) else t
 
 
@@ -244,7 +249,10 @@ def match_display_title(text: str, title: str = "", artist: str = "") -> bool:
     t = _TIMING_TAG_RE.sub("", text or "").strip()
     if not t:
         return False
-    m = re.match(r"^(.{1,80}?)\s*" + _TITLE_SEP + r"\s*(.{1,80})$", t)
+    # 侧长上限放宽到 300 字符：超长曲名（含 (Extended Club Mix) 等后缀）在真实
+    # 曲库并不罕见，旧 80 字符上限会把它们判成非标题而重复合成标题行；误判风险
+    # 由「至少一侧与 title 等价」这条硬条件兜住。
+    m = re.match(r"^(.{1,300}?)\s*" + _TITLE_SEP + r"\s*(.{1,300})$", t)
     if not m:
         return False
     left, right = m.group(1).strip(), m.group(2).strip()
@@ -269,3 +277,98 @@ def match_display_title(text: str, title: str = "", artist: str = "") -> bool:
 def is_title_line(text: str, title: str = "", artist: str = "") -> bool:
     """兼容入口：实际判定统一走 match_display_title，消除双实现漂移。"""
     return match_display_title(text, title, artist)
+
+
+# --------------------------------------------------------------------------- #
+# 前奏显示行（标题 / 词曲）的字符级逐字：两入口单一出处
+#
+# 铁律 20 只保护「正文演唱字轴」（严禁对演唱内容做声学伪对齐或固定除法伪造）。
+# 标题与词曲**不在演唱正文内**，属前奏显示投影，统一按窗口时长做字符级平均分配，
+# 日常 to_spl 与标准化 P_TITLE 两入口共用同一算法，逐字时间戳必须一致。
+# ---------------------------------------------------------------------------
+
+def make_char_words(text: str, start_ms: int, end_ms: int):
+    """字符级逐字时间轴：按窗口时长对字符平均分配（两入口同一算法）。
+
+    - join 一律 "none"：空格本身是独立字符字块，字符间不得再触发
+      铁律 14 的西文词界空格启发式（否则英文标题会变成 S o n g）。
+    - 不设 100ms 下限：短窗口（如标准化 B 套）必须严格落在窗口内，
+      不得溢出侵占首唱；窗口不足每字 1ms 的极端输入由调用方按
+      fail-closed 处理（拒绝渲染而不是伪造）。
+    """
+    dur = end_ms - start_ms
+    if dur <= 0 or not text:
+        # 非正窗口 / 空文本一律返回空列表（fail-closed）：绝不返回 0ms 或负长度的
+        # 单字块，否则调用方会把它当成合法逐字写出，违反铁律 8。调用方看到空列表
+        # 应退回单词块显示行。
+        return []
+    n = len(text)
+    step = dur / n
+    return [
+        {
+            "text": char,
+            "start": int(start_ms + i * step),
+            "end": int(start_ms + (i + 1) * step),
+            "join": "none",
+        }
+        for i, char in enumerate(text)
+    ]
+
+
+def collapse_duplicate_punc_tags(line: str) -> str:
+    """折叠 0ms 重复标点时间戳（铁律 8），如 <01:46.180>.<01:46.180>。
+
+    P1-5: 分钟位 1-3 位（旧版写死 \\d{2}，≥100 分钟的音频不会被折叠，与铁律 10 冲突）。
+    """
+    def repl(m):
+        t1, punc, t2 = m.group(1), m.group(2), m.group(3)
+        if t1 == t2:
+            return punc + "<" + t2 + ">"
+        return m.group(0)
+    prev = None
+    while prev != line:
+        prev = line
+        line = re.sub(r"<(\d{1,3}:\d{2}\.\d{1,3})>([^\w\s])<(\d{1,3}:\d{2}\.\d{1,3})>", repl, line)
+    return line
+
+
+def format_verbatim_words_line(words, start_ms: int, end_ms: int, precision: int = 2) -> str:
+    """把词块序列格式化为标准 Enhanced LRC 逐字行（铁律 6/7 的行级形态）。
+
+    原生执行西文词界空格（铁律 14）与 >=300ms 停顿 gap 标签（铁律 12）。
+    precision=3 输出 [mm:ss.xxx] / <mm:ss.xxx>（毫秒源）；默认 2 位厘秒。
+    """
+    from .time_utils import format_time_tag
+
+    if not words:
+        return ""
+
+    line_parts = []
+    first_w = words[0]
+    first_txt = first_w.get("text", "").replace("\xa0", " ")
+    line_parts.append(f"{format_time_tag(start_ms, '[]', precision)}{format_time_tag(first_w['start'], '<>', precision)}{first_txt}")
+
+    for i in range(1, len(words)):
+        w_prev = words[i - 1]
+        w_cur = words[i]
+        prev_txt = w_prev.get("text", "").replace("\xa0", " ")
+        cur_txt = w_cur.get("text", "").replace("\xa0", " ")
+        prev_end = w_prev.get("end", w_prev.get("start", 0))
+
+        # 词边界空格（铁律 14）：join 是解析层给出的"源里有没有空格"的权威信息
+        join = w_prev.get("join")
+        if prev_txt and cur_txt and not prev_txt.endswith(" ") and not cur_txt.startswith(" "):
+            if join is None:
+                if re.search(r"[a-zA-Z0-9,\.!\?;:'\"]$", prev_txt) and re.search(r"^[a-zA-Z0-9]", cur_txt):
+                    cur_txt = " " + cur_txt
+            elif join == "space":
+                cur_txt = " " + cur_txt
+
+        # 词间停顿 >=300ms 插入闭合标签（铁律 12）
+        if w_cur.get("start", 0) - prev_end >= 300:
+            line_parts.append(format_time_tag(prev_end, "<>", precision))
+        line_parts.append(f"{format_time_tag(w_cur['start'], '<>', precision)}{cur_txt}")
+
+    last_end = words[-1].get("end", end_ms)
+    line_parts.append(format_time_tag(last_end, "<>", precision))
+    return collapse_duplicate_punc_tags("".join(line_parts))

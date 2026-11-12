@@ -118,6 +118,9 @@ class PreludePlan:
     display_title: str = ""
     display_lyricist: Optional[str] = None
     display_composer: Optional[str] = None
+    # 生成 display_title 时实际使用的 (歌名, 歌手) 取值依据。R1 的内容契约按它
+    # 核对，而不是无条件回读 song 字段——force_title 覆盖歌名时 song 仍是原值。
+    title_basis: Optional[Tuple[str, str]] = None
     issues: List[AuditIssue] = field(default_factory=list)
 
 

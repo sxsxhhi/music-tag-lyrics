@@ -194,8 +194,10 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 | 常见音频格式 | 扩展名 | `process_song` 日常修补机制 | `standardize_song` 标准化工作副本机制 | 歌词 / 封面规范 |
 | :---: | :---: | :---: | :---: | :---: |
 | **FLAC** | `.flac` | 临时副本原子替换，读回校验一致才交付 | 独立输出目录，音频流前后摘要严格比对防损坏 | `LYRICS` / `METADATA_BLOCK_PICTURE` |
-| **MP3** | `.mp3` | 独立写回；损坏 ID3 拒绝覆写 | 独立输出目录，音频流前后摘要严格比对防损坏 | `USLT` 单帧 / `APIC` (Front Cover) |
-| **WAV** | `.wav` | 独立写回；PCM 音频块保护 | 独立输出目录，data 音频流前后摘要严格比对防损坏 | ID3 Chunk (`USLT`) / ID3 Chunk (`APIC`) |
+| **MP3** | `.mp3` | 独立写回；损坏 ID3 拒绝覆写 | 独立输出目录，音频流前后摘要严格比对防损坏 | `USLT::eng` 单帧（其余语言/描述性 USLT 与 SYLT 作副轨保留） / `APIC` (Front Cover) |
+| **WAV** | `.wav` | 独立写回；PCM 音频块保护 | 独立输出目录，data 音频流前后摘要严格比对防损坏 | ID3 Chunk (`USLT::eng` 单帧) / ID3 Chunk (`APIC`) |
+| **OGG Vorbis** | `.ogg` | 临时副本原子替换，读回校验一致才交付 | *不适用（标准化工作副本仅 FLAC/MP3/WAV）* | Vorbis `lyrics`；封面本轮不写（打日志跳过） |
+| **DSF** | `.dsf` | 临时副本原子替换，读回校验一致才交付 | *不适用（标准化工作副本仅 FLAC/MP3/WAV）* | 内嵌 ID3 (`USLT::eng` 单帧) / `APIC` |
 | **M4A / ALAC** | `.m4a`, `.mp4` | 临时副本原子替换，读回校验一致才交付 | *标准化工作副本回写尚未纳入验证（保持只读/阻断）* | `©lyr` / `covr` |
 
 > [!IMPORTANT]
@@ -260,7 +262,11 @@ python -B tests/run_all.py -k canto
 - 统一两个入口的前奏标题行格式为 `歌名 - 歌手`，由 `core/utils/text_utils.py:format_display_title()` 单一出处产生；标准化路径不再只写纯歌名，清理掉带歌手的标题行后必须补回歌手。
 - 标题行识别改由 `match_display_title()` 归一化处理，容忍倒序、括号别名/括注、全角连字符与多名分隔符；制作名单行与普通唱句不得误判为标题。
 - R1 新增 `TITLE_DISPLAY_CONTRACT` 断言；新增 `tests/test_title_display_contract.py` 跨入口契约测试。
-- 规格详情见 `SKILL.md` §三。本次为**同版本内容修订**，`core/version.py` 保持 `1.8.5`，发布包、清单与 Release 资产同步重建。
+- 前奏标题与词曲显示行统一为**字符级逐字平均分配**（`make_char_words()` 单一算法，在各自前奏窗口内均分，含空格与连字符均占时间片）；铁律 20 仅保护正文演唱字轴，前奏显示投影不受其约束。
+- 日常入口 `to_spl` 的**既有标题行去重**改用同一 `match_display_title()`：此前用 `" - "` 空格归一化比较，倒序、全角连字符、括号别名等真实变体会被判为非标题而**重复合成标题行**。
+- `make_char_words()` 对非正窗口/空文本改为返回空列表（fail-closed），不再产出可被误用的 0ms 单字块；两个渲染器的非法字块报错补上行号与区间，便于把 `CANONICAL_RENDER_FAILED` 直接定位到源数据。
+- 明确标准化入口的**输入契约**：输入必须是源歌词，对自身产物重复执行会因前奏显示行自带真实字轴而触发 `CREDIT_LIKE_SUNG_TEXT_RETAINED` 阻断（fail-closed，禁止硬删绕过）。
+- 规格详情见 `SKILL.md` §三 与 §十一。本次为**同版本内容修订**，`core/version.py` 保持 `1.8.5`，发布包、清单与 Release 资产同步重建。
 
 ### v1.8.5 独立复核修正（R2，已按最小范围合入本仓）
 

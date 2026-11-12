@@ -161,7 +161,7 @@ flowchart TD
 | **Album（专辑）** | 原样回写 | 空则跳过，不覆盖原值 | 不查发行专辑、不拦热歌榜 |
 | **Year（年份）** | 4 位公历 `YYYY`；空或等于当年日历年时从专辑名四位数字、再网易 `publishTime` 补 | 解析不出则不写；严禁把「今天」写成发行年 | `2016-08-01` → `2016`；专辑 `2018 (上)` → `2018` |
 | **Lyricist / Composer** | 仅空时从歌词署名行提取 | 已有不覆盖；`--lyrics-only` 不写这两项 | `作词 : 方文山` → TEXT；`词不达意` 不提取 |
-| **Lyrics（内嵌歌词）** | Enhanced LRC，与 `.spl`/`.lrc` 镜像；写入时删除全部 `USLT*`/`SYLT*`，只留一帧 | 译文不得独立时间戳插队；禁止逐行+逐字并存 | FLAC/WAV/MP3/M4A/OGG/DSF |
+| **Lyrics（内嵌歌词）** | Enhanced LRC，与 `.spl`/`.lrc` 镜像；只替换规范主轨（MP3/WAV `USLT::eng` 无描述主帧、FLAC 单值 `lyrics`），其余语言/描述性 USLT 与全部 SYLT 作为副轨完整保留 | 译文不得独立时间戳插队；禁止逐行+逐字并存 | FLAC/WAV/MP3/M4A/OGG/DSF |
 | **Album Cover（专辑封面）** | 缺失时网络三级梯级补全：iTunes 顺风车（lookup/search 缓存里的 `artworkUrl100`，`100x100bb`→`1000x1000bb` 取原图）→ 网易 `song/detail` 的 `album.picUrl` → 酷狗 `album/info` 的 `imgurl` | **已有内嵌封面 100% 跳过绝不覆盖**；JPEG/PNG 魔数 + ≥1KB 硬校验，坏图直接丢弃；与标签/歌词合并为**同一次落盘**；`--no-cover` 显式跳过；OGG 本轮不写（打日志跳过） | FLAC(Picture type=3) / MP3·WAV·DSF(APIC) / M4A·MP4(covr) |
 
 ### 歌词内前奏标题行（两入口统一）
@@ -178,9 +178,13 @@ flowchart TD
 
 - 歌手取 `artist` 标签**原值**：`format_display_title()` 不做二次规范化。多合唱在 §三 的**标签治理环节**统一为 `/`（已有标签不覆盖），本函数只读取，不得把 `/` 改写回 `&` / `、`；若标签原值仍含其它分隔符，应先按 §三 治理标签，再生成标题行。无歌手时退回纯歌名；无歌名时不输出标题行。
 - 该格式**同时适用于** `process_song.py`（`core/converter.py:to_spl` 合成标题行）与 `standardize_song.py`（`core/schedulers/prelude_scheduler.py` 的 `P_TITLE` 显示行），两入口产出必须一致；由 `core/utils/text_utils.py:format_display_title` 单一出处产生，禁止各自硬编码。
-- 识别**既有**标题行时容忍真实曲库变体（倒序、括号别名/括注、全角连字符 `–—－`、多名分隔符、多余空白），统一走 `core/utils/text_utils.py:match_display_title`；判定仍从严：必须有分隔符、至少一侧与 `title` 等价，给了 `artist` 时另一侧须与艺人名证据集合有交集。制作名单行与普通唱句不得据此删除。
+- 识别**既有**标题行时容忍真实曲库变体（倒序、括号别名/括注、全角连字符 `–—－`、多名分隔符 `&` `、` `;`、`feat.`/`ft.` 合唱写法、多余空白、单侧最长 300 字符的超长曲名），统一走 `core/utils/text_utils.py:match_display_title`；判定仍从严：必须有分隔符、至少一侧与 `title` 等价，给了 `artist` 时另一侧须与艺人名证据集合有交集。制作名单行与普通唱句不得据此删除。
 - 清理掉原有的带歌手标题行后，重建前奏时**必须补回歌手**，不得只写纯歌名造成歌词正文信息损失。
-- R1 验收：`canonical.song` 同时含 `title` 与 `artist` 时，`P_TITLE` 内容必须等于 `format_display_title(title, artist)`，否则报 `TITLE_DISPLAY_CONTRACT` 并阻断交付。
+- **时间轴形态**：前奏标题/词曲显示行在两入口统一为**字符级逐字平均分配**——`make_char_words()` 按各自前奏窗口时长对字符（含空格与连字符）均分时间片，`format_verbatim_words_line()` 序列化为逐字流光；`make_char_words()` 对非正窗口或空文本一律返回空列表（fail-closed），调用方据此退回单词块显示行。两入口共用同一分配算法，但**窗口与兜底按各入口既有规则**：
+  - 日常 `to_spl`：仅当首行还不是标题行时才合成；`T ≥ 6000ms` 用窗口 `1000 – min(5500, T/2)` 逐字分配，精度随输入（2 或 3 位）；`T < 6000ms` 不逐字、只输出 `[00:00.xx]歌名 - 歌手` 静态行（无字轴，精度同输入）。署名行由 `enrich_prelude_credits` 在 `T ≥ 12000ms` 且前 12 行无既有署名时合成，每项固定 3000ms 窗口。
+  - 标准化 `P_TITLE` / `P_LYRICIST` / `P_COMPOSER`：A/B 套窗口内逐字分配，恒 3 位毫秒；窗口时长小于字符数（每个字块不足 1ms，典型为合并展示行）时退回单词块显示行。
+  - 两种兜底（静态行 / 单词块）都**严禁伪造 0ms 或负长度字块**。该行为属前奏显示投影：**铁律 20 仅保护正文演唱字轴**，标题与词曲不在演唱正文内、不受其约束，允许固定除法分配；正文演唱字块仍绝对禁止伪逐字。
+- R1 验收：按 `PreludePlan.title_basis`（缺省回读 `canonical.song` 的 `title`/`artist`）核对——两者都非空时，`P_TITLE` 必须等于 `format_display_title(basis_title, basis_artist)`；合并展示行允许在该标题之后追加 ` | ` 署名段。违反即报 `TITLE_DISPLAY_CONTRACT` 并阻断交付。
 
 ---
 
@@ -275,8 +279,9 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 - **降级契约**：无 `yrc` / 解析 0 行 / 截断后不足 4 行 / 抛异常 → 回落原行级 lrc 路径，
   与升级前逐字节一致；`fetch` 参数表一个字都不加（保护显式关键字签名的调度假体）。
 - **行轴**：`source="netease"` 且带词 → `official`（不参与 −60ms 校准）；网易的行级 lrc 候选仍为 `display`。
-- **调度不变**：仍是第 4 档。华语酷狗/AMLL 已出逐字时 `rank 3 == 3`，`_adopt` 要求严格更高，
-  故仍用酷狗；网易只在「前三档全空」「酷狗门禁丢弃」「外语缺译文」等场景真正生效。
+- **调度位置（v1.7.0 起）**：网易为 **T2（第 2 档）**，紧跟 Apple TTML。`need_more` 已改为
+  「非逐字就继续」，网易只拿到行级 lrc 时不会锁死调度，后续档位继续探测；`_adopt` 要求严格
+  更高 `_rank`，已取得的逐字不会被同等级候选顶替。
 
 **离线测试**：由 `tests/run_all.py` 自动发现，**以实际输出为准**（三态 runner，SKIP 不计）；
 一键 `python tests/run_all.py`；`tests/audit_acoustic_baseline.py` 为 Golden **只读审计**
@@ -413,7 +418,7 @@ D 调度（七档顺序、网易行级→QQ 逐字、外语译文优先、LRCLIB
 
 只有一项可信署名时：A 套该项使用 `12000–20000ms`；B 套使用 `floor(0.6T)–T`。无可信署名则只展示标题；前奏极短且无法给每项分配正时长时，合并展示行，不允许产生零长度 span；`T=0` 时报告无前奏空间。
 
-上表只规定**时间窗口**；三项**显示内容**为：标题 = `歌名 - 歌手`（见 §三「歌词内前奏标题行」，两入口统一）、作词 = `词：X`、作曲 = `曲：Y`。合并展示行时标题格式不变。三项均为独立显示投影，不得移动或缩短任何真实演唱字块。
+上表只规定**时间窗口**；三项**显示内容**为：标题 = `歌名 - 歌手`（见 §三「歌词内前奏标题行」，两入口统一）、作词 = `词：X`、作曲 = `曲：Y`；三项在各自 A/B 套窗口内均为**字符级逐字平均分配**（与日常入口共用 `make_char_words()` 同一算法；铁律 20 仅保护正文演唱字轴，不适用于前奏显示投影）。合并展示行（`PRELUDE_SLOTS_MERGED`）时以 ` | ` 连接三段，**首段必须仍是 `歌名 - 歌手`**，R1 的 `TITLE_DISPLAY_CONTRACT` 按首段核对。三项均为独立显示投影，不得移动或缩短任何真实演唱字块。
 
 ### 2. 真正支持的入口与参数
 
@@ -432,6 +437,7 @@ python scripts/standardize_song.py "<audio.flac>" --mode standardize --no-tags -
 ```
 
 - `--in-place` **参数因数据安全被显式禁用**，传入将立即报错，且不会修改任何已有音频/sidecar；它不是可用的写入模式。
+- **输入契约（幂等前提）**：`--mode standardize` 与 `--mode audit` 的输入必须是**源歌词**（容器内嵌或同名 sidecar 的原始 ELRC/TTML）。对本流程**自己的产物**再次执行会读到自带真实字轴的前奏显示行：`词：X` / `曲：Y` 行按 R2 归为「带字轴的疑似署名唱句」，触发 `CREDIT_LIKE_SUNG_TEXT_RETAINED`（`REVIEW_REQUIRED` 阻断）；标题行会被当作唱句，使首唱 `T` 前移到标题行起点并重叠前奏窗口。这是 fail-closed 的设计行为，**不得用关键词硬删绕过**：正确做法是回到源歌词重新标准化，或先剥离前奏显示行再执行。
 - `--output-dir` 为标准化必填，不得等于音频源目录；已有同名目标一律拒绝，不自动覆盖。音频工作副本只支持 FLAC、MP3、WAV 的本轮标准化写回；M4A 标准化工作副本写回尚未纳入验证，保持只读/阻断；旧普通流程的其他容器能力不受此限制。
 - 只存在一种歌词格式时，audit 返回 `ONE_FORMAT_ONLY`；有歧义/输入冲突返回 `REVIEW_REQUIRED`；明确无法继续返回 `BLOCKED`。仅 `PASS` 算完全成功。CLI 非 `PASS` 退出码非零。
 - 写回默认保留原有非空词曲、封面实际内容、ReplayGain、碟号和其他受保护标签；词曲候选冲突则阻断人工确认。来源 lrc.red 的 `[re:lrc.red (https://lrc.red)]` 回链必须保留。

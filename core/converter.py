@@ -8,6 +8,11 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger(__name__)
 
 from .utils.time_utils import format_time_tag
+from .utils.text_utils import (
+    make_char_words,
+    collapse_duplicate_punc_tags,  # noqa: F401  兼容再导出：唯一实现在 text_utils
+    format_verbatim_words_line,
+)
 from scripts.lyric_validator import is_credit_line
 
 # P1-1: 署名行判定统一走 lyric_validator.is_credit_line()，此前这里有一套
@@ -32,22 +37,6 @@ def _first_sing_line(lines: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             continue
         return line
     return None
-
-def make_char_words(text: str, start_ms: int, end_ms: int) -> List[Dict[str, Any]]:
-    """Helper to generate smooth character-level verbatim timestamps for credit lines."""
-    dur = max(100, end_ms - start_ms)
-    n = len(text)
-    if n == 0:
-        return []
-    step = dur / n
-    return [
-        {
-            "text": char,
-            "start": int(start_ms + i * step),
-            "end": int(start_ms + (i + 1) * step)
-        }
-        for i, char in enumerate(text)
-    ]
 
 def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: str = "") -> Dict[str, Any]:
     """
@@ -112,66 +101,6 @@ def enrich_prelude_credits(data: Dict[str, Any], lyricist: str = "", composer: s
 
     return data
 
-def collapse_duplicate_punc_tags(line: str) -> str:
-    """Collapses 0ms duplicate timestamps on punctuation, e.g. <01:46.18>.<01:46.18>.
-
-    P1-5: 分钟位 1-3 位（旧版写死 \\d{2}，≥100 分钟的音频不会被折叠，与铁律 10 冲突）。
-    """
-    def repl(m):
-        t1, punc, t2 = m.group(1), m.group(2), m.group(3)
-        if t1 == t2:
-            return punc + "<" + t2 + ">"
-        return m.group(0)
-    prev = None
-    while prev != line:
-        prev = line
-        line = re.sub(r"<(\d{1,3}:\d{2}\.\d{1,3})>([^\w\s])<(\d{1,3}:\d{2}\.\d{1,3})>", repl, line)
-    return line
-
-def format_verbatim_words_line(words: List[Dict[str, Any]], start_ms: int, end_ms: int, precision: int = 2) -> str:
-    """
-    Unified helper to format a sequence of word tokens into standard Enhanced LRC verbatim string.
-    Natively enforces Western word boundary spacing (Rule 14) and pause gap tags (>=300ms).
-
-    precision=3 时输出 [mm:ss.xxx] / <mm:ss.xxx>（源为毫秒精度）；默认 2 位厘秒。
-    """
-    if not words:
-        return ""
-        
-    line_parts = []
-    first_w = words[0]
-    first_txt = first_w.get("text", "").replace("\xa0", " ")
-    line_parts.append(f"{format_time_tag(start_ms, '[]', precision)}{format_time_tag(first_w['start'], '<>', precision)}{first_txt}")
-    
-    for i in range(1, len(words)):
-        w_prev = words[i - 1]
-        w_cur = words[i]
-        prev_txt = w_prev.get("text", "").replace("\xa0", " ")
-        cur_txt = w_cur.get("text", "").replace("\xa0", " ")
-        prev_end = w_prev.get("end", w_prev.get("start", 0))
-
-        # 词边界空格（Rule 14）
-        # join 是解析层给出的"源里有没有空格"的权威信息：
-        #   None  → 该源不提供边界信息（KRC / LRC / 合成词），沿用 ASCII 启发式
-        #   space → 源里明确有空格，补上
-        #   none  → 源里就是紧邻的（音节切分），绝不能插空格
-        join = w_prev.get("join")
-        if prev_txt and cur_txt and not prev_txt.endswith(" ") and not cur_txt.startswith(" "):
-            if join is None:
-                if re.search(r"[a-zA-Z0-9,\.!\?;:'\"]$", prev_txt) and re.search(r"^[a-zA-Z0-9]", cur_txt):
-                    cur_txt = " " + cur_txt
-            elif join == "space":
-                cur_txt = " " + cur_txt
-
-        # Insert explicit pause gap tag if inter-word gap >= 300ms
-        if w_cur.get("start", 0) - prev_end >= 300:
-            line_parts.append(format_time_tag(prev_end, "<>", precision))
-        line_parts.append(f"{format_time_tag(w_cur['start'], '<>', precision)}{cur_txt}")
-        
-    last_end = words[-1].get("end", end_ms)
-    line_parts.append(format_time_tag(last_end, "<>", precision))
-    return collapse_duplicate_punc_tags("".join(line_parts))
-
 def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: str = "", composer: str = "") -> str:
     """
     Exports unified lyric data to standard Enhanced LRC (.lrc) and Salt Player (.spl) format.
@@ -204,7 +133,7 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     if src == "lrc-red" or prov_src == "lrc-red":
         output_lines.append("[re:lrc.red (https://lrc.red)]")
 
-    from .utils.text_utils import format_display_title
+    from .utils.text_utils import format_display_title, match_display_title
     title_line = format_display_title(t, a)
 
     # v1.2.8 精度策略：源是 3 位毫秒就出 3 位，源只有 1-2 位才退回 2 位。
@@ -216,12 +145,15 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     if _precision not in (2, 3):
         _precision = 2
 
-    # Intelligent deduplication: 用 enrich 前的首句文本做比对
+    # Intelligent deduplication: 用 enrich 前的首句文本做比对。
+    # 标题识别必须走共享 matcher（与 R2 / is_title_line 同一出处）：此前的
+    # " - " 空格归一化比较只认唯一一种写法，倒序、全角连字符、括号别名等
+    # 真实变体会被判为非标题，导致重复合成标题行。
     has_existing_title = False
     if first_text_snapshot:
-        first_clean = re.sub(r"\s*-\s*", " - ", first_text_snapshot)
-        target_clean = re.sub(r"\s*-\s*", " - ", title_line)
-        if first_clean == target_clean or (t and first_clean == t):
+        if t and first_text_snapshot.strip() == t.strip():
+            has_existing_title = True
+        elif match_display_title(first_text_snapshot, t, a):
             has_existing_title = True
 
     if title_line and not has_existing_title:

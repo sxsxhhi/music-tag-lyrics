@@ -2,7 +2,7 @@
 """v1.8.2 TTML serialization: line-keyed translation, cue and gap preservation."""
 from __future__ import annotations
 import xml.etree.ElementTree as ET
-from ..models.canonical_lyrics import CanonicalLyrics, LineRole, word_boundary_space
+from ..models.canonical_lyrics import CanonicalLyrics, CanonicalWord, LineRole, word_boundary_space
 
 NS_TTML = "http://www.w3.org/ns/ttml"
 NS_ITUNES = "http://music.apple.com/lyric-ttml-internal"
@@ -65,11 +65,18 @@ def render_ttml_v182(canonical: CanonicalLyrics, lang: str = "", translation_lan
             previous=None
             previous_span=None
             for w in words:
-                if w.end_ms <= w.start_ms: raise ValueError("Nonpositive canonical word span")
+                if w.end_ms <= w.start_ms:
+                    raise ValueError(
+                        "Nonpositive canonical word span: %s @ %d-%d"
+                        % (key, w.start_ms, w.end_ms))
                 if previous is not None and w.start_ms < previous.end_ms:
                     raise ValueError("Overlapping word spans")
                 if previous_span is not None and word_boundary_space(previous,w):
-                    if not (previous_span.tail or "").endswith(" ") and not w.text.startswith(" "):
+                    # 与 ELRC 渲染器的词界空格判定对齐：字块文本自身已携带
+                    # 前导/尾随空格时不得再补 tail，否则会产生连续双空格。
+                    if (not w.text.startswith(" ")
+                            and not previous.text.endswith(" ")
+                            and not (previous_span.tail or "").endswith(" ")):
                         previous_span.tail = " "
                 previous_span=ET.SubElement(node, f"{{{NS_TTML}}}span",
                        {"begin":ms_to_ttml_time(w.start_ms), "end":ms_to_ttml_time(w.end_ms)})
@@ -82,11 +89,22 @@ def render_ttml_v182(canonical: CanonicalLyrics, lang: str = "", translation_lan
 
     p=canonical.prelude
     if p and p.mode in ("A","B"):
+        # 前奏显示行为字符级逐字平均分配，与日常 to_spl / ELRC 渲染共用同一算法。
+        from ..utils.text_utils import make_char_words
         for key,window,display in (("P_TITLE",p.title_window,p.display_title),
                                    ("P_LYRICIST",p.lyricist_window,p.display_lyricist),
                                    ("P_COMPOSER",p.composer_window,p.display_composer)):
             if window and display and window[1]>window[0]:
-                write_p(*window,key,display,role="PRELUDE")
+                cws=make_char_words(display,window[0],window[1])
+                # 窗口不足每字 1ms（合并行/极短前奏）时 fail-closed 退回单词块，
+                # 严禁伪造 0ms 字块；与 ELRC 渲染器同判定。
+                if len(display) <= (window[1]-window[0]):
+                    words=[CanonicalWord(text=c["text"],start_ms=c["start"],end_ms=c["end"]) for c in cws]
+                    text_arg=""   # 全部文本由字符级字块承载，留空避免未计时文本节点
+                else:
+                    words=None
+                    text_arg=display
+                write_p(*window,key,text_arg,words,role="PRELUDE")
     for ln in canonical.lines:
         if ln.role in (LineRole.TITLE,LineRole.LYRICIST,LineRole.COMPOSER,
                        LineRole.PRODUCTION_CREDIT,LineRole.PLACEHOLDER,LineRole.TRANSLATION):

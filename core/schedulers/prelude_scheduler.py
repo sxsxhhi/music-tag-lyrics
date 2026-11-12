@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from ..models.canonical_lyrics import (
-    AuditIssue,
     CanonicalLyrics,
     IssueSeverity,
     LineRole,
@@ -67,10 +66,9 @@ def plan_prelude_ab(
     # force_title 只覆盖「歌名」，仍统一走格式函数：两入口与 R1 契约共用单一出处，
     # 不允许任何分支绕过而产出纯歌名。
     from ..utils.text_utils import format_display_title
-    title = format_display_title(
-        force_title or canonical.song.get("title", "") or "",
-        canonical.song.get("artist", "") or "",
-    )
+    basis_title = (force_title or canonical.song.get("title", "") or "").strip()
+    basis_artist = (canonical.song.get("artist", "") or "").strip()
+    title = format_display_title(basis_title, basis_artist)
     lyricist = canonical.song.get("extracted_lyricist")
     composer = canonical.song.get("extracted_composer")
 
@@ -87,6 +85,7 @@ def plan_prelude_ab(
             t_sing_ms=0,
             title_window=(0, 0),
             display_title=title,
+            title_basis=(basis_title, basis_artist),
         )
         canonical.prelude = plan
         return plan
@@ -104,6 +103,7 @@ def plan_prelude_ab(
             t_sing_ms=0,
             title_window=(0, 0),
             display_title=title,
+            title_basis=(basis_title, basis_artist),
         )
         canonical.prelude = plan
         return plan
@@ -122,6 +122,7 @@ def plan_prelude_ab(
             t_sing_ms=T,
             title_window=(0, 0),
             display_title=title,
+            title_basis=(basis_title, basis_artist),
         )
         canonical.prelude = plan
         return plan
@@ -188,6 +189,7 @@ def plan_prelude_ab(
         lyricist_window=lyr_window,
         composer_window=cmp_window,
         display_title=title,
+        title_basis=(basis_title, basis_artist),
         display_lyricist=disp_lyr,
         display_composer=disp_cmp,
     )

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 from core.auditors.elrc_ttml_comparator import verify_canonical_exports
 from core.cleaners.content_classifier import classify_and_clean_all_lines, classify_line_role
 from core.converter import to_spl
+from core.parsers.lrc_parser import parse_lrc
 from core.models.canonical_lyrics import (
     CanonicalLine,
     CanonicalLyrics,
@@ -29,6 +30,7 @@ from core.schedulers.prelude_scheduler import plan_prelude_ab
 from core.utils.text_utils import (
     format_display_title,
     is_title_line,
+    make_char_words,
     match_display_title,
 )
 from tests._testkit import run
@@ -185,12 +187,135 @@ def test_r1_accepts_contract_title():
     assert res.passed, [(i.code, i.message) for i in res.issues]
 
 
+def test_standard_prelude_lines_are_char_verbatim():
+    """标准化前奏标题行必须字符级逐字平均分配，粒度与日常入口一致。"""
+    line = _stamped_line("正文甲")
+    c = classify_and_clean_all_lines(
+        {"tags": {"title": TITLE, "artist": ARTIST}, "lines": [line]}
+    )
+    plan = plan_prelude_ab(c)
+    elrc = render_elrc_v182(c)
+    first = next(l for l in elrc.splitlines() if l.strip())
+    stags = [int(_ms(x)) for x in re.findall(r"<(\d{1,3}:\d{1,2}(?:\.\d{1,3})?)>", first)]
+    # 起点 + 每字符一个时间片 + 行尾终点
+    assert len(stags) == len(EXPECT) + 1, (first, stags)
+    assert stags[0] == plan.title_window[0] and stags[-1] == plan.title_window[1]
+    # 均匀分配：相邻时间片差值恒定（允许 ±1ms 取整误差）
+    gaps = [b - a for a, b in zip(stags, stags[1:])]
+    assert max(gaps) - min(gaps) <= 1, gaps
+    # 粒度与日常入口一致（同一算法：字符数 + 行尾 = 相同 tag 数）
+    daily = to_spl(
+        {"tags": {}, "lines": [_stamped_line("正文甲")], "time_precision": 3},
+        title=TITLE, artist=ARTIST,
+    )
+    drow = next(
+        l for l in daily.splitlines()
+        if EXPECT in re.sub(r"[\[<]\d{1,3}:\d{1,2}(?:\.\d{1,3})?[\]>]", "", l)
+    )
+    dtags = [int(_ms(x)) for x in re.findall(r"<(\d{1,3}:\d{1,2}(?:\.\d{1,3})?)>", drow)]
+    assert len(dtags) == len(stags), (len(dtags), len(stags))
+
+
+def _ms(tag: str) -> int:
+    parts = tag.split(":")
+    sec = parts[-1].split(".")
+    total = int(parts[0]) * 60 + int(sec[0])
+    frac = (sec[1] if len(sec) > 1 else "0").ljust(3, "0")[:3]
+    return total * 1000 + int(frac)
+
+
+def test_char_words_fail_closed_on_nonpositive_window():
+    """非正窗口/空文本必须返回空列表，绝不返回 0ms 或负长度字块（铁律 8）。"""
+    assert make_char_words("甲乙", 1000, 1000) == []
+    assert make_char_words("甲乙", 1000, 500) == []
+    assert make_char_words("", 0, 5000) == []
+    words = make_char_words("甲乙", 1000, 1002)
+    assert [(w["text"], w["start"], w["end"]) for w in words] == [
+        ("甲", 1000, 1001), ("乙", 1001, 1002)]
+    assert all(w["end"] > w["start"] for w in words)
+
+
+def test_daily_dedup_uses_shared_matcher():
+    """日常入口识别既有标题行必须走共享 matcher：真实变体不得重复合成标题行。"""
+    data = {"tags": {}, "time_precision": 3}
+    for first in VARIANTS + (TITLE,):
+        rows = [
+            l for l in to_spl(
+                {**data, "lines": [_stamped_line(first)]},
+                title=TITLE, artist=ARTIST,
+            ).splitlines() if l.strip()
+        ]
+        # [ti:]/[ar:] + 首行；不得多出一条合成标题行
+        assert len(rows) == 3, (first, rows)
+
+
+def test_long_title_and_feat_variants():
+    """超长曲名与 feat./ft. 合唱写法也必须被共享 matcher 识别。"""
+    long_title = "测试曲" * 40          # 120 字符，超过旧 80 字符上限
+    assert match_display_title(f"{long_title} - {ARTIST}", long_title, ARTIST)
+    assert match_display_title(f"{long_title} - {ARTIST} (Live)", long_title, ARTIST)
+    # feat./ft. 写法：艺人证据按 feat. 再拆分
+    for text in (f"{TITLE} - 歌手甲 feat. 歌手乙",
+                 f"{TITLE} - 歌手甲 ft. 歌手乙",
+                 f"{TITLE} - 歌手甲 Feat. 歌手乙"):
+        assert match_display_title(text, TITLE, "歌手甲"), text
+    # 反向：feat. 里的名字不能反证与 title 无关的行
+    assert not match_display_title("无关曲 - 无关人 feat. 歌手甲", TITLE, "歌手甲")
+
+
+def test_display_title_normalizes_control_whitespace():
+    """标题/歌手内的换行与制表符必须折叠为空格：单行结构不能内嵌换行。"""
+    assert format_display_title("曲\n名", "人\t名") == "曲 名 - 人 名"
+    assert "\n" not in format_display_title("曲\r\n名", "人名")
+
+
 def test_r1_rejects_incomplete_title():
     """有 artist 却只写纯歌名时，R1 必须报 TITLE_DISPLAY_CONTRACT。"""
     c = _canonical(TITLE, ARTIST, TITLE)
     res = verify_canonical_exports(c, render_elrc_v182(c), render_ttml_v182(c))
     codes = [i.code for i in res.issues]
     assert "TITLE_DISPLAY_CONTRACT" in codes, codes
+
+
+def _prelude_canonical(elrc: str, title: str = TITLE, artist: str = ARTIST,
+                       force: str = ""):
+    c = classify_and_clean_all_lines(parse_lrc(elrc), song_title=title, song_artist=artist)
+    c.song["extracted_lyricist"] = "作词人甲"
+    c.song["extracted_composer"] = "作曲人乙"
+    plan = plan_prelude_ab(c, force_title=force)
+    return c, plan
+
+
+def test_r1_accepts_merged_prelude_first_segment():
+    """合并展示行（PRELUDE_SLOTS_MERGED）只要首段仍是契约标题就必须通过 R1。"""
+    c, plan = _prelude_canonical(
+        "[00:00.002]<00:00.002>甲<00:00.004>乙<00:00.006>\n"
+        "[00:05.000]<00:05.000>正<00:06.000>文<00:07.000>\n")
+    assert " | " in plan.display_title, plan.display_title
+    assert plan.display_title.split(" | ")[0] == EXPECT
+    res = verify_canonical_exports(c, render_elrc_v182(c), render_ttml_v182(c))
+    assert res.passed, [(i.code, i.message) for i in res.issues]
+
+
+def test_r1_rejects_merged_prelude_with_plain_title():
+    """合并展示行首段退回纯歌名时仍必须阻断。"""
+    c, _plan = _prelude_canonical(
+        "[00:00.002]<00:00.002>甲<00:00.004>乙<00:00.006>\n"
+        "[00:05.000]<00:05.000>正<00:06.000>文<00:07.000>\n")
+    c.prelude.display_title = TITLE + " | 词：作词人甲"
+    res = verify_canonical_exports(c, render_elrc_v182(c), render_ttml_v182(c))
+    assert "TITLE_DISPLAY_CONTRACT" in [i.code for i in res.issues]
+
+
+def test_r1_accepts_force_title_basis():
+    """force_title 覆盖歌名时 R1 按 plan 记录的 basis 核对，不得误判违约。"""
+    c, plan = _prelude_canonical(
+        "[00:25.000]<00:25.000>正<00:26.000>文<00:27.000>\n",
+        title="原曲名", force="替换曲名")
+    assert plan.title_basis == ("替换曲名", ARTIST), plan.title_basis
+    assert c.song["title"] == "原曲名"
+    res = verify_canonical_exports(c, render_elrc_v182(c), render_ttml_v182(c))
+    assert res.passed, [(i.code, i.message) for i in res.issues]
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..models.canonical_lyrics import (
-    AuditIssue,
     CanonicalLine,
     CanonicalLyrics,
     CanonicalWord,

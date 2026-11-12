@@ -45,12 +45,21 @@ def render_elrc_v182(canonical: CanonicalLyrics) -> str:
             out.append("[re:lrc.red (https://lrc.red)]")
     p = canonical.prelude
     if p and p.mode in ("A", "B"):
+        # 前奏显示行（标题/词曲）为字符级逐字平均分配，与日常 to_spl 共用同一算法；
+        # 铁律 20 仅保护正文演唱字轴，前奏显示投影不在演唱正文内、不受其约束。
+        from ..utils.text_utils import make_char_words, format_verbatim_words_line
         slots = [(p.title_window, p.display_title),
                  (p.lyricist_window, p.display_lyricist),
                  (p.composer_window, p.display_composer)]
         for window, title in slots:
             if window and title and window[1] > window[0]:
-                out.append(_display_line(*window, title))
+                cw = make_char_words(title, window[0], window[1])
+                # 窗口不足每字 1ms（合并行/极短前奏）时 fail-closed 退回单词块，
+                # 严禁伪造 0ms 字块；两入口同判定，保持一致。
+                if cw and len(title) <= (window[1] - window[0]):
+                    out.append(format_verbatim_words_line(cw, cw[0]["start"], window[1], 3))
+                else:
+                    out.append(_display_line(*window, title))
     for line in canonical.lines:
         if line.role in (LineRole.TITLE, LineRole.LYRICIST, LineRole.COMPOSER,
                          LineRole.PRODUCTION_CREDIT, LineRole.PLACEHOLDER,
@@ -72,7 +81,11 @@ def render_elrc_v182(canonical: CanonicalLyrics) -> str:
             displayed = ""
             for w in valid_words:
                 if w.end_ms <= w.start_ms:
-                    raise ValueError("Invalid canonical word span")
+                    # 带上行号与字块区间，便于把 BLOCKED 直接定位到源数据问题，
+                    # 而不是只看到一个无法追溯的渲染失败。
+                    raise ValueError(
+                        "Invalid canonical word span: %s @ %d-%d"
+                        % (line.stable_id, w.start_ms, w.end_ms))
                 if last_end is not None:
                     if w.start_ms < last_end:
                         raise ValueError("Overlapping canonical word spans")
