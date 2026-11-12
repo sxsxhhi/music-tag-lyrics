@@ -36,11 +36,13 @@ EXCLUDE_EXTS = {
     ".pyc",
     ".pyo",
     ".pyd",
-    ".DS_Store",
 }
 
 # 排除文件名（精确匹配）
 EXCLUDE_FILES = {
+    # .DS_Store 没有后缀（Path('.DS_Store').suffix == ''），放在 EXCLUDE_EXTS 里
+    # 永远匹配不到——必须按精确文件名排除（镜像加固 F4）
+    ".DS_Store",
     "Thumbs.db",
     "desktop.ini",
     # 本机私有维护与打包脚本（P2-02）

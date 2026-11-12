@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import shutil
+import stat as stat_mod
 import sys
 from pathlib import Path
 
@@ -38,14 +39,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts._dist_view import is_dir_excluded, is_file_excluded
 
-# 二进制成员：复制时保持原字节，不做换行归一。
-# 目前分发视图里只有 tests/fixtures/media 的两个夹具属于此类。
-_BINARY_SUFFIXES = frozenset(
-    {
-        ".flac", ".mp3", ".m4a", ".mp4", ".ogg", ".wav", ".dsf",
-        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip",
-    }
-)
+# Windows 上 junction（目录重解析点）不是 S_ISLNK，需要借助 st_file_attributes 识别。
+# 非 Windows 平台该属性不存在，取 0 即退化为只判符号链接。
+_REPARSE_POINT_FLAG = getattr(stat_mod, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 
 MANIFEST_NAME = ".mtl-sync-manifest.json"
 TRUSTED_ROOTS_ENV = "MTL_TRUSTED_MIRROR_ROOTS"
@@ -143,21 +139,79 @@ def validate_dest(dest: Path, trusted_roots: list[Path]) -> Path:
 # --------------------------------------------------------------------------- #
 # 同步
 # --------------------------------------------------------------------------- #
-def collect_members() -> dict[str, Path]:
-    """收集应分发的成员 {posix_rel: 源绝对路径}。"""
-    members: dict[str, Path] = {}
-    for root, dirs, files in os.walk(REPO_ROOT):
-        dirs[:] = [d for d in dirs if not is_dir_excluded(d)]
-        rel_root = Path(root).relative_to(REPO_ROOT)
-        for file in sorted(files):
-            rel_file = rel_root / file if str(rel_root) != "." else Path(file)
-            rel_str = str(rel_file).replace("\\", "/")
-            if is_file_excluded(rel_str, file):
-                continue
-            if rel_str == MANIFEST_NAME:
-                continue
-            members[rel_str] = Path(root) / file
-    return members
+def collect_members() -> dict[str, bytes]:
+    """收集应分发的成员 ``{posix_rel: 字节}``。
+
+    镜像加固 F1：成员集合与字节**一律来自 git 索引**，不再遍历工作树。
+
+    旧的 ``os.walk`` 实现不参考 Git 跟踪清单、也不参考 ``.gitignore``，结果
+    ``.env``、私钥、私人笔记、以及 CLI 落在仓库里的状态文件（如
+    ``.local/state/gh/device-id``）都会被当成成员复制进镜像；``Path.read_bytes()``
+    还会跟随源符号链接，把仓库外的内容读进来。
+
+    现在直接复用 ``build_release_manifest`` 的成员选择与 blob 装载：
+      * 成员来源 = ``git ls-files --stage``（索引），未跟踪/被忽略的文件天然排除；
+      * 已跟踪但越界/子模块/符号链接/高危名由构建器统一拒绝（fail-closed）；
+      * 字节 = 索引 blob，已按 ``.gitattributes`` 统一为 LF，与发布产物逐字节一致，
+        不再需要按扩展名猜测文本或二进制（F3 一并解决）。
+    """
+    from scripts import build_release_manifest as builder
+
+    return builder.load_member_bytes(builder.select_members(), from_git=True)
+
+
+def _is_link_like(path: Path) -> bool:
+    """判断路径本身是否为符号链接 / junction（不跟随）。"""
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return False
+    if stat_mod.S_ISLNK(st.st_mode):
+        return True
+    attrs = getattr(st, "st_file_attributes", 0)
+    return bool(attrs & _REPARSE_POINT_FLAG)
+
+
+def _assert_no_link_in_path(root: Path, dest: Path) -> None:
+    """确保 ``root`` 到 ``dest`` 的**每一级**都不是符号链接 / junction。
+
+    镜像加固 F2：``validate_dest()`` 只校验目标根路径，而逐文件写入时
+    ``dest.parent.mkdir(parents=True)`` 会顺着已存在的子目录链接走出去；
+    形如 ``mirror/core -> ../protected`` 的布局会把文件写到受保护目录里。
+    """
+    root_abs = Path(os.path.abspath(root))
+    dest_abs = Path(os.path.abspath(dest))
+    try:
+        rel = dest_abs.relative_to(root_abs)
+    except ValueError as exc:
+        raise SyncError(f"目标路径不在受信任根内: {dest}") from exc
+
+    current = root_abs
+    for part in rel.parts:
+        current = current / part
+        if _is_link_like(current):
+            raise SyncError(
+                f"目标路径存在符号链接/junction，拒绝写入: {current}"
+            )
+
+
+def _write_member(target_root: Path, dest: Path, data: bytes) -> None:
+    """把成员字节原子写入目标路径，写入前后各校验一次路径安全性。"""
+    _assert_no_link_in_path(target_root, dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # mkdir 之后再查一次：父目录可能是本次创建前刚被替换成链接
+    _assert_no_link_in_path(target_root, dest)
+
+    tmp = dest.with_name(dest.name + ".mtl-tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _read_manifest(target: Path) -> set[str] | None:
@@ -172,22 +226,6 @@ def _read_manifest(target: Path) -> set[str] | None:
     if not isinstance(managed, list):
         return None
     return {str(x).replace("\\", "/") for x in managed if isinstance(x, str)}
-
-
-def _copy_member(src: Path, dest: Path) -> None:
-    """复制单个成员，并把文本文件的换行归一为 LF。
-
-    v1.8.5 起正式包成员字节取自 **git 索引 blob**（`.gitattributes` 统一 `eol=lf`），
-    而本工具直接复制工作树字节；在 `core.autocrlf=true` 的 Windows 检出上工作树是
-    CRLF，会导致镜像与 `release-manifest.json` 的成员哈希不符，也让「权威包 == 发布
-    产物」无法用同一份哈希清单核验。这里统一归一为 LF。
-    """
-    suffix = dest.suffix.lower()
-    data = src.read_bytes()
-    if suffix not in _BINARY_SUFFIXES and b"\r\n" in data:
-        data = data.replace(b"\r\n", b"\n")
-    dest.write_bytes(data)
-    shutil.copystat(src, dest)
 
 
 def sync_to(
@@ -220,13 +258,17 @@ def sync_to(
     }
 
     if not dry_run:
+        # 落盘前先对全部目标路径做一次链接预检：任何一个目标路径上已有
+        # 符号链接/junction 就在**写入任何文件之前**失败，避免留下半更新镜像。
+        # 此检查不要求目标已存在，全新目标上是无操作。
+        for rel_str in sorted(members):
+            _assert_no_link_in_path(target, target / rel_str)
         target.mkdir(parents=True, exist_ok=True)
 
-    for rel_str, src in sorted(members.items()):
+    for rel_str, data in sorted(members.items()):
         dest_file = target / rel_str
         if not dry_run:
-            dest_file.parent.mkdir(parents=True, exist_ok=True)
-            _copy_member(src, dest_file)
+            _write_member(target, dest_file, data)
         stats["copied"] += 1
 
     if not no_prune and previous is not None:

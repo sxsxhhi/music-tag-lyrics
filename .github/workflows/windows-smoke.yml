@@ -165,14 +165,32 @@ jobs:
           $out += "- All suites executed with strict blocking gate (continue-on-error: false)."
           $out += "- M4A tag write-back remains NOT_VERIFIED."
           $out += ""
-          $out += "| suite | PASS | FAIL | SKIP |"
-          $out += "| --- | --- | --- | --- |"
+          $out += "| suite | passed | failed | skipped | total |"
+          $out += "| --- | --- | --- | --- | --- |"
+          $missingTotal = 0
           foreach ($file in $suites) {
             $log = ""
             if (Test-Path $file) { $log = Get-Content $file -Raw }
-            $pass = ([regex]::Matches($log, "PASS")).Count
-            $fail = ([regex]::Matches($log, "FAIL")).Count
-            $skip = ([regex]::Matches($log, "SKIP")).Count
-            $out += "| $file | $pass | $fail | $skip |"
+            # 只认 runner 的结构化汇总行（"TOTAL: x/y passed, z skipped"）。
+            # 旧实现按 "PASS"/"FAIL"/"SKIP" 词频统计，测试名或失败信息里含这些词就会失真。
+            $m = [regex]::Match($log, "TOTAL:\s*(\d+)/(\d+)\s+passed,\s*(\d+)\s+skipped")
+            if ($m.Success) {
+              $passed = [int]$m.Groups[1].Value
+              $total  = [int]$m.Groups[2].Value
+              $skipped = [int]$m.Groups[3].Value
+              $failed = $total - $passed - $skipped
+              $out += "| $file | $passed | $failed | $skipped | $total |"
+              if ($failed -gt 0) {
+                Write-Host "::warning title=Windows gate::$file 有 $failed 个失败用例"
+              }
+            } else {
+              $missingTotal += 1
+              $out += "| $file | - | ? | - | - |"
+              Write-Host "::warning title=Windows gate::$file 未产出 TOTAL 汇总行（脚本可能中断）"
+            }
+          }
+          if ($missingTotal -gt 0) {
+            $out += ""
+            $out += "- $missingTotal 个日志缺少 TOTAL 汇总行，已标记为 ?，请查看原始日志。"
           }
           $out | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
