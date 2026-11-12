@@ -4,12 +4,12 @@
   "version": "1.8.5",
   "release_tag": "v1.8.5",
   "manifest_scope": "describes source tree at git_commit; manifest commit itself not included",
-  "build_timestamp_utc": "2026-11-11T16:21:51.503500+00:00",
-  "git_commit": "c5e949113da374184ec9f6a7518419b0ea79b718",
+  "build_timestamp_utc": "2026-11-12T05:35:15.334502+00:00",
+  "git_commit": "6d49f2127aa930572792c91b29e126f042e46bdf",
   "release_asset": {
     "filename": "music-tag-lyrics-skill-v1.8.5.zip",
-    "size_bytes": 2071509,
-    "sha256": "784bc2b3d6bd6289a17e6a448ef5bec5886c85b5c23a32bb29765986f3846e2c",
+    "size_bytes": 2071454,
+    "sha256": "f5ea544fae11f6f11fd157c90ff020c6dfb9e613addd36e0588d8d10f928c5bf",
     "file_count": 141
   },
   "members": {
@@ -17,7 +17,7 @@
     ".gitignore": "19231cf28494846eedbaa985f2efc3f94340fa457cfc364406096a25ae311571",
     "LICENSE": "441c01427103c3e7a4f236d8472c2f915229918084d6a5b6d128494fe8535e44",
     "README.md": "288adde8520e14665e1e929797f492d8c732e7389018e4f218eef77468f64cc7",
-    "SKILL.md": "46272e65ee20005d617c78fb919a6ab7fc5cb95a935d13559bf6f5a352feee95",
+    "SKILL.md": "060939c09c6f9b3801cb7c7bbc0ba64d26b16aa550e5bd326659271f1d9f56ad",
     "core/acoustic/__init__.py": "7b8b3755e6f228e92ba93c54cd3e2ef73570576d2075eac637abe3790cc68e78",
     "core/acoustic/gate.py": "0c7b9f9d030c47fae12f486f1bfa258af7f9ec3f0ed8313912524c25113c8db6",
     "core/acoustic/qc.py": "1dbd5f307e20585a3daea946cc06d7d4827c64fd25586d89c2e72b0f95f6df06",
