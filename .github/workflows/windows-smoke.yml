@@ -129,6 +129,13 @@ jobs:
         shell: pwsh
         run: python -B tests/test_v185_r2_failclosed.py *>&1 | Tee-Object -FilePath v185_r2.log
 
+      # 镜像同步器的链接/junction 防护只在 Windows 上才能被真正触发
+      # （junction 不是 S_ISLNK），因此这条必须留在阻塞门禁里。
+      - name: Mirror sync path safety (Windows)
+        id: sync_paths
+        shell: pwsh
+        run: python -B tests/test_sync_copies.py *>&1 | Tee-Object -FilePath sync_paths.log
+
       - name: Summarise Windows core gate
         if: always()
         shell: pwsh
@@ -156,7 +163,8 @@ jobs:
             "v185_id3v1.log",
             "v185_fingerprint.log",
             "v185_http_limits.log",
-            "v185_r2.log"
+            "v185_r2.log",
+            "sync_paths.log"
           )
           $out = @()
           $out += "## Windows Core Blocking Gate Results"
