@@ -259,7 +259,11 @@ L3 三窗复检需注入对齐回调。`--qc-report x.json` 输出 L1/L2/行轴/
 
 **开关总表（全部可独立回退）**：`MTL_ALIGN_MODE=windowed|global`、`MTL_ZH_CTC=1|0`、
 `MTL_ZH_GATE=on|off`、`MTL_ZH_MIN_SCORE=-8.0`、`MTL_LINE_AXIS=calibrate|keep`、
-`MTL_DEVICE=auto|cpu`、`MTL_DEMUCS=on|off`、`MTL_QC_L3=on|off`、`MTL_GATE_MODE=strict|warn|off`。
+`MTL_GATE_MODE=strict|warn|off`。
+
+> ⚠️ **`MTL_DEVICE` / `MTL_DEMUCS` / `MTL_QC_L3` 未实现**（全仓无读取点，属历史文档遗留）。
+> 声学设备固定 CUDA（`scripts/process_song.py` 显式 `device="cuda"`），无可用 GPU 时抛
+> `AcousticEnvironmentError`，绝不静默降级到 CPU，也绝不伪造逐字。不得向用户承诺这三个开关可用。
 
 ## 七、网易 YRC 逐字通道（v1.6.1）
 

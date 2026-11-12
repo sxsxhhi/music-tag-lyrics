@@ -83,7 +83,7 @@ python scripts/process_song.py "绝版老歌.flac" --force-gpu
 python scripts/process_song.py "绝版老歌.flac" --lyrics-file "我的歌词.txt"
 ```
 
-#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.4 引入)
+#### 📏 工具二：`standardize_song.py` —— 双格式高精标准化引擎 (v1.8.2 引入)
 *适合场景：本地已有双格式歌词但对齐混乱、夹带长串制作名单、需要为发烧播放器生成标准 Apple TTML 与 ELRC 的严苛场景。*
 
 > **安全契约**：`--in-place` 已被显式禁用；标准化输出必须指定独立 `--output-dir`，已有同名文件绝不覆盖；`--mode audit` 为只读基线审计，不修改任何文件。
@@ -110,7 +110,7 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 | :--- | :--- | :--- |
 | **传统 Standard LRC** | 整行一起亮起，无法感知节奏快慢，快歌极易看串行 | 老旧车载 MP3、简易播放器 |
 | **Enhanced LRC (ELRC)** | 唱到哪个字哪个字发光，完整保留字间呼吸停顿与词界空格 | Folia、各类现代第三方播放器 |
-| **椒盐音乐原生 SPL** | 椒盐专属流光质感，精修双语译文成对紧随，绝不跳屏抽搐 | 安卓端 椒盐音乐 (Salt Player) |
+| **Salt Player `.spl`** | 内容与 ELRC **逐字节相同**（同一渲染产物的 `.spl` 命名副本，不是独立格式），双语译文成对紧随，绝不跳屏抽搐 | 安卓端 椒盐音乐 (Salt Player) |
 | **Apple TTML** | 单行规范 XML，带 iTunes 毫秒级字块与 head 独立译文映射 | 苹果生态及专业高解析流光播放系统 |
 
 ### 实际文本样例对比
@@ -152,7 +152,7 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
    - **单 `div` 边界自愈**：缺少显式 `begin`/`end` 的单 `div` 容器，自动由子行范围严格推导边界并记录 `DIV_BOUNDARY_INFERRED`；若与子行存在时序倒挂冲突则抛出 `DIV_TIME_CONFLICT` 阻断；
    - **复杂拓扑安全阻断**：对目前无法无损展平的多层结构，包括背景唱句 `x-bg`（`BACKGROUND_VOCAL_UNSUPPORTED`）、罗马音辅助轨 `x-roman`（`AUXILIARY_TRACK_UNSUPPORTED`）、Ruby / 嵌套 span（`RUBY_UNSUPPORTED`）、多 `div` 容器（`MULTI_DIV_UNSUPPORTED`）、`dur`/`seq` 相对时序（`TIMING_MODEL_UNSUPPORTED`）及未声明 Agent 译文（`TRANSLATION_AGENT_MISMATCH`），实行显式结构化阻断。未知直接 XML 文本节点、无法处理的嵌套节点或译文标记，同样阻断，不允许静默忽略后返回一致性 PASS。
 
-### 🔎 逐来源歌词完整性审计与多轨保真（v1.8.4 引入）
+### 🔎 逐来源歌词完整性审计与多轨保真（v1.8.3 引入审计，v1.8.4 完成多轨保真）
 
 `standardize_song.py` 在选择输入之前，会分别登记并核验最多五个来源：**内嵌 ELRC、同名 `.lrc`、同名 `.spl`、内嵌 TTML、同名 `.ttml`**。同格式来源使用归一化后的唱词、字块时间、译文及结构信息对账；如果存在差异，报告 `SOURCE_LYRICS_CONFLICT` 并停止自动交付，绝不以「内嵌优先」静默覆盖其他来源。
 
@@ -193,7 +193,7 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 
 | 常见音频格式 | 扩展名 | `process_song` 日常修补机制 | `standardize_song` 标准化工作副本机制 | 歌词 / 封面规范 |
 | :---: | :---: | :---: | :---: | :---: |
-| **FLAC** | `.flac` | 临时副本原子替换，读回校验一致才交付 | 独立输出目录，音频流前后摘要严格比对防损坏 | `LYRICS` / `METADATA_BLOCK_PICTURE` |
+| **FLAC** | `.flac` | 临时副本原子替换，读回校验一致才交付 | 独立输出目录，音频流前后摘要严格比对防损坏 | `lyrics`（标准化入口另写 `ttmllyric`） / `METADATA_BLOCK_PICTURE` |
 | **MP3** | `.mp3` | 独立写回；损坏 ID3 拒绝覆写 | 独立输出目录，音频流前后摘要严格比对防损坏 | `USLT::eng` 单帧（其余语言/描述性 USLT 与 SYLT 作副轨保留） / `APIC` (Front Cover) |
 | **WAV** | `.wav` | 独立写回；PCM 音频块保护 | 独立输出目录，data 音频流前后摘要严格比对防损坏 | ID3 Chunk (`USLT::eng` 单帧) / ID3 Chunk (`APIC`) |
 | **OGG Vorbis** | `.ogg` | 临时副本原子替换，读回校验一致才交付 | *不适用（标准化工作副本仅 FLAC/MP3/WAV）* | Vorbis `lyrics`；封面本轮不写（打日志跳过） |
@@ -225,12 +225,12 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 | `MTL_ZH_CTC` | `1` | `1` 启用普通话专用 wav2vec2 CTC 逐行切窗对齐通道；`0` 回退至通用双引擎 |
 | `MTL_ALIGN_MODE` | `windowed` | `windowed` 启用逐行切窗卡点（根治时间漂移）；`global` 回退为全曲单次对齐 |
 | `MTL_GATE_MODE` | `strict` | `strict` 质量不达标时自动熔断重试；`warn` 仅告警；`off` 关闭门禁 |
-| `MTL_DEVICE` | `auto` | `auto` 自动检测并启用 CUDA GPU 加速；`cpu` 强制纯 CPU 计算 |
-| `MTL_DEMUCS` | `on` | `off` 可在 CPU 模式下跳过人声分离，直接对混音对齐以大幅节省耗时 |
 | `MTL_ZH_GATE` | `on` | `on` 粤语歌熔断转普通话时进行横向验货打分，低于阈值拒绝盲目交付 |
 | `MTL_CACHE_DIR` | 空 | 缓存根目录；默认按五级回退（Skill `.cache/` → 用户系统缓存 → 系统临时目录） |
 | `MTL_STRICT_STORAGE` | `0` | `1` 严格限定仅使用 `MTL_CACHE_DIR`，不可写时立即报错，禁止使用系统临时盘 |
 | `MTL_LRC_RED_CONTACT` | 空 | lrc.red 条款要求在请求 UA 中附带联系邮箱；未配置时将自动优雅跳过该网络以保合规 |
+
+> ⚠️ **`MTL_DEVICE` / `MTL_DEMUCS` / `MTL_QC_L3` 当前未实现**（代码无读取点，历史文档遗留）：日常声学打轴固定使用 CUDA（`scripts/process_song.py` 内显式 `device="cuda"`），无可用 GPU 时抛 `AcousticEnvironmentError` 并拒绝伪逐字，**不会**静默降级到 CPU。请勿依赖这三个变量。
 
 </details>
 
@@ -293,6 +293,7 @@ python -B tests/run_all.py -k canto
 - **多文件协同落盘补偿回滚**：`atomic_write_many` 引入预备份与逆序故障回滚；若回滚再次发生异常，自动保留 `.tmp_bak*` 物理备份并传播 `SIDECAR_ROLLBACK_INCOMPLETE`，改签操作强制前置 `VERIFIED` 状态校验；
 - **多轨冲突 Fail-Closed 门禁**：对同标识冲突的副轨或相互竞争的未描述主歌词帧实行阻断（`REVIEW_REQUIRED` / `SOURCE_LYRICS_CONFLICT`），杜绝歧义交付；
 - **Windows CI 核心门禁升级**：将 R9 输入完整性回归、v1.8.4 多轨保真回归、发布门禁及 R12/R13 安全测试套件全部纳入 Windows 核心阻塞流水线；55 套离线测试套件全部通过（801 PASS / 11 SKIP / 0 FAIL）。
+- **R12 独立回归与并发防护**：source SHA-256 复核防范外部并发改写（并发变动即拒绝替换）；新增 R12 独立回归与合成 OGG/M4A/DSF 样本，修订两项以「无音频的 ID3-only 伪 MP3」为前提的历史测试。
 
 ### v1.8.3 (2026-11-10) —— TTML 时间规范、结构化兼容与 CI 自动化升级
 - **R9 独立输入完整性加固**：将所有嵌入式与 sidecar 歌词来源纳入独立有效性核验与冲突仲裁；严格消费 ELRC 行内与元数据文本；将 `[offset]` 作用于比较器有效时间轴；为实际标准化和独立比较器增加词块差异门禁，防止音频时间推断及未知 TTML 语义角色被错误降级。新增完整来源对账与随机化跨格式回归测试；
@@ -358,9 +359,3 @@ python -B tests/run_all.py -k canto
 ## 📄 开源许可证
 
 本项目基于 [MIT License](LICENSE) 许可证开源发布，代码与歌词处理逻辑完全透明、自由开放。
-
-### v1.8.4 R12 第二轮独立整改（正式发布前候选，尚未完成远端 CI）
-- 仅替换 ID3 `USLT::eng` 无描述主轨；保留所有其他语言的无描述 `USLT`、描述性 USLT 与 SYLT。
-- 音频摘要扩充至 FLAC STREAMINFO、WAV 完整 fmt、OGG Vorbis CRC/关键包、MP4 音频采样表与载荷、DSF 格式与数据；不可验证即禁止改签。
-- source SHA-256 复核防范已观察到的外部并发改写；sidecar 回滚再次失败时保留可恢复的 `.tmp_bak*`。
-- 新增 R12 独立回归及合成 OGG/M4A/DSF 样本，修订两项以无音频的 ID3-only 伪 MP3 为前提的历史测试。以上不代替 Windows/Linux CI、维护者私有指纹扫描或 Git 构建 Manifest 验证。
