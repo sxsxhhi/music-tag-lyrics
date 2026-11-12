@@ -204,7 +204,8 @@ def to_spl(data: Dict[str, Any], title: str = "", artist: str = "", lyricist: st
     if src == "lrc-red" or prov_src == "lrc-red":
         output_lines.append("[re:lrc.red (https://lrc.red)]")
 
-    title_line = f"{t} - {a}" if (t and a) else t
+    from .utils.text_utils import format_display_title
+    title_line = format_display_title(t, a)
 
     # v1.2.8 精度策略：源是 3 位毫秒就出 3 位，源只有 1-2 位才退回 2 位。
     # time_precision 由解析层（lrc/ttml/krc parser）写入，缺省按 2 位保持向后兼容。

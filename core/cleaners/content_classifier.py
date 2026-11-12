@@ -284,14 +284,16 @@ def classify_line_role(
     # 10. 标题行识别
     clean_norm = clean.lower()
     title_norm = song_title.lower().strip() if song_title else ""
-    artist_norm = song_artist.lower().strip() if song_artist else ""
+
+    # 标题行判定统一走共享函数，容忍真实曲库的倒序 / 括号别名 / 多名分隔符变体。
+    from ..utils.text_utils import match_display_title
 
     # Confirmed un-timed duplicates may occur even at the outro; a genuinely
     # sung title with real word stamps must never be removed as metadata.
     if title_norm:
         is_title_match = (
             clean_norm == title_norm
-            or (artist_norm and clean_norm in (f"{title_norm} - {artist_norm}", f"{artist_norm} - {title_norm}"))
+            or match_display_title(clean, song_title, song_artist)
         )
         if is_title_match:
             if has_words:

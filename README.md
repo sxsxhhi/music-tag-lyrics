@@ -135,6 +135,12 @@ python scripts/standardize_song.py "歌曲.flac" --mode standardize --output-dir
 [00:18.45]喜欢那样
 ```
 
+### 🏷️ 歌词内前奏标题行
+
+无论走全自动日常修补还是双格式标准化，前奏期间显示的标题行统一为 **`歌名 - 歌手`**（半角连字符、两侧各一个空格，歌名在前，多合唱用 `/` 分隔；无歌手时退回纯歌名）。
+
+注意这与 `Title` 元数据标签不是同一对象：标签存**纯净歌名**，歌词内的显示行额外带歌手；`SKILL.md` 中的「歌名-歌手」只描述**文件名约定**，用于无标签时补全元数据，不约束歌词内容。两个入口共用 `core/utils/text_utils.py:format_display_title` 生成，识别既有标题行则共用 `match_display_title`（容忍倒序、括号别名、全角连字符等真实曲库变体）。详见 `SKILL.md` §三。
+
 ### 📐 TTML 时间格式规范与结构化兼容策略 (v1.8.3)
 
 为了消除跨系统解析歧义并严守“歌词与时间轴绝不静默丢失”的安全底线，项目采用明确的 TTML 输出 profile 与结构化兼容策略：
@@ -248,6 +254,13 @@ python -B tests/run_all.py -k canto
 ---
 
 ## 📜 版本更新历史 (Changelog)
+
+### v1.8.5 同版本修订：歌词内前奏标题行（版本号不变）
+
+- 统一两个入口的前奏标题行格式为 `歌名 - 歌手`，由 `core/utils/text_utils.py:format_display_title()` 单一出处产生；标准化路径不再只写纯歌名，清理掉带歌手的标题行后必须补回歌手。
+- 标题行识别改由 `match_display_title()` 归一化处理，容忍倒序、括号别名/括注、全角连字符与多名分隔符；制作名单行与普通唱句不得误判为标题。
+- R1 新增 `TITLE_DISPLAY_CONTRACT` 断言；新增 `tests/test_title_display_contract.py` 跨入口契约测试。
+- 规格详情见 `SKILL.md` §三。本次为**同版本内容修订**，`core/version.py` 保持 `1.8.5`，发布包、清单与 Release 资产同步重建。
 
 ### v1.8.5 独立复核修正（R2，已按最小范围合入本仓）
 

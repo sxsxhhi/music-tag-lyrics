@@ -562,6 +562,18 @@ def verify_canonical_exports(canonical,elrc_text:str,ttml_text:str)->ComparisonR
     out=compare_elrc_ttml(elrc_text,ttml_text)
     if not out.passed:return out
 
+    # 前奏标题显示行内容契约：canonical 同时有 title 与 artist 时，
+    # P_TITLE 必须是「歌名 - 歌手」，防止标准化路径退回纯歌名造成信息损失。
+    from ..utils.text_utils import format_display_title
+    _p = getattr(canonical, "prelude", None)
+    if _p and getattr(_p, "mode", "") in ("A", "B") and getattr(_p, "display_title", ""):
+        _song = getattr(canonical, "song", {}) or {}
+        _t = str(_song.get("title") or "").strip()
+        _a = str(_song.get("artist") or "").strip()
+        if _t and _a and _p.display_title != format_display_title(_t, _a):
+            out.add_error('TITLE_DISPLAY_CONTRACT', 'Prelude title must be "歌名 - 歌手"')
+            return out
+
     # Verify self-generated TTML strictly complies with W3C_CLOCK profile
     try:
         root = ET.fromstring(ttml_text)

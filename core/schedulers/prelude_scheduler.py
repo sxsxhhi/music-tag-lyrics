@@ -64,7 +64,13 @@ def plan_prelude_ab(
     所有时间计算采用纯整数运算，毫秒向下取整，严禁浮点误差。
     """
     t_val, err = find_first_singing_time(canonical)
-    title = force_title or canonical.song.get("title", "") or ""
+    # force_title 只覆盖「歌名」，仍统一走格式函数：两入口与 R1 契约共用单一出处，
+    # 不允许任何分支绕过而产出纯歌名。
+    from ..utils.text_utils import format_display_title
+    title = format_display_title(
+        force_title or canonical.song.get("title", "") or "",
+        canonical.song.get("artist", "") or "",
+    )
     lyricist = canonical.song.get("extracted_lyricist")
     composer = canonical.song.get("extracted_composer")
 

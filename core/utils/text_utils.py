@@ -194,26 +194,78 @@ def is_instrumental_placeholder(lines, target_duration_ms: int = 0, max_lines: i
     return any(kw.lower() in low for kw in INSTRUMENTAL_KEYWORDS)
 
 _TITLE_SEP = r"[-–—－]"
+_TIMING_TAG_RE = re.compile(r"[\[<]\d{1,3}:\d{1,2}(?:\.\d{1,3})?[\]>]")
+_TITLE_KEY_DROP = set(
+    " \t\r\n-–—－_·・,，.。、:：;；!！?？/&+|()（）[]【】\"'“”‘’"
+)
 
 
-def is_title_line(text: str, title: str = "", artist: str = "") -> bool:
-    """是否为「歌名 - 歌手」这类标题行（v1.6.0）。
+def _norm_title_key(text: str) -> str:
+    """标题/艺人名比对键：NFKC + 去标点空白 + 大小写折叠。"""
+    import unicodedata
+    s = unicodedata.normalize("NFKC", text or "").casefold()
+    return "".join(ch for ch in s if ch not in _TITLE_KEY_DROP)
 
-    现状缺口：`is_source_or_credit_line` 认「作词 : 某某」，**不认**「歌名 - 歌手」
-    （实测返回 False），于是片头标题行会进对齐目标序列，把若干合成音节摊进前奏。
-    本函数只做「标题行」这一件事，判定从严：必须带分隔符且（给了 title 时）以它开头。
+
+def _artist_keys(text: str) -> set:
+    """提取艺人名证据集合：按 / & 、 拆分，括号内的别名也算独立证据。"""
+    import unicodedata
+    s = unicodedata.normalize("NFKC", text or "")
+    keys = set()
+    for m in re.finditer(r"[\(（]([^\)）]*)[\)）]", s):
+        k = _norm_title_key(m.group(1))
+        if k:
+            keys.add(k)
+    base = re.sub(r"[\(（][^\)）]*[\)）]", "", s)
+    for part in re.split(r"[/&;,&、|]", base):
+        k = _norm_title_key(part)
+        if k:
+            keys.add(k)
+    return keys
+
+
+def format_display_title(title: str, artist: str) -> str:
+    """歌词内前奏标题行的唯一格式：「歌名 - 歌手」；无歌手时退回纯歌名。
+
+    两个输出入口（日常 to_spl 与标准化 P_TITLE）必须共用本函数，
+    避免同一首歌在不同入口得到不同标题行。
     """
-    from core.utils.time_utils import strip_timing_tags
+    t, a = (title or "").strip(), (artist or "").strip()
+    return f"{t} - {a}" if (t and a) else t
 
-    t = strip_timing_tags(text or "").strip()
+
+def match_display_title(text: str, title: str = "", artist: str = "") -> bool:
+    """判定一行是否为「歌名 - 歌手」式前奏标题行（归一化匹配）。
+
+    相对旧的三形态精确等值，容忍真实曲库常见变体：倒序、括号别名/括注、
+    多名分隔符、全角连字符与多余空白。判定仍从严：必须有分隔符、至少一侧
+    与 title 等价；给了 artist 时另一侧必须与之有交集。
+    """
+    t = _TIMING_TAG_RE.sub("", text or "").strip()
     if not t:
         return False
-    m = re.match(r"^(.{1,40}?)\s*" + _TITLE_SEP + r"\s*(.{1,40})$", t)
+    m = re.match(r"^(.{1,80}?)\s*" + _TITLE_SEP + r"\s*(.{1,80})$", t)
     if not m:
         return False
     left, right = m.group(1).strip(), m.group(2).strip()
     if not left or not right:
         return False
-    if title:
-        return left == title.strip()
-    return True
+    tn = _norm_title_key(title)
+    if not tn:
+        return True  # 无 title 时保持旧行为：有分隔符且两侧非空
+    ln, rn = _norm_title_key(left), _norm_title_key(right)
+    if ln == tn:
+        other = _artist_keys(right)
+    elif rn == tn:
+        other = _artist_keys(left)
+    else:
+        return False
+    ak = _artist_keys(artist)
+    if not ak:
+        return True
+    return bool(other & ak)
+
+
+def is_title_line(text: str, title: str = "", artist: str = "") -> bool:
+    """兼容入口：实际判定统一走 match_display_title，消除双实现漂移。"""
+    return match_display_title(text, title, artist)
