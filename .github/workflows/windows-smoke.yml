@@ -179,14 +179,16 @@ jobs:
           foreach ($file in $suites) {
             $log = ""
             if (Test-Path $file) { $log = Get-Content $file -Raw }
-            # 只认 runner 的结构化汇总行（"TOTAL: x/y passed, z skipped"）。
+            # 只认 runner 的结构化汇总行。单套件输出形如 "17/19 passed, 2 skipped"，
+            # **零跳过时不会带 skipped 段**，有用例失败还会追加 ", 1 failed"。
             # 旧实现按 "PASS"/"FAIL"/"SKIP" 词频统计，测试名或失败信息里含这些词就会失真。
-            $m = [regex]::Match($log, "TOTAL:\s*(\d+)/(\d+)\s+passed,\s*(\d+)\s+skipped")
-            if ($m.Success) {
+            $mm = [regex]::Matches($log, "(?m)^\s*(\d+)/(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?(?:,\s*(\d+)\s+failed)?\s*$")
+            if ($mm.Count -gt 0) {
+              $m = $mm[$mm.Count - 1]
               $passed = [int]$m.Groups[1].Value
               $total  = [int]$m.Groups[2].Value
-              $skipped = [int]$m.Groups[3].Value
-              $failed = $total - $passed - $skipped
+              $skipped = if ($m.Groups[3].Success) { [int]$m.Groups[3].Value } else { 0 }
+              $failed = if ($m.Groups[4].Success) { [int]$m.Groups[4].Value } else { [math]::Max(0, $total - $passed - $skipped) }
               $out += "| $file | $passed | $failed | $skipped | $total |"
               if ($failed -gt 0) {
                 Write-Host "::warning title=Windows gate::$file 有 $failed 个失败用例"
@@ -194,7 +196,7 @@ jobs:
             } else {
               $missingTotal += 1
               $out += "| $file | - | ? | - | - |"
-              Write-Host "::warning title=Windows gate::$file 未产出 TOTAL 汇总行（脚本可能中断）"
+              Write-Host "::warning title=Windows gate::$file 未产出可解析的汇总行（脚本可能中断）"
             }
           }
           if ($missingTotal -gt 0) {
